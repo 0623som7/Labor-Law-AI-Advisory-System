@@ -1,0 +1,1403 @@
+openapi: 3.0.3
+
+info:
+  title: 劳动法 AI 顾问系统 · HTTP API
+  version: 1.0.0
+  description: |
+    后端与 Agent 之间**不是**通过 HTTP 对接的（那是 `internal/port` 的五个 Go interface）。
+    本文件面向的是前端、压测脚本与验收演示，是三方的字段真相源。
+
+    三条全局约定：
+
+    1. **所有 JSON 响应都套 `Envelope`**：`{code, message, data, trace_id}`。
+       `code` 是业务码（14 个，见 `x-error-codes`），HTTP 状态码只是它的投影。
+       前端应当按 `code` 分流，不要按 HTTP status 分流——400 同时代表参数错与文件格式错。
+    2. **流式接口只有 `/chat/completions` 一个**，`Content-Type: text/event-stream`，
+       事件类型是闭集（见 `x-sse-events`），前端解析器遇到未知事件必须报错而不是静默丢弃。
+    3. **PDF 坐标的单位是 pt、原点在左下、y 轴向上**（见 `x-coordinate-system`），
+       接口只透传，不做像素换算。
+  contact:
+    name: A（后端）
+    url: https://github.com/0623som7/Labor-Law-AI-Advisory-System
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: 本地开发
+  - url: https://{host}:8443
+    description: 阿里云（未备案，走 8443）
+    variables:
+      host:
+        default: 127.0.0.1
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+    description: 注册、登录、令牌
+  - name: chat
+    description: 劳动法咨询（SSE 流式）
+  - name: session
+    description: 会话与历史
+  - name: contract
+    description: 合同上传、解析、审查
+  - name: task
+    description: 异步任务进度
+  - name: statute
+    description: 法条检索
+  - name: ops
+    description: 健康检查与指标（不套 Envelope）
+
+# ---------------------------------------------------------------------------
+# 全局扩展：这些段被 Go 代码的注释直接引用，改动必须同步 internal/port
+# ---------------------------------------------------------------------------
+
+x-error-codes:
+  - code: 0
+    name: OK
+    http: 200
+    retryable: false
+    meaning: 成功，仅用于包络的 code 字段
+  - code: 40001
+    name: INVALID_ARGUMENT
+    http: 400
+    retryable: false
+    meaning: 参数校验失败，fields 里带字段级原因
+  - code: 40101
+    name: UNAUTHORIZED
+    http: 401
+    retryable: false
+    meaning: 未登录或令牌失效；刻意不区分"用户不存在"与"密码错"
+  - code: 40301
+    name: FORBIDDEN
+    http: 403
+    retryable: false
+    meaning: 越权访问他人资源
+  - code: 40401
+    name: NOT_FOUND
+    http: 404
+    retryable: false
+    meaning: 资源不存在
+  - code: 40901
+    name: CONFLICT
+    http: 409
+    retryable: false
+    meaning: 重复提交，或任务状态机收到非法转移
+  - code: 41301
+    name: FILE_TOO_LARGE
+    http: 413
+    retryable: false
+    meaning: 超过 max_upload_mb 或 max_pages
+  - code: 41501
+    name: UNSUPPORTED_MEDIA
+    http: 415
+    retryable: false
+    meaning: 魔数不是 %PDF-
+  - code: 42201
+    name: NO_TEXT_LAYER
+    http: 422
+    retryable: false
+    meaning: 扫描件无可抽取文本层，前端应提示改用 OCR
+  - code: 42901
+    name: RATE_LIMITED
+    http: 429
+    retryable: true
+    meaning: 触发限流或 worker 池已满
+  - code: 50001
+    name: INTERNAL
+    http: 500
+    retryable: true
+    meaning: 未归类内部错误，带 trace_id 上报
+  - code: 50002
+    name: RULE_ENGINE
+    http: 500
+    retryable: false
+    meaning: 单条规则执行异常，只让该规则降级
+  - code: 50201
+    name: UPSTREAM
+    http: 502
+    retryable: true
+    meaning: LLM 上游返回错误
+  - code: 50301
+    name: UPSTREAM_TIMEOUT
+    http: 503
+    retryable: true
+    meaning: LLM 上游超时
+  - code: 50401
+    name: TASK_TIMEOUT
+    http: 504
+    retryable: true
+    meaning: 审查任务超过 worker 超时
+
+x-sse-events:
+  - event: meta
+    data: '{message_id, session_id, model}'
+    meaning: 首帧，客户端据此建占位气泡
+  - event: delta
+    data: '{seq, text}'
+    meaning: 增量文本，客户端 append，绝不能丢
+  - event: citation
+    data: '{seq, citation:{statute_id, law, article, text, url}}'
+    meaning: 引用卡片，text 必须来自库
+  - event: tool_call
+    data: '{seq, tool, status, detail}'
+    meaning: 工具状态，背压时允许丢弃
+  - event: done
+    data: '{seq, message_id, finish_reason, usage}'
+    meaning: 终止帧，必达
+  - event: error
+    data: '{seq, code, message}'
+    meaning: 异常终止帧，之后不再有事件
+
+x-coordinate-system:
+  unit: pt
+  space: PDF user space
+  origin: bottom-left
+  y_axis: up
+  domain: '[0, page.width] × [0, page.height]'
+  conversion: 只在渲染层（PDF.js viewport.convertToViewportRectangle）做，接口层不做像素换算
+
+# ---------------------------------------------------------------------------
+paths:
+  # ---------------------------------------------------------------- ops
+  /healthz:
+    get:
+      tags: [ops]
+      operationId: healthz
+      summary: 存活探针（不查依赖）
+      security: []
+      responses:
+        '200':
+          description: 进程活着就返回 200
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /readyz:
+    get:
+      tags: [ops]
+      operationId: readyz
+      summary: 就绪探针（查 MySQL / Redis）
+      description: 任一依赖不可用返回 503。容器 healthcheck 用这个，不用 healthz。
+      security: []
+      responses:
+        '200':
+          description: 依赖全部可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyStatus'
+        '503':
+          description: 至少一个依赖不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyStatus'
+
+  # --------------------------------------------------------------- auth
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: 注册
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: 注册成功并直接返回令牌，省一次登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthEnvelope'
+        '400':
+          $ref: '#/components/responses/Err40001'
+        '409':
+          $ref: '#/components/responses/Err40901'
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: 登录
+      description: 手机号 + 密码。失败一律 40101，不区分账号不存在与密码错。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthEnvelope'
+        '401':
+          $ref: '#/components/responses/Err40101'
+        '429':
+          $ref: '#/components/responses/Err42901'
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refresh
+      summary: 续期
+      description: refresh token 必须在 Redis 白名单里，否则 40101。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: 新令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthEnvelope'
+        '401':
+          $ref: '#/components/responses/Err40101'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: 登出（吊销 refresh）
+      responses:
+        '200':
+          description: 已吊销
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '401':
+          $ref: '#/components/responses/Err40101'
+
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      operationId: me
+      summary: 当前用户
+      responses:
+        '200':
+          description: 用户信息（手机号已脱敏）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserEnvelope'
+        '401':
+          $ref: '#/components/responses/Err40101'
+
+  # ------------------------------------------------------------ session
+  /api/v1/sessions:
+    get:
+      tags: [session]
+      operationId: listSessions
+      summary: 会话列表
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: 按最后活跃时间倒序
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionListEnvelope'
+        '401':
+          $ref: '#/components/responses/Err40101'
+    post:
+      tags: [session]
+      operationId: createSession
+      summary: 创建会话
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scene]
+              properties:
+                scene:
+                  type: string
+                  enum: [consult, qa]
+                title:
+                  type: string
+                  maxLength: 100
+      responses:
+        '200':
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionEnvelope'
+        '400':
+          $ref: '#/components/responses/Err40001'
+
+  /api/v1/sessions/{sessionId}:
+    get:
+      tags: [session]
+      operationId: getSession
+      summary: 会话详情
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionEnvelope'
+        '404':
+          $ref: '#/components/responses/Err40401'
+    delete:
+      tags: [session]
+      operationId: deleteSession
+      summary: 软删会话
+      description: 只置 deleted_at，消息保留，用于审计与申诉。
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '200':
+          description: 已删除
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Envelope'
+        '404':
+          $ref: '#/components/responses/Err40401'
+
+  /api/v1/sessions/{sessionId}/messages:
+    get:
+      tags: [session]
+      operationId: listMessages
+      summary: 消息历史
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+      responses:
+        '200':
+          description: 按时间正序
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageListEnvelope'
+        '404':
+          $ref: '#/components/responses/Err40401'
+
+  # --------------------------------------------------------------- chat
+  /api/v1/chat/completions:
+    post:
+      tags: [chat]
+      operationId: chatCompletions
+      summary: 劳动法咨询（SSE）
+      description: |
+        返回 `text/event-stream`。客户端**必须**用 fetch + ReadableStream，
+        `EventSource` 不支持 POST 与 `Authorization` 头。
+
+        断线重连带 `Last-Event-ID: <seq>`，服务端从 seq+1 续推；
+        同一个 seq 只会在两条连接里出现一次，客户端不需要自己去重。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+      responses:
+        '200':
+          description: SSE 流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                stream:
+                  summary: 一次完整问答
+                  value: |
+                    event: meta
+                    data: {"message_id":"01J8Z0K3Q7","session_id":"01J8Z0JZP1","model":"consult"}
+
+                    event: delta
+                    data: {"seq":1,"text":"根据《劳动合同法》"}
+
+                    event: citation
+                    data: {"seq":2,"citation":{"statute_id":"LCL-38","law":"劳动合同法","article":"第三十八条","text":"用人单位有下列情形之一的，劳动者可以解除劳动合同……","url":"https://flk.npc.gov.cn/"}}
+
+                    event: delta
+                    data: {"seq":3,"text":"第三十八条，你可以随时解除。"}
+
+                    event: done
+                    data: {"seq":4,"message_id":"01J8Z0K3Q7","finish_reason":"stop","usage":{"prompt_tokens":820,"completion_tokens":96,"total_tokens":916}}
+
+        '400':
+          $ref: '#/components/responses/Err40001'
+        '401':
+          $ref: '#/components/responses/Err40101'
+        '429':
+          $ref: '#/components/responses/Err42901'
+        '502':
+          $ref: '#/components/responses/Err50201'
+
+  # -------------------------------------------------------------- files
+  /api/v1/files:
+    post:
+      tags: [contract]
+      operationId: uploadFile
+      summary: 上传合同（multipart/form-data）
+      description: |
+        字段名 `file`。校验顺序：大小 → 魔数 `%PDF-` → 页数 → SHA256 去重。
+        同一用户重复上传同一文件直接返回已解析过的 file_id，不重复解析。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: 上传并解析完成
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileEnvelope'
+        '413':
+          $ref: '#/components/responses/Err41301'
+        '415':
+          $ref: '#/components/responses/Err41501'
+        '422':
+          $ref: '#/components/responses/Err42201'
+
+  /api/v1/files/{fileId}:
+    get:
+      tags: [contract]
+      operationId: getFile
+      summary: 文件元数据
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileEnvelope'
+        '404':
+          $ref: '#/components/responses/Err40401'
+
+  /api/v1/files/{fileId}/pages:
+    get:
+      tags: [contract]
+      operationId: getFilePages
+      summary: 解析结果（文本块 + 坐标）
+      description: 标注层渲染的唯一数据源。坐标协议见 `x-coordinate-system`。
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParsedDocEnvelope'
+        '404':
+          $ref: '#/components/responses/Err40401'
+        '422':
+          $ref: '#/components/responses/Err42201'
+
+  /api/v1/files/{fileId}/content:
+    get:
+      tags: [contract]
+      operationId: downloadFile
+      summary: 下载原始 PDF
+      description: "PDF.js 用它渲染底图，响应头 Content-Disposition 为 inline。"
+      parameters:
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: application/pdf
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/Err40401'
+
+  # ------------------------------------------------------------ reviews
+  /api/v1/contracts/review:
+    post:
+      tags: [contract]
+      operationId: createReview
+      summary: 发起合同审查
+      description: |
+        短合同同步返回完整结果（P95 < 15s）；超过同步阈值转异步，返回 `task_id`，
+        客户端拿 `/api/v1/tasks/{taskId}` 轮询。worker 池满时立即 42901，不静默排队。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_id]
+              properties:
+                file_id:
+                  type: string
+                rule_scope:
+                  type: array
+                  items:
+                    type: string
+                  description: 只跑指定规则；空数组表示全部
+                async:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: 同步完成，直接给审查结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewEnvelope'
+        '202':
+          description: 已转异步，data 里只有 task_id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewAcceptedEnvelope'
+        '409':
+          $ref: '#/components/responses/Err40901'
+        '429':
+          $ref: '#/components/responses/Err42901'
+        '504':
+          $ref: '#/components/responses/Err50401'
+
+  /api/v1/reviews:
+    get:
+      tags: [contract]
+      operationId: listReviews
+      summary: 审查历史
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: 按创建时间倒序
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewListEnvelope'
+
+  /api/v1/reviews/{reviewId}:
+    get:
+      tags: [contract]
+      operationId: getReview
+      summary: 审查详情
+      parameters:
+        - $ref: '#/components/parameters/reviewId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewEnvelope'
+        '404':
+          $ref: '#/components/responses/Err40401'
+
+  /api/v1/reviews/{reviewId}/findings:
+    get:
+      tags: [contract]
+      operationId: listFindings
+      summary: 风险清单
+      parameters:
+        - $ref: '#/components/parameters/reviewId'
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [high, medium, low]
+      responses:
+        '200':
+          description: 按严重度倒序
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FindingListEnvelope'
+        '404':
+          $ref: '#/components/responses/Err40401'
+
+  # -------------------------------------------------------------- tasks
+  /api/v1/tasks/{taskId}:
+    get:
+      tags: [task]
+      operationId: getTask
+      summary: 任务进度
+      description: 进度写库有 ≥500ms 节流，读到的值最多落后半秒。
+      parameters:
+        - $ref: '#/components/parameters/taskId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskEnvelope'
+        '404':
+          $ref: '#/components/responses/Err40401'
+
+  /api/v1/tasks/{taskId}/cancel:
+    post:
+      tags: [task]
+      operationId: cancelTask
+      summary: 取消任务
+      parameters:
+        - $ref: '#/components/parameters/taskId'
+      responses:
+        '200':
+          description: 已取消
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskEnvelope'
+        '409':
+          $ref: '#/components/responses/Err40901'
+
+  # ----------------------------------------------------------- statutes
+  /api/v1/statutes:
+    get:
+      tags: [statute]
+      operationId: searchStatutes
+      summary: 法条检索
+      description: |
+        500 条法条的规模用 MySQL 全文索引（ngram）+ LIKE 足够，
+        不引向量库——理由见技术选型 D3。
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+        - name: law
+          in: query
+          schema:
+            type: string
+        - name: top_k
+          in: query
+          schema:
+            type: integer
+            default: 5
+            minimum: 1
+            maximum: 20
+      responses:
+        '200':
+          description: 命中列表（可能为空数组）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatuteHitListEnvelope'
+        '400':
+          $ref: '#/components/responses/Err40001'
+
+  /api/v1/statutes/{statuteId}:
+    get:
+      tags: [statute]
+      operationId: getStatute
+      summary: 法条详情
+      parameters:
+        - name: statuteId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: LCL-38
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatuteEnvelope'
+        '404':
+          $ref: '#/components/responses/Err40401'
+
+# ---------------------------------------------------------------------------
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: access token，2h 有效；refresh token 只用于 /auth/refresh，30d 有效
+
+  parameters:
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+    sessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        description: CHAR(26) ULID
+    fileId:
+      name: fileId
+      in: path
+      required: true
+      schema:
+        type: string
+    reviewId:
+      name: reviewId
+      in: path
+      required: true
+      schema:
+        type: string
+    taskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    Err40001:
+      description: 参数校验失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Err40101:
+      description: 未登录或令牌失效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Err40401:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Err40901:
+      description: 冲突或状态机非法转移
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Err41301:
+      description: 文件过大
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Err41501:
+      description: 文件类型不支持
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Err42201:
+      description: 无可抽取文本层
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Err42901:
+      description: 限流或池已满
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Err50201:
+      description: 上游模型错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+    Err50401:
+      description: 任务超时
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Envelope'
+
+  schemas:
+
+    Envelope:
+      type: object
+      required: [code, message, trace_id]
+      properties:
+        code:
+          type: integer
+          format: int32
+          description: 业务码，取值见 x-error-codes
+          example: 0
+        message:
+          type: string
+          example: ok
+        retryable:
+          type: boolean
+          description: 前端据此决定是否给"重试"按钮
+        data:
+          nullable: true
+        fields:
+          type: object
+          additionalProperties:
+            type: string
+          description: 仅 40001 出现，key 是 JSON 路径
+        trace_id:
+          type: string
+          description: 与响应头 X-Request-ID 一致
+
+    ReadyStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [up, down]
+          example:
+            mysql: up
+            redis: up
+
+    # ---------------------------------------------------------- 用户与令牌
+    RegisterRequest:
+      type: object
+      required: [phone, password]
+      properties:
+        phone:
+          type: string
+          pattern: '^1[3-9]\d{9}$'
+        password:
+          type: string
+          minLength: 8
+          maxLength: 64
+        nickname:
+          type: string
+          maxLength: 32
+
+    LoginRequest:
+      type: object
+      required: [phone, password]
+      properties:
+        phone:
+          type: string
+        password:
+          type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          example: 01J8Z0JZP1QK3M4N5P6R7S8T9V
+        phone_masked:
+          type: string
+          example: 138****8000
+        nickname:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    AuthResult:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+          description: access token 剩余秒数
+
+    # --------------------------------------------------------------- 会话
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        scene:
+          type: string
+          enum: [consult, qa]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ChatRequest:
+      type: object
+      required: [input]
+      properties:
+        session_id:
+          type: string
+          description: 空串表示新建会话
+        input:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: 用户原话，后端不做清洗
+        options:
+          type: object
+          additionalProperties: true
+
+    # --------------------------------------------------------------- 文件
+    FileRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+          description: 仅展示，禁止用于拼磁盘路径
+        ext:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        page_count:
+          type: integer
+        ocr_used:
+          type: boolean
+        confidence:
+          type: number
+          format: double
+        created_at:
+          type: string
+          format: date-time
+
+    TextBlock:
+      type: object
+      required: [id, page, bbox, text, char_start, char_end]
+      properties:
+        id:
+          type: string
+        page:
+          type: integer
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+            format: double
+          description: '[x0, y0, x1, y1]，pt，原点左下，y 轴向上'
+        text:
+          type: string
+        char_start:
+          type: integer
+          description: 跨页连续偏移，不允许每页重置
+        char_end:
+          type: integer
+
+    ParsedPage:
+      type: object
+      properties:
+        index:
+          type: integer
+          description: 0 起
+        width:
+          type: number
+          format: double
+        height:
+          type: number
+          format: double
+        blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TextBlock'
+
+    ParsedDoc:
+      type: object
+      properties:
+        file_id:
+          type: string
+        page_count:
+          type: integer
+        ocr_used:
+          type: boolean
+        confidence:
+          type: number
+          format: double
+        pages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParsedPage'
+
+    # --------------------------------------------------------------- 审查
+    ClauseRef:
+      type: object
+      properties:
+        section:
+          type: string
+          example: 第二条
+        page:
+          type: integer
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+            format: double
+
+    LegalBasis:
+      type: object
+      properties:
+        law:
+          type: string
+        article:
+          type: string
+        text:
+          type: string
+          description: 必须来自库，不许运行时生成
+
+    Suggestion:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [rewrite, add, delete]
+        original:
+          type: string
+        revised:
+          type: string
+        reason:
+          type: string
+
+    Finding:
+      type: object
+      properties:
+        id:
+          type: string
+          example: F-001
+        review_id:
+          type: string
+        rule_id:
+          type: string
+          example: R-PROBATION-MATCH
+        severity:
+          type: string
+          enum: [high, medium, low]
+        title:
+          type: string
+        clause_ref:
+          $ref: '#/components/schemas/ClauseRef'
+        evidence:
+          type: string
+        legal_basis:
+          type: array
+          items:
+            $ref: '#/components/schemas/LegalBasis'
+        suggestion:
+          $ref: '#/components/schemas/Suggestion'
+        economic_impact:
+          type: number
+          format: double
+          nullable: true
+
+    Review:
+      type: object
+      properties:
+        id:
+          type: string
+        file_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, cancelled]
+        risk_level:
+          type: string
+          enum: [high, medium, low]
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        clause_pass_rate:
+          type: number
+          format: double
+        counts:
+          $ref: '#/components/schemas/ReviewCounts'
+        task_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReviewCounts:
+      type: object
+      properties:
+        high:
+          type: integer
+        medium:
+          type: integer
+        low:
+          type: integer
+
+    ReviewAccepted:
+      type: object
+      properties:
+        task_id:
+          type: string
+        review_id:
+          type: string
+        status:
+          type: string
+          example: pending
+
+    # --------------------------------------------------------------- 任务
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          example: review.run
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, cancelled]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        stage:
+          type: string
+          example: 正在抽取合同要素
+        error:
+          type: string
+          description: 只放可展示文案，不含内部 cause
+        attempt:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # --------------------------------------------------------------- 法条
+    Statute:
+      type: object
+      properties:
+        id:
+          type: string
+          example: LCL-38
+        law:
+          type: string
+        article:
+          type: string
+        title:
+          type: string
+        text:
+          type: string
+        url:
+          type: string
+        effective_at:
+          type: string
+          format: date-time
+
+    StatuteHit:
+      type: object
+      properties:
+        statute:
+          $ref: '#/components/schemas/Statute'
+        score:
+          type: number
+          format: double
+
+    # ------------------------------------------------- 带具体 data 的包络
+    UserEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/User'
+
+    AuthEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/AuthResult'
+
+    SessionEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/Session'
+
+    SessionListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Session'
+
+    MessageListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/ChatMessage'
+
+    FileEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/FileRecord'
+
+    ParsedDocEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ParsedDoc'
+
+    ReviewEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/Review'
+
+    ReviewAcceptedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ReviewAccepted'
+
+    ReviewListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Review'
+
+    FindingListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Finding'
+
+    TaskEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/Task'
+
+    StatuteEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/Statute'
+
+    StatuteHitListEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/StatuteHit'
