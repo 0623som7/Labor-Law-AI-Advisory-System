@@ -228,11 +228,19 @@ func (f *Files) LoadPages(ctx context.Context, fileID string) ([]port.ParsedPage
 
 	out := make([]port.ParsedPage, 0, len(pages))
 	for _, p := range pages {
+		// 无文本层的页在库里没有任何块，map 取出来是 nil 切片，
+		// 序列化就是 JSON null。前端拿 pages[i].blocks.map(...) 渲染时直接抛
+		// "Cannot read properties of null"——一个空页面就能白屏整页。
+		// 这里给空切片，序列化成 []。
+		bs, ok := blocks[p.id]
+		if !ok {
+			bs = []port.TextBlock{}
+		}
 		out = append(out, port.ParsedPage{
 			Index:  p.index,
 			Width:  p.width,
 			Height: p.height,
-			Blocks: blocks[p.id],
+			Blocks: bs,
 		})
 	}
 	return out, nil
