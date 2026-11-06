@@ -83,7 +83,14 @@ vim .env
 #   JWT_SECRET=<openssl rand -hex 32>
 #   LLM_API_KEY=<B 提供>
 #   HTTP_ADDR=:8080
+#   !! AUTH_DEV_USER=          —— 必须留空。production 下 config.Validate 会直接拒绝它（这是设计：
+#                                它的存在意味着"所有请求都当成同一个用户"，线上等于没有鉴权）
+#   !! FILE_PDFTOTEXT_PATH=pdftotext —— 容器里 apk 已装 poppler-utils，走 PATH 即可；
+#                                填 Windows 路径（C:\...）会让解析进程 exec 失败，上传接口 500
 chmod 600 .env
+
+> `APP_ENV` 在 compose 里是必填项：没设（`docker compose ... config` 会直接报错）
+> 起不来，避免部署时忘改 `APP_ENV` 就按 dev 跑起来。
 
 # 3.3 首次建库要手动跑一次迁移（生产禁了 AUTO_MIGRATE）
 docker compose -f deploy/docker-compose.yml up -d mysql redis

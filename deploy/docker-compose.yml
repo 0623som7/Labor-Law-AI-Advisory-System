@@ -58,6 +58,10 @@ services:
     env_file:
       - ../.env
     environment:
+      # 快速失败：忘记设 APP_ENV 时不让容器起来，而不是默默按 dev 跑。
+      # dev 下 requireAuth 认 AUTH_DEV_USER 就把任何请求当成同一个用户，
+      # 线上出现这种状态等于所有人共用 dev-user-0001。
+      APP_ENV: ${APP_ENV:?APP_ENV 必须显式设置（dev / staging / production）}
       # 容器里必须用服务名，.env 里的 127.0.0.1 是宿主机视角。
       MYSQL_DSN: "root:${MYSQL_ROOT_PASSWORD:-laborlaw_root}@tcp(mysql:3306)/laborlaw?parseTime=true&charset=utf8mb4&loc=UTC"
       REDIS_ADDR: "redis:6379"
