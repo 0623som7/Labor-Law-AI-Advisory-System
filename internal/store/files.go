@@ -21,13 +21,22 @@ const fileColumns = `id, user_id, filename, ext, size_bytes, sha256,
 const maxBlockIDLen = 40
 
 // Files 是 port.FileStore 的 MySQL 实现。
+//
+// db 的类型是 querier 而不是 *sql.DB：同一个实现既要能挂在连接池上，
+// 也要能在 port.Store.Tx 的事务里工作，否则事务内的读写会漂到另一条连接上，
+// 表现为"回滚了但数据还在"。
 type Files struct {
-	db *sql.DB
+	db querier
 }
 
 // NewFiles 构造文件域 DAL。
 func NewFiles(db *sql.DB) *Files {
 	return &Files{db: db}
+}
+
+// newFilesOn 构造绑定在任意连接（连接池或事务）上的文件域 DAL。
+func newFilesOn(q querier) *Files {
+	return &Files{db: q}
 }
 
 // 编译期断言：实现必须与 B 依赖的接口一致。

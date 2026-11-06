@@ -1,6 +1,45 @@
 package api
 
-import "laborlaw/internal/port"
+import (
+	"time"
+
+	"laborlaw/internal/port"
+)
+
+// fileRecordDTO 是文件元数据在 HTTP 上的形状，字段名逐字来自
+// contract/openapi.yaml 的 components.schemas.FileRecord。
+//
+// 与 parsedDocDTO 同样的理由：port.FileRecord 不打 tag，序列化形状由本层负责。
+// created_at 用 time.Time 而不是字符串：RFC 3339 由 encoding/json 生成，
+// 手拼格式时区一错，前端 new Date() 就会差 8 小时。
+type fileRecordDTO struct {
+	ID         string    `json:"id"`
+	Filename   string    `json:"filename"`
+	Ext        string    `json:"ext"`
+	SizeBytes  int64     `json:"size_bytes"`
+	PageCount  int       `json:"page_count"`
+	OCRUsed    bool      `json:"ocr_used"`
+	Confidence float64   `json:"confidence"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// toFileRecordDTO 把文件记录映射成契约形状。nil 返回零值而不是 panic：
+// handler 里每一处都判过 nil，这里再兜一层只为让"某天忘了判"变成一条空响应。
+func toFileRecordDTO(rec *port.FileRecord) fileRecordDTO {
+	if rec == nil {
+		return fileRecordDTO{}
+	}
+	return fileRecordDTO{
+		ID:         rec.ID,
+		Filename:   rec.Filename,
+		Ext:        rec.Ext,
+		SizeBytes:  rec.SizeBytes,
+		PageCount:  rec.PageCount,
+		OCRUsed:    rec.OCRUsed,
+		Confidence: rec.Confidence,
+		CreatedAt:  rec.CreatedAt,
+	}
+}
 
 // 本文件是解析结果在 HTTP 上的形状，字段名逐字来自 contract/openapi.yaml 的
 // components.schemas.ParsedDoc / ParsedPage / TextBlock。

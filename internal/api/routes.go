@@ -43,10 +43,10 @@ func (a *API) buildRouter() *gin.Engine {
 
 		authed.POST("/chat/completions", a.chatCompletions)
 
-		authed.POST("/files", a.notImplemented("上传合同"))
-		authed.GET("/files/:fileId", a.notImplemented("文件详情"))
-		authed.GET("/files/:fileId/pages", a.notImplemented("解析结果"))
-		authed.GET("/files/:fileId/content", a.notImplemented("文件下载"))
+		authed.POST("/files", a.uploadFile)
+		authed.GET("/files/:fileId", a.getFile)
+		authed.GET("/files/:fileId/pages", a.getFilePages)
+		authed.GET("/files/:fileId/content", a.downloadFile)
 
 		authed.POST("/contracts/review", a.notImplemented("合同审查"))
 		authed.GET("/reviews", a.notImplemented("审查历史"))
