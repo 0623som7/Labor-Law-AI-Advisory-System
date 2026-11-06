@@ -189,6 +189,14 @@ func (a *API) login(c *gin.Context) {
 		return
 	}
 
+	// 成功即清零。计数器只减不增的话，一天里正常登录几次就会攒到上限，
+	// 把自己锁进 429——限流本来是防撞库，不该惩罚本人。
+	if a.cache != nil {
+		if err := a.cache.del(ctx, keyLoginAttempts+c.ClientIP()); err != nil {
+			log.Warn("登录成功但限流计数未清零", "trace_id", TraceID(c), "err", err.Error())
+		}
+	}
+
 	res, err := a.issueTokens(ctx, u, log)
 	if err != nil {
 		Fail(c, err)

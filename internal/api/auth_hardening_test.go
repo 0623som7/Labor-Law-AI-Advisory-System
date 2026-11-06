@@ -112,6 +112,35 @@ func TestRegisterRateLimited(t *testing.T) {
 	}
 }
 
+// TestLoginSuccessResetsCounter 守住"登录成功要清零"。
+//
+// 缺陷形态：限流是无条件 INCR，成功路径也不清零。正常用户一天里登录几次
+// 就会把自己攒到上限，之后每次登录都先吃到 429——减速带变成了自己设的路障。
+func TestLoginSuccessResetsCounter(t *testing.T) {
+	const limit = 3
+	h := authTestServer(t, authTestConfig("", limit), newFakeUserStore(), newFakeCache())
+	registerUser(t, h, testPhone, testPassword)
+
+	wrong := map[string]string{"phone": testPhone, "password": "wrong-password"}
+	for i := 0; i < limit-1; i++ {
+		if rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/login", wrong, nil); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("第 %d 次错误登录: status=%d code=%d, want 401", i+1, rec.Code, env.Code)
+		}
+	}
+
+	rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/login",
+		map[string]string{"phone": testPhone, "password": testPassword}, nil)
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("正确密码登录: status=%d code=%d msg=%s", rec.Code, env.Code, env.Message)
+	}
+
+	// 清零后再错一次仍是 401；没清零的话此时计数已是 limit+1，直接 429。
+	rec, env = doJSON(t, h, http.MethodPost, "/api/v1/auth/login", wrong, nil)
+	if rec.Code != http.StatusUnauthorized || env.Code != 40101 {
+		t.Fatalf("成功登录后再错一次: status=%d code=%d, want 401/40101（计数未清零）", rec.Code, env.Code)
+	}
+}
+
 // TestRefreshUserLookupFailureIsInternal 区分"用户没了"和"库挂了"。
 //
 // 缺陷形态：refresh 里 a.users.Get 的任何错误都走 failUnauthorized，
