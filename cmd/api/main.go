@@ -106,8 +106,14 @@ func run(migrateOnly bool) error {
 	// 无存储模式（dev 连不上 MySQL）不注入 Store：让 /files/* 明确返回 501，
 	// 而不是在 handler 里对一个 nil 接口发请求。
 	if inf.db != nil {
-		opts = append(opts, api.WithStore(store.New(inf.db)))
+		// 账号 DAL 需要 JWT 密钥做手机号 HMAC：把密钥随聚合体一起构造，
+		// 事务回调里拿到的 Users 才不会丢密钥（见 store.NewWithSecret 的注释）。
+		agg := store.NewWithSecret(inf.db, cfg.Auth.Secret)
+		opts = append(opts, api.WithStore(agg), api.WithUsers(agg.Users()))
 	}
+	// Redis 只影响限流与续期：没起 Redis 时 WithRedis(nil) 等价于不注入，
+	// 登录照常、续期明确失败，不会把整个服务拖成不可用。
+	opts = append(opts, api.WithRedis(inf.rdb))
 	blobs, err := storage.New(cfg.Storage.Root)
 	if err != nil {
 		return fmt.Errorf("初始化存储目录: %w", err)
