@@ -24,8 +24,12 @@ func TestLoadMigrations(t *testing.T) {
 		if strings.TrimSpace(m.upSQL) == "" {
 			t.Fatalf("迁移 %04d_%s 的 up 脚本为空", m.version, m.name)
 		}
-		if !strings.Contains(m.upSQL, "CREATE TABLE") {
-			t.Fatalf("迁移 %04d_%s 看起来不是建表脚本", m.version, m.name)
+		// 原断言是「必须含 CREATE TABLE」，那等于断言「迁移只有建表」。
+		// 这个前提是错的：0001 上线后已经在跑的库只能靠新增迁移演进 schema，
+		// 加宽列（0002）这类 ALTER 就是唯一的合法手段。放宽到「必须是一段 DDL」，
+		// 仍然拦得住把注释、空文件或误粘的半句 SQL 当成迁移提交。
+		if !strings.Contains(m.upSQL, "CREATE TABLE") && !strings.Contains(m.upSQL, "ALTER TABLE") {
+			t.Fatalf("迁移 %04d_%s 看起来不是 DDL 脚本", m.version, m.name)
 		}
 	}
 }

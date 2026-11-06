@@ -110,6 +110,7 @@ func (e *Extractor) Parse(ctx context.Context, fileID, path string) (*port.Parse
 			}
 			runes := len([]rune(line.Text))
 			blocks = append(blocks, port.TextBlock{
+				// 上限 40 字符（迁移 0002）；不许改成 ULID —— B 靠 "fileID-页-行" 反推位置。
 				ID:        fmt.Sprintf("%s-%d-%d", fileID, pi, li),
 				Page:      pi,
 				BBox:      line.BBox,

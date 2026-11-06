@@ -13,6 +13,13 @@ import (
 const fileColumns = `id, user_id, filename, ext, size_bytes, sha256,
 	page_count, storage_path, ocr_used, confidence, created_at, updated_at`
 
+// maxBlockIDLen 是 text_blocks.id 的列宽上限，与迁移 0002 里定义的 VARCHAR(40) 对齐。
+//
+// 解析层给的块 ID 是 "fileID-页-行"：26 字符 ULID 加上页号与行号，实测 28~34 字符。
+// 超长必须在插入前拦下，不能指望 MySQL —— 它只会在写入时才报 1406，
+// 那时整个上传请求已经被包成 50001，用户完全看不出是 ID 太长。
+const maxBlockIDLen = 40
+
 // Files 是 port.FileStore 的 MySQL 实现。
 type Files struct {
 	db *sql.DB
@@ -143,6 +150,13 @@ func (f *Files) SavePages(ctx context.Context, fileID string, pages []port.Parse
 				blockID := block.ID
 				if blockID == "" {
 					blockID = id.New()
+				}
+
+				// 不截断：截断会让不同块的 ID 收敛成同一个主键，比直接报错更糟。
+				// 这里返回 40001 而不是等 MySQL 报 1406 再包成 50001：
+				// 后者会让用户看到"上传失败"，却查不出是哪一块超长。
+				if len(blockID) > maxBlockIDLen {
+					return port.New(port.CodeInvalidArgument, "文本块 ID 超长: %d", len(blockID))
 				}
 
 				if _, err := tx.ExecContext(ctx, `INSERT INTO text_blocks
