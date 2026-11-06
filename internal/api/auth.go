@@ -31,9 +31,9 @@ const (
 
 // 注册请求的字段边界，与 contract/openapi.yaml 的 RegisterRequest 对齐。
 const (
-	passwordMinLen  = 8
-	passwordMaxLen  = 64
-	nicknameMaxLen  = 32
+	passwordMinLen = 8
+	passwordMaxLen = 64
+	nicknameMaxLen = 32
 	// loginWindow 是登录限流窗口。每 IP 每分钟 N 次，窗口固定而非滑动：
 	// 实现只有一次 INCR + 一次 EXPIRE，而滑动窗口要 ZSET，MVP 阶段收益不值这个复杂度。
 	loginWindow = time.Minute
