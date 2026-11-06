@@ -141,6 +141,32 @@ func TestLoginSuccessResetsCounter(t *testing.T) {
 	}
 }
 
+// TestAuthBodyLimit 守住账号域请求体的内存上限。
+//
+// 缺陷形态：三条公开接口都不设请求体上限，ShouldBindJSON 会把整个 body
+// 读进内存。一个 Content-Length: 2G 的请求就能把进程内存吃光。
+func TestAuthBodyLimit(t *testing.T) {
+	h := authTestServer(t, authTestConfig("", 100), newFakeUserStore(), newFakeCache())
+
+	// 128 KiB，正好是上限的两倍。
+	big := `{"phone":"13800138000","password":"` + strings.Repeat("a", 128<<10) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(big))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("超限请求 status=%d, want 413", rec.Code)
+	}
+	var env Envelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("响应不是 JSON 包络: %v，原文 %q", err, rec.Body.String())
+	}
+	if env.Code != 41301 {
+		t.Fatalf("code=%d, want 41301（不能混成 40001 格式错）", env.Code)
+	}
+}
+
 // TestRefreshUserLookupFailureIsInternal 区分"用户没了"和"库挂了"。
 //
 // 缺陷形态：refresh 里 a.users.Get 的任何错误都走 failUnauthorized，

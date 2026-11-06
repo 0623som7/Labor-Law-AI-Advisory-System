@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -29,6 +30,7 @@ const (
 	msgRateLimited    = "登录尝试过于频繁，请稍后再试"
 	msgRegRateLimited = "注册尝试过于频繁，请稍后再试"
 	msgBadBody        = "请求体格式不正确"
+	msgBodyTooLarge   = "请求体过大"
 )
 
 // 注册请求的字段边界，与 contract/openapi.yaml 的 RegisterRequest 对齐。
@@ -71,8 +73,7 @@ type refreshRequest struct {
 // 不做"注册归注册、登录归登录"的两次握手。
 func (a *API) register(c *gin.Context) {
 	var req registerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		FailCode(c, port.CodeInvalidArgument, msgBadBody)
+	if !bindAuthBody(c, &req) {
 		return
 	}
 
@@ -144,8 +145,7 @@ func (a *API) register(c *gin.Context) {
 //  2. 任何失败都是同一个 40101 和同一句文案，且都花掉一次 bcrypt 的时间。
 func (a *API) login(c *gin.Context) {
 	var req loginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		FailCode(c, port.CodeInvalidArgument, msgBadBody)
+	if !bindAuthBody(c, &req) {
 		return
 	}
 
@@ -211,8 +211,7 @@ func (a *API) login(c *gin.Context) {
 // 请求能继续——取不到或取到别人的就按失效处理，所以同一枚 refresh 只能用一次。
 func (a *API) refresh(c *gin.Context) {
 	var req refreshRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		FailCode(c, port.CodeInvalidArgument, msgBadBody)
+	if !bindAuthBody(c, &req) {
 		return
 	}
 	token := strings.TrimSpace(req.RefreshToken)
@@ -409,6 +408,24 @@ func (a *API) rateLimited(ctx context.Context, c *gin.Context, prefix string, li
 		}
 	}
 	return n > int64(limit)
+}
+
+// bindAuthBody 解析账号域请求体，并把"超限"与"格式错"分成两个错误码。
+//
+// 请求体上限由 bodyLimit 中间件用 http.MaxBytesReader 施加，越界时那个
+// 错误会原样从 ShouldBindJSON 里带出来。两者混成一个 40001 的话，
+// 前端只看得到"请求体格式不正确"，永远查不出真正撞的是哪堵墙。
+func bindAuthBody(c *gin.Context, dst any) bool {
+	if err := c.ShouldBindJSON(dst); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			FailCode(c, port.CodeFileTooLarge, msgBodyTooLarge)
+			return false
+		}
+		FailCode(c, port.CodeInvalidArgument, msgBadBody)
+		return false
+	}
+	return true
 }
 
 // failBadCredentials 是登录失败的唯一出口，文案与错误码都不可分叉。

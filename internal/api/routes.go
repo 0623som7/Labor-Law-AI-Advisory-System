@@ -34,9 +34,12 @@ func (a *API) buildRouter() *gin.Engine {
 	v1 := r.Group("/api/v1")
 
 	// 公开接口：注册、登录、续期不需要令牌。
-	v1.POST("/auth/register", a.register)
-	v1.POST("/auth/login", a.login)
-	v1.POST("/auth/refresh", a.refresh)
+	//
+	// 三条都挂 bodyLimit：它们是最容易被打的入口，而请求体本身不到 200 字节，
+	// 没有任何正当理由让它们接受任意长度的输入。
+	v1.POST("/auth/register", bodyLimit(maxAuthBodyBytes), a.register)
+	v1.POST("/auth/login", bodyLimit(maxAuthBodyBytes), a.login)
+	v1.POST("/auth/refresh", bodyLimit(maxAuthBodyBytes), a.refresh)
 
 	// 受保护接口：分组挂 requireAuth，新增路由时不会漏鉴权。
 	authed := v1.Group("", a.requireAuth())
