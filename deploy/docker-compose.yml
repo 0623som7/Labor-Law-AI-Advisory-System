@@ -31,6 +31,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # 只发布到宿主 loopback：本机直接 go run 的 api 用 .env 里的 REDIS_ADDR=127.0.0.1:6379，
+    # 不发布这个端口时 api 连不上、/readyz 里只有 mysql（缓存与限流降级）。
+    # 绑 127.0.0.1 而不是 0.0.0.0：Redis 无密码，暴露到公网等于把库交给别人。
+    ports:
+      - "127.0.0.1:6379:6379"
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
@@ -62,6 +67,9 @@ services:
       # dev 下 requireAuth 认 AUTH_DEV_USER 就把任何请求当成同一个用户，
       # 线上出现这种状态等于所有人共用 dev-user-0001。
       APP_ENV: ${APP_ENV:?APP_ENV 必须显式设置（dev / staging / production）}
+      # 容器内 poppler-utils 装在 PATH 里，直接写可执行名即可。
+      # .env 里那个路径是宿主机 Windows 用的，注进来会让容器去执行一个不存在的文件。
+      FILE_PDFTOTEXT_PATH: pdftotext
       # 容器里必须用服务名，.env 里的 127.0.0.1 是宿主机视角。
       MYSQL_DSN: "root:${MYSQL_ROOT_PASSWORD:-laborlaw_root}@tcp(mysql:3306)/laborlaw?parseTime=true&charset=utf8mb4&loc=UTC"
       REDIS_ADDR: "redis:6379"
