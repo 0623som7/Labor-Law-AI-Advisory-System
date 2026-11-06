@@ -26,6 +26,9 @@ pnpm-debug.log*
 /storage/
 /tmp/
 
+# ---- 项目专用 MySQL 实例（scripts/dev-mysql.ps1 的落点）----
+/.dev/
+
 # ---- 编辑器 / OS ----
 .idea/
 .vscode/settings.local.json
