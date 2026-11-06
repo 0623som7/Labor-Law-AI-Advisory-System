@@ -88,12 +88,20 @@ func run(migrateOnly bool) error {
 
 	// 文件链路：store / storage / extractor 三段分别注入。
 	// 缺任一段时对应路由返回 501，而不是带着半条链路起服务。
+	extractor := file.NewExtractor(cfg)
+	// 启动自检一次 pdftotext：它装错（xpdf 冒充 poppler）时，上传接口会把每个
+	// PDF 都判成"解析失败"，而那条错误只会在真上传时才出现。这里只 Warn 不拦启动：
+	// dev 环境下即使没装 poppler，其余接口仍要能用。
+	if err := extractor.CheckBinary(ctx); err != nil {
+		logger.Warn("pdftotext 自检未通过，PDF 上传将无法解析", "err", err.Error())
+	}
+
 	opts := []api.Option{
 		api.WithCheckers(inf.checkers...),
 		// B 的 agent.Runner 交付前先用 stub：链路能跑通，替换只改这一行。
 		api.WithRunner(newStubRunner(logger)),
 		api.WithHub(stream.NewHub(stream.Options{}, 0, logger)),
-		api.WithExtractor(file.NewExtractor(cfg)),
+		api.WithExtractor(extractor),
 	}
 	// 无存储模式（dev 连不上 MySQL）不注入 Store：让 /files/* 明确返回 501，
 	// 而不是在 handler 里对一个 nil 接口发请求。

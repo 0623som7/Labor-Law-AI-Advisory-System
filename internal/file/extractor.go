@@ -28,6 +28,7 @@ type Extractor struct {
 	maxBlocksPerPage int
 	minConfidence    float64
 	run              runner
+	probe            prober
 	log              *slog.Logger
 }
 
@@ -57,6 +58,7 @@ func NewExtractor(cfg config.Config) *Extractor {
 		maxBlocksPerPage: maxBlocks,
 		minConfidence:    cfg.File.MinConfidence,
 		run:              execRunner{},
+		probe:            execRunner{},
 		log:              slog.Default(),
 	}
 }
@@ -111,6 +113,15 @@ func (e *Extractor) Parse(ctx context.Context, fileID, path string) (*port.Parse
 	if err != nil {
 		return nil, port.Wrap(port.CodeUnsupportedMedia, err, "PDF 无法解析")
 	}
+	// 0 页必须当场失败：后面所有判定都建立在"至少有一页"之上。
+	// 现在 parsePoppler 遇到空 doc 自己会报错，这里是第二道闸——
+	// 一旦哪天换了更宽松的解析器（比如允许空 doc 返回空切片），
+	// 0 页会一路走到 doc.Confidence = 0/0 = NaN，而 NaN < minConfidence 恒为 false，
+	// 于是一份空文件以 page_count=0、confidence=NaN "成功"返回。
+	if len(pages) == 0 {
+		return nil, port.New(port.CodeUnsupportedMedia,
+			"PDF 未解析出任何页面（pdftotext 输出为空或格式不认识）")
+	}
 	if len(pages) > e.maxPages {
 		return nil, port.New(port.CodeFileTooLarge, "PDF 超过 %d 页", e.maxPages)
 	}
@@ -158,11 +169,9 @@ func (e *Extractor) Parse(ctx context.Context, fileID, path string) (*port.Parse
 	// 那个公式在本实现里算不出来。用"有文本的页占比"是同一意图的近似：
 	// 扫描件的每一页都取不到字，整份文档的占比会直接掉到 0。
 	//
-	// 零页单独返回：0/0 在 Go 里是 NaN，而 NaN < minConfidence 恒为 false，
-	// 会让一份一页都没解析出来的 PDF 以 confidence=NaN 成功返回。
-	if len(pages) == 0 {
-		return doc, port.New(port.CodeNoTextLayer, "未检测到可提取的文本层（扫描件），请改用 OCR")
-	}
+	// 分母非零由上面的 len(pages)==0 保证。这行注释是给将来改代码的人看的：
+	// 0/0 在 Go 里是 NaN，而 NaN 与任何数比较都是 false，`NaN < minConfidence`
+	// 也会是 false——"置信度太低"的兜底会静默失效，文件反而一路成功。
 	doc.Confidence = float64(pagesWithText) / float64(len(pages))
 
 	// 首页无字才算扫描件，阈值在这里不参与判断：2 页里第 2 页是扫描签字页时
@@ -186,8 +195,18 @@ func (e *Extractor) Parse(ctx context.Context, fileID, path string) (*port.Parse
 
 // mapRunError 把子进程失败翻译成业务码。
 //
-// 关键区分：超时是可重试的（CodeTaskTimeout），而加密/损坏是不可重试的
-// （CodeUnsupportedMedia）。混成一个码会让前端对同一份坏文件反复重试。
+// 判定顺序是有原因的，不能随手调换：
+//
+//	1. ctx 超时 → 50401（可重试）
+//	2. 找不到可执行文件 → 50001（配置错）
+//	3. stderr 是 Usage / unknown option → 50001（装错工具）
+//	4. password / encrypted → 41501（文件加密）
+//	5. 其余 → 41501（文件损坏）
+//
+// 第 3 条必须排在第 4 条前面。实测过的坑：本机 PATH 里的 pdftotext 是 xpdf 4.06，
+// 它不认 -bbox-layout，于是打印 Usage 文本并以 99 退出；而那段 Usage 里恰好有
+// "owner password (for encrypted files)" 一行——顺序反了就会把"工具装错了"
+// 报成"PDF 已加密，请先解除密码"，用户拿着一个完全正常的 PDF 去解密码。
 func (e *Extractor) mapRunError(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return port.Wrap(port.CodeTaskTimeout, err, "PDF 解析超时（%s）", e.timeout)
@@ -197,12 +216,21 @@ func (e *Extractor) mapRunError(err error) error {
 	}
 
 	detail := detailOf(err)
-	switch {
-	case strings.Contains(detail, "password"), strings.Contains(detail, "encrypted"):
-		return port.Wrap(port.CodeUnsupportedMedia, err, "PDF 已加密，请先解除密码")
-	case strings.Contains(detail, "executable file not found"), strings.Contains(detail, "no such file"):
-		return port.Wrap(port.CodeInternal, err, "无法执行 pdftotext")
-	default:
-		return port.Wrap(port.CodeUnsupportedMedia, err, "PDF 解析失败")
+
+	// 工具装错优先于文件有问题：这两类错误都提示"换一个二进制"，而不是"换一个文件"。
+	if strings.Contains(detail, "usage:") ||
+		strings.Contains(detail, "unknown option") ||
+		strings.Contains(detail, "invalid option") {
+		return port.Wrap(port.CodeInternal, err,
+			"pdftotext 版本不兼容：需要 poppler 版（支持 -bbox-layout），"+
+				"当前可执行文件看起来是 xpdf 或其他实现。"+
+				"请设置 FILE_PDFTOTEXT_PATH 指向 poppler 的 pdftotext")
 	}
+	if strings.Contains(detail, "password") || strings.Contains(detail, "encrypted") {
+		return port.Wrap(port.CodeUnsupportedMedia, err, "PDF 已加密，请先解除密码")
+	}
+	if strings.Contains(detail, "executable file not found") || strings.Contains(detail, "no such file") {
+		return port.Wrap(port.CodeInternal, err, "无法执行 pdftotext")
+	}
+	return port.Wrap(port.CodeUnsupportedMedia, err, "PDF 解析失败")
 }

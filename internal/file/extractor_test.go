@@ -291,3 +291,84 @@ func TestParseEmptyPath(t *testing.T) {
 		t.Fatalf("错误码 = %v, want 40001", code)
 	}
 }
+
+// TestMapRunErrorUsageOutput 守住这次的根因：xpdf 不认识 -bbox-layout，
+// 打印 Usage（里面恰好含 "owner password (for encrypted files)"）并以 99 退出。
+// 早先的判定顺序会把它当成"PDF 已加密"（41501），用户拿正常文件去解密码。
+// 现在必须先判 Usage → 50001 且提示需要 poppler。
+func TestMapRunErrorUsageOutput(t *testing.T) {
+	e := testExtractor(&fakeRunner{}, 50)
+
+	raw := &execError{detail: "Usage: pdftotext [options] <PDF-file>\n" +
+		"  -upw <string>          : user password (for encrypted files)\n" +
+		"  -opw <string>          : owner password (for encrypted files)"}
+	err := e.mapRunError(raw)
+
+	if code := port.CodeOf(err); code != port.CodeInternal {
+		t.Fatalf("错误码 = %v, want 50001（工具装错不是文件加密）", code)
+	}
+	msg := port.AsAppError(err).Message
+	if !strings.Contains(msg, "poppler") {
+		t.Fatalf("文案必须指出需要 poppler，实际 %q", msg)
+	}
+	if !strings.Contains(msg, "-bbox-layout") {
+		t.Fatalf("文案必须点出不支持 -bbox-layout，实际 %q", msg)
+	}
+}
+
+// TestMapRunErrorEncrypted 守住真正的加密 PDF 仍然走 41501。
+func TestMapRunErrorEncrypted(t *testing.T) {
+	e := testExtractor(&fakeRunner{}, 50)
+
+	err := e.mapRunError(&execError{detail: "Syntax Error: Incorrect password"})
+	if code := port.CodeOf(err); code != port.CodeUnsupportedMedia {
+		t.Fatalf("错误码 = %v, want 41501", code)
+	}
+	if !strings.Contains(port.AsAppError(err).Message, "加密") {
+		t.Fatalf("文案应提示加密，实际 %q", port.AsAppError(err).Message)
+	}
+}
+
+// TestMapRunErrorUnknownOption 覆盖另一种"工具不认参数"的措辞。
+func TestMapRunErrorUnknownOption(t *testing.T) {
+	e := testExtractor(&fakeRunner{}, 50)
+
+	err := e.mapRunError(&execError{detail: "Error: Unknown option '-bbox-layout'."})
+	if code := port.CodeOf(err); code != port.CodeInternal {
+		t.Fatalf("错误码 = %v, want 50001", code)
+	}
+	if !strings.Contains(port.AsAppError(err).Message, "poppler") {
+		t.Fatalf("文案必须指出需要 poppler，实际 %q", port.AsAppError(err).Message)
+	}
+}
+
+// TestParseEmptyOutput 守住 0 页：必须报错返回，绝不能带着 page_count=0 成功。
+// 空页面文档会被 parsePoppler 判成"没有输出任何页面"，Parse 的第二道闸在它之后。
+func TestParseEmptyOutput(t *testing.T) {
+	r := &fakeRunner{out: []byte(`<?xml version="1.0" encoding="UTF-8"?><html><body><doc></doc></body></html>`)}
+	e := testExtractor(r, 50)
+
+	doc, err := e.Parse(context.Background(), "f", "/tmp/a.pdf")
+	if err == nil {
+		t.Fatalf("0 页必须报错，实际 doc=%+v", doc)
+	}
+	if doc != nil {
+		t.Fatalf("0 页不应返回 doc，实际 %+v", doc)
+	}
+	if code := port.CodeOf(err); code != port.CodeUnsupportedMedia {
+		t.Fatalf("错误码 = %v, want 41501", code)
+	}
+}
+
+// TestParseEmptyStdout 覆盖子进程"成功但什么都没输出"。
+func TestParseEmptyStdout(t *testing.T) {
+	e := testExtractor(&fakeRunner{out: nil}, 50)
+
+	doc, err := e.Parse(context.Background(), "f", "/tmp/a.pdf")
+	if err == nil || doc != nil {
+		t.Fatalf("空输出必须失败，实际 doc=%+v err=%v", doc, err)
+	}
+	if code := port.CodeOf(err); code != port.CodeUnsupportedMedia {
+		t.Fatalf("错误码 = %v, want 41501", code)
+	}
+}
