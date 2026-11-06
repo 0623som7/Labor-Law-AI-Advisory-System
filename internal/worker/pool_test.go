@@ -275,7 +275,7 @@ func TestProgressThrottle(t *testing.T) {
 		progress(10, "解析")
 		progress(30, "抽取") // 距上次 <500ms，丢弃
 		time.Sleep(progressInterval + 20*time.Millisecond)
-		progress(60, "规则") // 距上次 ≥500ms，落库
+		progress(60, "规则")  // 距上次 ≥500ms，落库
 		progress(100, "完成") // 被节流，靠 flush 补写
 		return nil
 	}

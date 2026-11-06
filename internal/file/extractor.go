@@ -197,11 +197,11 @@ func (e *Extractor) Parse(ctx context.Context, fileID, path string) (*port.Parse
 //
 // 判定顺序是有原因的，不能随手调换：
 //
-//	1. ctx 超时 → 50401（可重试）
-//	2. 找不到可执行文件 → 50001（配置错）
-//	3. stderr 是 Usage / unknown option → 50001（装错工具）
-//	4. password / encrypted → 41501（文件加密）
-//	5. 其余 → 41501（文件损坏）
+//  1. ctx 超时 → 50401（可重试）
+//  2. 找不到可执行文件 → 50001（配置错）
+//  3. stderr 是 Usage / unknown option → 50001（装错工具）
+//  4. password / encrypted → 41501（文件加密）
+//  5. 其余 → 41501（文件损坏）
 //
 // 第 3 条必须排在第 4 条前面。实测过的坑：本机 PATH 里的 pdftotext 是 xpdf 4.06，
 // 它不认 -bbox-layout，于是打印 Usage 文本并以 99 退出；而那段 Usage 里恰好有
