@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      # 格式检查必须在 build 之前：gofmt 不通过说明提交前没跑 make fmt，
+      # 这类问题不拦下来会一路漂到 review 阶段。
+      - name: gofmt
+        run: |
+          out=$(gofmt -l internal cmd)
+          if [ -n "$out" ]; then
+            echo "以下文件未格式化:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      # -race 在 CI 跑而不是本地：Windows 上 race detector 需要 gcc，
+      # 而 ubuntu runner 天然有。
+      - name: test
+        run: go test -race -count=1 ./...
+
+      - name: coverage
+        run: go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1

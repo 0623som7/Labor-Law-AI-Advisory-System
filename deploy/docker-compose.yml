@@ -1,0 +1,84 @@
+# 本地与演示环境的单机编排：MySQL + Redis + api。
+#
+# 2 核 2G 的底线（见 docs/冲刺计划_1个月.md §1）：
+#   MySQL 256M buffer、Redis maxmemory 128M、api 容器硬限 512M、开 swap。
+# 这里只做资源上限，swap 必须在宿主机上手工开——容器内开 swap 不生效。
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-laborlaw_root}
+      MYSQL_DATABASE: laborlaw
+      TZ: Asia/Shanghai
+    command: ["--defaults-extra-file=/etc/mysql/conf.d/my.cnf"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    # 不映射 3306 到宿主机：本机通常已经装了 MySQL，映射会撞端口。
+    # 需要连库调试时用 `docker compose exec mysql mysql -uroot -p`。
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      # 容器里必须用服务名，.env 里的 127.0.0.1 是宿主机视角。
+      MYSQL_DSN: "root:${MYSQL_ROOT_PASSWORD:-laborlaw_root}@tcp(mysql:3306)/laborlaw?parseTime=true&charset=utf8mb4&loc=UTC"
+      REDIS_ADDR: "redis:6379"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../storage:/app/storage
+    healthcheck:
+      # 用 readyz 而不是 healthz：容器要等依赖真的可用才算就绪。
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+volumes:
+  mysql-data:
+  redis-data:

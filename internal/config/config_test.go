@@ -160,6 +160,20 @@ func TestLoadFromErrors(t *testing.T) {
 			wantErr: "生产环境 LOG_FORMAT 必须是 json",
 		},
 		{
+			name: "生产禁止自动迁移",
+			mutate: func(e map[string]string) {
+				e["APP_ENV"] = "production"
+				e["LOG_FORMAT"] = "json"
+				e["AUTO_MIGRATE"] = "true"
+			},
+			wantErr: "生产环境禁止 AUTO_MIGRATE",
+		},
+		{
+			name:    "布尔值非法",
+			mutate:  func(e map[string]string) { e["AUTO_MIGRATE"] = "yes" },
+			wantErr: "AUTO_MIGRATE 必须是 true / false",
+		},
+		{
 			name:    "access 不短于 refresh",
 			mutate:  func(e map[string]string) { e["JWT_REFRESH_TTL"] = "1h" },
 			wantErr: "JWT_ACCESS_TTL 必须小于 JWT_REFRESH_TTL",

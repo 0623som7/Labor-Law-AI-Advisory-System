@@ -1,0 +1,40 @@
+# 多阶段构建：编译在 golang 镜像里，运行在精简 alpine 里。
+# 本机是 Windows，构建产物必须是 linux/amd64，所以 GOOS/GOARCH 显式指定。
+FROM golang:1.22-alpine AS build
+
+WORKDIR /src
+
+# 先只拷依赖清单：依赖没变时这一层能命中缓存，改业务代码不会重下模块。
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# CGO_ENABLED=0：产出静态二进制，运行时不需要 libc，也不需要 gcc。
+# -trimpath 去掉本机绝对路径，-s -w 去掉符号表（镜像小一半）。
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+
+FROM alpine:3.20
+
+# tzdata：日志时间要能按 Asia/Shanghai 显示；ca-certificates：调 LLM 网关要 TLS。
+RUN apk add --no-cache ca-certificates tzdata \
+    && adduser -D -u 10001 app
+
+WORKDIR /app
+COPY --from=build /out/api /app/api
+
+# 合同落盘目录必须存在且属于运行用户，否则上传接口在运行期才报权限错。
+RUN mkdir -p /app/storage && chown -R app:app /app
+
+USER app
+
+# GOMEMLIMIT 比容器硬限低一截，让 GC 在 OOM Killer 之前先自己回收；
+# 否则 2G 机器上会出现"进程被 kill 但日志里没有任何错误"。
+ENV GOMEMLIMIT=350MiB \
+    GOGC=100 \
+    TZ=Asia/Shanghai
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/api"]

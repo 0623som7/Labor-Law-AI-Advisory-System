@@ -1,0 +1,15 @@
+# 构建上下文排除：镜像里不需要本地产物、密钥与 git 历史。
+.git
+.github
+bin/
+storage/
+docs/
+eval/
+data/
+.env
+.env.*
+*.exe
+*.log
+.vscode/
+.idea/
+web/node_modules/

@@ -58,6 +58,9 @@ type AppConfig struct {
 	Name string
 	// Version 是构建版本，验收演示时用它证明跑的是哪个 commit。
 	Version string
+	// AutoMigrate 为 true 时进程启动即应用未执行的迁移。
+	// 只给本地与预发用：生产环境的 schema 变更必须走人工确认，不能随进程重启发生。
+	AutoMigrate bool
 }
 
 // HTTPConfig 是 http.Server 的超时与限额。
@@ -199,9 +202,10 @@ func LoadFrom(get func(string) string) (Config, error) {
 
 	cfg := Config{
 		App: AppConfig{
-			Env:     Env(l.str("APP_ENV", string(EnvDev))),
-			Name:    l.str("APP_NAME", "laborlaw-api"),
-			Version: l.str("APP_VERSION", "dev"),
+			Env:         Env(l.str("APP_ENV", string(EnvDev))),
+			Name:        l.str("APP_NAME", "laborlaw-api"),
+			Version:     l.str("APP_VERSION", "dev"),
+			AutoMigrate: l.boolean("AUTO_MIGRATE", false),
 		},
 		HTTP: HTTPConfig{
 			Addr:              l.str("HTTP_ADDR", ":8080"),
@@ -323,6 +327,9 @@ func (c Config) Validate() error {
 		if c.Log.Format != "json" {
 			add("生产环境 LOG_FORMAT 必须是 json")
 		}
+		if c.App.AutoMigrate {
+			add("生产环境禁止 AUTO_MIGRATE：schema 变更必须人工确认")
+		}
 	}
 
 	if len(problems) > 0 {
@@ -427,4 +434,21 @@ func (l *loader) frac(name string, def, min, max float64) float64 {
 		return def
 	}
 	return f
+}
+
+// boolean 只接受 true/false/1/0。写成 yes/on 也当错误：
+// 环境变量文件是人手写的，含糊的取值在排查时最费时间。
+func (l *loader) boolean(name string, def bool) bool {
+	raw := strings.ToLower(strings.TrimSpace(l.get(name)))
+	switch raw {
+	case "":
+		return def
+	case "true", "1":
+		return true
+	case "false", "0":
+		return false
+	default:
+		l.fail("%s 必须是 true / false", name)
+		return def
+	}
 }

@@ -1,4 +1,4 @@
-// Command api 是 HTTP 进程入口：装配配置、日志、路由，然后进入优雅关闭循环。
+// Command api 是 HTTP 进程入口：装配配置、日志、存储与路由，然后进入优雅关闭循环。
 //
 // 这里几乎没有业务代码是有意的：进程层只负责"把依赖装起来、把信号接住"，
 // 每一个 handler 都能在 httptest 里单独跑起来，不依赖这个文件。
@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,8 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"laborlaw/internal/api"
 	"laborlaw/internal/config"
+	"laborlaw/internal/store"
 )
 
 func main() {
@@ -49,9 +53,15 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	inf, err := setupInfra(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer inf.shutdown(logger)
+
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,
-		Handler:           api.New(cfg, logger).Handler(),
+		Handler:           api.New(cfg, logger, inf.checkers...).Handler(),
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,
@@ -65,6 +75,8 @@ func run() error {
 		"version", cfg.App.Version,
 		"addr", cfg.HTTP.Addr,
 		"dotenv_keys", loaded,
+		"mysql", inf.db != nil,
+		"redis", inf.rdb != nil,
 	)
 
 	if err := serve(ctx, srv, cfg.HTTP.ShutdownTimeout, logger); err != nil {
@@ -72,6 +84,76 @@ func run() error {
 	}
 	logger.Info("stopped")
 	return nil
+}
+
+// infra 是进程持有的外部资源。字段不导出：除 setup / shutdown 外没有别处该碰它们。
+type infra struct {
+	db       *sql.DB
+	rdb      *redis.Client
+	checkers []api.Checker
+}
+
+// setupInfra 建立 MySQL / Redis 连接，并在 AUTO_MIGRATE 打开时执行迁移。
+//
+// dev 环境下连不上不致命：降级成"无存储模式"，/readyz 报对应依赖 down，
+// 前端与 B 仍可继续联调。非 dev 环境必须失败——带着坏存储启动只会把故障
+// 推迟到第一个真实请求，而那时的报错信息远不如启动日志清楚。
+func setupInfra(ctx context.Context, cfg config.Config, log *slog.Logger) (*infra, error) {
+	inf := &infra{}
+
+	db, dbErr := store.OpenMySQL(ctx, cfg.MySQL)
+	switch {
+	case dbErr != nil && cfg.App.Env != config.EnvDev:
+		return nil, dbErr
+	case dbErr != nil:
+		log.Warn("MySQL 不可用，dev 环境以无存储模式继续", "err", dbErr.Error())
+	default:
+		inf.db = db
+	}
+
+	if inf.db != nil {
+		if cfg.App.AutoMigrate {
+			applied, mErr := store.Migrate(ctx, inf.db)
+			if mErr != nil {
+				inf.shutdown(log)
+				return nil, mErr
+			}
+			log.Info("schema 迁移完成", "applied", applied)
+		}
+		inf.checkers = append(inf.checkers, store.NewMySQLChecker(inf.db))
+	}
+
+	rdb, rErr := store.OpenRedis(ctx, cfg.Redis)
+	switch {
+	case rErr != nil && cfg.App.Env != config.EnvDev:
+		inf.shutdown(log)
+		return nil, rErr
+	case rErr != nil:
+		log.Warn("Redis 不可用，dev 环境继续（缓存与限流暂不可用）", "err", rErr.Error())
+	default:
+		inf.rdb = rdb
+		inf.checkers = append(inf.checkers, store.NewRedisChecker(inf.rdb))
+	}
+
+	return inf, nil
+}
+
+// shutdown 逆序释放资源。
+//
+// 关闭失败只记日志、不返回错误：此处已在退出路径上，没有上层可以处理这个错误，
+// 而连接池未关干净会随进程退出被操作系统回收。记日志是为了在"退出很慢"时
+// 能看出是谁卡住了。
+func (i *infra) shutdown(log *slog.Logger) {
+	if i.rdb != nil {
+		if err := i.rdb.Close(); err != nil {
+			log.Warn("关闭 Redis 失败", "err", err.Error())
+		}
+	}
+	if i.db != nil {
+		if err := i.db.Close(); err != nil {
+			log.Warn("关闭 MySQL 失败", "err", err.Error())
+		}
+	}
 }
 
 // serve 启动服务器并等待退出信号。
