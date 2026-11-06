@@ -17,8 +17,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 
 FROM alpine:3.20
 
-# tzdata：日志时间要能按 Asia/Shanghai 显示；ca-certificates：调 LLM 网关要 TLS。
-RUN apk add --no-cache ca-certificates tzdata \
+# tzdata：日志时间要能按 Asia/Shanghai 显示；ca-certificates：调 LLM 网关要 TLS；
+# poppler-utils：internal/file 调 pdftotext 解析 PDF，缺了它上传接口会直接 500。
+RUN apk add --no-cache ca-certificates tzdata poppler-utils \
     && adduser -D -u 10001 app
 
 WORKDIR /app
