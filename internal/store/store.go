@@ -15,6 +15,12 @@ import (
 type DB struct {
 	db *sql.DB
 	tx *sql.Tx
+
+	// secret 是账号域计算手机号检索哈希（HMAC-SHA256）的密钥。
+	// 它挂在聚合体上而不是 Users 上，是为了让 Tx 回调里拿到的 Users
+	// 与连接池上的 Users 用同一把密钥——两处密钥不同会让事务内写入的账号
+	// 永远查不到，而且症状是"注册成功但登录失败"，非常难查。
+	secret string
 }
 
 // 编译期断言：六域 + Tx 必须与 B 依赖的契约一致。
@@ -25,6 +31,14 @@ var _ port.Store = (*DB)(nil)
 // 查起来比一条"尚未配置 MySQL"的业务错误难十倍。
 func New(db *sql.DB) *DB {
 	return &DB{db: db}
+}
+
+// NewWithSecret 构造聚合体并注入账号域的手机号哈希密钥。
+//
+// 与 New 分开而不是给它加参数：New 的调用点分布在测试与无存储模式，
+// 它们不关心账号域；多一个必填参数会让所有调用点被迫传一个空串。
+func NewWithSecret(db *sql.DB, secret string) *DB {
+	return &DB{db: db, secret: secret}
 }
 
 // q 返回当前应当使用的连接：事务内是 tx，否则是连接池。
@@ -59,8 +73,21 @@ func (s *DB) Tx(ctx context.Context, fn func(port.Store) error) error {
 		return port.New(port.CodeInternal, "MySQL 未配置，事务不可用")
 	}
 	return withTx(ctx, s.db, func(tx *sql.Tx) error {
-		return fn(&DB{db: s.db, tx: tx})
+		return fn(&DB{db: s.db, tx: tx, secret: s.secret})
 	})
+}
+
+// Users 返回账号域。
+//
+// 它与六域不同：账号域不在 port.Store 里，是一个独立接口（见 port.UserStore 的注释），
+// 因此不挂进 Store 的访问器集合，只作为聚合体上的一条便捷通道，供 cmd 装配与
+// 将来「在事务里建号 + 建会话」这类用例复用同一条连接。
+func (s *DB) Users() port.UserStore {
+	q := s.q()
+	if q == nil || s.secret == "" {
+		return unimplementedUsers{}
+	}
+	return newUsersOn(q, s.secret)
 }
 
 // Session 返回会话域。
