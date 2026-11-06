@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ type Extractor struct {
 	maxBlocksPerPage int
 	minConfidence    float64
 	run              runner
+	log              *slog.Logger
 }
 
 // NewExtractor 从配置构造解析器。
@@ -55,14 +57,33 @@ func NewExtractor(cfg config.Config) *Extractor {
 		maxBlocksPerPage: maxBlocks,
 		minConfidence:    cfg.File.MinConfidence,
 		run:              execRunner{},
+		log:              slog.Default(),
 	}
+}
+
+// logger 兜底到 slog.Default()：Extractor 可能被测试或别的包以零值方式构造，
+// nil 解引用会把"低置信度警告"变成一次 500，比不打日志糟得多。
+func (e *Extractor) logger() *slog.Logger {
+	if e.log == nil {
+		return slog.Default()
+	}
+	return e.log
 }
 
 // Parse 解析一份 PDF，返回可直接落库的 ParsedDoc。
 //
-// 返回值约定：**error 非 nil 时 doc 仍可能非 nil**（置信度过低、页数超限的情形），
+// 返回值约定：**error 非 nil 时 doc 仍可能非 nil**（整份无文本层、页数超限的情形），
 // 调用方可以据此把 confidence / page_count 落库，让用户在"解析过但没文本层"
 // 和"从没解析过"之间能区分开。
+//
+// 文本层判定规则（真实合同常带扫描附件，一页扫描不该让整份不可用）：
+//  1. 首页（Index==0）没有任何文本块 —— 认定整份是扫描件，返回 (doc, 42201)。
+//     首页无字才是"这份文档是图片"的可靠信号：正文首页永远有内容，
+//     而签字页、骑缝章页、附件经常是扫描进去的。
+//  2. 首页有文字、但"有文字的页 / 总页数"低于 File.MinConfidence —— 仍然返回
+//     (doc, nil)，只打一条 Warn。覆盖率低是数据质量问题，不是拒绝服务的理由；
+//     OCRUsed 保持 false，本实现没有跑 OCR，置 true 是撒谎。
+//  3. 占比正常 —— 行为不变。
 func (e *Extractor) Parse(ctx context.Context, fileID, path string) (*port.ParsedDoc, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, port.New(port.CodeInvalidArgument, "文件路径为空")
@@ -131,16 +152,34 @@ func (e *Extractor) Parse(ctx context.Context, fileID, path string) (*port.Parse
 		})
 	}
 
-	// 置信度 = 有文字的行所属页数 / 总页数。
+	// 置信度 = 有文字的页 / 总页数。
 	//
 	// port 的注释写的是"提取字符数 / 内容流估算字符数"，但 poppler 不暴露内容流规模，
 	// 那个公式在本实现里算不出来。用"有文本的页占比"是同一意图的近似：
 	// 扫描件的每一页都取不到字，整份文档的占比会直接掉到 0。
+	//
+	// 零页单独返回：0/0 在 Go 里是 NaN，而 NaN < minConfidence 恒为 false，
+	// 会让一份一页都没解析出来的 PDF 以 confidence=NaN 成功返回。
+	if len(pages) == 0 {
+		return doc, port.New(port.CodeNoTextLayer, "未检测到可提取的文本层（扫描件），请改用 OCR")
+	}
 	doc.Confidence = float64(pagesWithText) / float64(len(pages))
 
+	// 首页无字才算扫描件，阈值在这里不参与判断：2 页里第 2 页是扫描签字页时
+	// 占比是 0.5，低于 0.6，但那份合同的第一页完全可用，拒掉整份等于把
+	// 可审查的正文一起丢掉。反过来，首页就没字，说明这份 PDF 是图片拼的。
+	if len(doc.Pages[0].Blocks) == 0 {
+		return doc, port.New(port.CodeNoTextLayer, "未检测到可提取的文本层（扫描件），请改用 OCR")
+	}
+
 	if doc.Confidence < e.minConfidence {
-		return doc, port.New(port.CodeNoTextLayer,
-			"未检测到可提取的文本层（%.0f%% 的页面没有文字），可能是扫描件", doc.Confidence*100)
+		// 只告警不拒绝。pages_with_text 一起打出来，运维才能分清是"附件扫描"
+		// 还是"字体编码坏了"——后者 poppler 会提取出私用区乱码，块数正常但内容是垃圾。
+		e.logger().Warn("PDF 文本层覆盖率偏低，按部分可解析继续",
+			"page_count", doc.PageCount,
+			"pages_with_text", pagesWithText,
+			"confidence", doc.Confidence,
+		)
 	}
 	return doc, nil
 }
