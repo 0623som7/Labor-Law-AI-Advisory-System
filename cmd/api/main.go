@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -24,7 +25,13 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	// -migrate：只跑迁移然后退出，供部署时单独执行一次。
+	// 生产环境禁了 AUTO_MIGRATE（schema 变更必须人工确认），但迁移本身总要有人跑，
+	// 所以给它一个显式入口，而不是让运维去装 mysql 客户端手敲 SQL。
+	migrateOnly := flag.Bool("migrate", false, "只执行数据库迁移后退出")
+	flag.Parse()
+
+	if err := run(*migrateOnly); err != nil {
 		// 启动期失败时 logger 本身可能还没建起来（日志配置就在配置里），
 		// 直接写 stderr 是唯一保证能看到错误的通道。
 		fmt.Fprintf(os.Stderr, "api 启动失败: %v\n", err)
@@ -34,7 +41,7 @@ func main() {
 
 // run 是 main 的唯一逻辑体，返回 error 而不是在内部 os.Exit，
 // 这样 defer 能正常执行，也便于将来加集成测试。
-func run() error {
+func run(migrateOnly bool) error {
 	// .env 只补缺：容器里注入的真实环境变量优先级永远更高。
 	loaded, err := config.LoadDotEnv(".env")
 	if err != nil {
@@ -53,11 +60,28 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// 迁移模式下不要顺手再触发一次自动迁移：两条路径同时跑，日志会分不清是谁做的。
+	if migrateOnly {
+		cfg.App.AutoMigrate = false
+	}
+
 	inf, err := setupInfra(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
 	defer inf.shutdown(logger)
+
+	if migrateOnly {
+		if inf.db == nil {
+			return errors.New("--migrate 需要可用的 MySQL 连接，请检查 MYSQL_DSN")
+		}
+		applied, mErr := store.Migrate(ctx, inf.db)
+		if mErr != nil {
+			return fmt.Errorf("执行迁移: %w", mErr)
+		}
+		logger.Info("迁移完成", "applied", applied)
+		return nil
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,

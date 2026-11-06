@@ -87,15 +87,15 @@ chmod 600 .env
 
 # 3.3 首次建库要手动跑一次迁移（生产禁了 AUTO_MIGRATE）
 docker compose -f deploy/docker-compose.yml up -d mysql redis
-docker compose -f deploy/docker-compose.yml run --rm \
-  -e AUTO_MIGRATE=true -e APP_ENV=staging api
+docker compose -f deploy/docker-compose.yml run --rm api -migrate
 
 # 3.4 起服务
 docker compose -f deploy/docker-compose.yml up -d api
 ```
 
 > `AUTO_MIGRATE` 在 `production` 下会被 config 拒绝，这是故意的：schema 变更必须人工确认。
-> 临时用 `APP_ENV=staging` 跑迁移那一趟，跑完即退出。
+> 迁移走 `api -migrate`：跑完即退出，不需要装 mysql 客户端，也不会在线上悄悄改表。
+> 输出 `迁移完成 applied=N` 即成功；重复执行为 `applied=0`，是幂等的。
 
 ---
 
