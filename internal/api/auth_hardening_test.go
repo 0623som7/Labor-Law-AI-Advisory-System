@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"laborlaw/internal/port"
 )
 
 // postJSONStatus 在 goroutine 里发请求，只返回状态码。
@@ -46,6 +48,28 @@ func TestSecondLoginKillsFirstRefresh(t *testing.T) {
 		map[string]string{"refresh_token": second.RefreshToken}, nil)
 	if rec.Code != http.StatusOK || env.Code != 0 {
 		t.Fatalf("新链不可用: status=%d code=%d", rec.Code, env.Code)
+	}
+}
+
+// TestRefreshUserLookupFailureIsInternal 区分"用户没了"和"库挂了"。
+//
+// 缺陷形态：refresh 里 a.users.Get 的任何错误都走 failUnauthorized，
+// 于是 MySQL 抖动被报成"登录失效"，而旧 jti 已经删掉，用户被迫重新登录，
+// 日志里也只剩一次正常的过期事件——故障与业务错误混成同一个码。
+func TestRefreshUserLookupFailureIsInternal(t *testing.T) {
+	users := newFakeUserStore()
+	h := authTestServer(t, authTestConfig("", 100), users, newFakeCache())
+	reg := registerUser(t, h, testPhone, testPassword)
+
+	users.getErr = port.New(port.CodeInternal, "模拟数据库故障")
+
+	rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/refresh",
+		map[string]string{"refresh_token": reg.RefreshToken}, nil)
+	if rec.Code != http.StatusInternalServerError || env.Code != 50001 {
+		t.Fatalf("存储故障时续期: status=%d code=%d, want 500/50001（不能伪装成令牌失效）", rec.Code, env.Code)
+	}
+	if env.Message != msgRefreshService {
+		t.Fatalf("message = %q, want %q", env.Message, msgRefreshService)
 	}
 }
 

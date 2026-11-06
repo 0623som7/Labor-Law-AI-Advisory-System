@@ -50,6 +50,8 @@ type fakeUserStore struct {
 	byPhone map[string]*port.User
 	// createErr 让测试注入"不是唯一键冲突"的存储故障。
 	createErr error
+	// getErr 让测试注入按 ID 查询时的存储故障（区别于"查无此人"）。
+	getErr error
 }
 
 func newFakeUserStore() *fakeUserStore {
@@ -89,6 +91,9 @@ func (f *fakeUserStore) GetByPhone(_ context.Context, phone string) (*port.User,
 func (f *fakeUserStore) Get(_ context.Context, id string) (*port.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	u, ok := f.byID[id]
 	if !ok {
 		return nil, port.New(port.CodeNotFound, "用户不存在")

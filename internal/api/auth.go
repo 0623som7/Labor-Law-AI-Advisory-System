@@ -25,6 +25,7 @@ const (
 	msgNeedLogin      = "请先登录"
 	msgUserService    = "账号服务未就绪"
 	msgTokenService   = "令牌服务暂不可用"
+	msgRefreshService = "续期服务暂不可用"
 	msgRateLimited    = "登录尝试过于频繁，请稍后再试"
 	msgBadBody        = "请求体格式不正确"
 )
@@ -241,7 +242,15 @@ func (a *API) refresh(c *gin.Context) {
 
 	u, err := a.users.Get(ctx, claims.Sub)
 	if err != nil {
-		failUnauthorized(c)
+		if errors.Is(err, &port.AppError{Code: port.CodeNotFound}) {
+			// 用户已被删除：这就是"凭证失效"，403 语义，不必让前端看见故障码。
+			failUnauthorized(c)
+			return
+		}
+		// 库抖动不能报成"登录失效"。此刻旧 jti 已经删了，若混进 40101，
+		// 用户看到的是"重新登录"，而日志把它记成一次正常过期，故障就被藏起来了。
+		log.Error("续期查询用户失败", "trace_id", TraceID(c), "err", err.Error())
+		Fail(c, port.New(port.CodeInternal, msgRefreshService))
 		return
 	}
 
