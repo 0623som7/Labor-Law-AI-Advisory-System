@@ -443,12 +443,25 @@ func TestRefreshRejectsForgedToken(t *testing.T) {
 	reg := registerUser(t, h, testPhone, testPassword)
 
 	// 换掉签名的最后一个字符：结构合法、签名无效。
-	forged := reg.RefreshToken[:len(reg.RefreshToken)-1] + "A"
+	//
+	// 不能无条件替换成 "A"：HS256 签名是 32 字节，RawURLEncoding 下末位只承载
+	// 2 bit，取值只能是 A/B/C/D 四个字符之一。原末位本来就是 "A" 时替换后
+	// 得到的是原令牌，测试会以约 1/4 的概率断言一次"合法令牌被拒"，看着像偶发失败。
+	forged := reg.RefreshToken[:len(reg.RefreshToken)-1] + forgeChar(reg.RefreshToken[len(reg.RefreshToken)-1])
+
 	rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/refresh",
 		map[string]string{"refresh_token": forged}, nil)
 	if rec.Code != http.StatusUnauthorized || env.Code != 40101 {
 		t.Fatalf("伪造 refresh: status=%d code=%d, want 401/40101", rec.Code, env.Code)
 	}
+}
+
+// forgeChar 返回一个与原字符不同的合法 base64url 字符。
+func forgeChar(orig byte) string {
+	if orig == 'A' {
+		return "B"
+	}
+	return "A"
 }
 
 func TestMeReturnsMaskedPhoneOnly(t *testing.T) {
