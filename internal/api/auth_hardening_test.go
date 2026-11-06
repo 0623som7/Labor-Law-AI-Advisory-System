@@ -8,7 +8,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"laborlaw/internal/auth"
 	"laborlaw/internal/port"
 )
 
@@ -164,6 +166,56 @@ func TestAuthBodyLimit(t *testing.T) {
 	}
 	if env.Code != 41301 {
 		t.Fatalf("code=%d, want 41301（不能混成 40001 格式错）", env.Code)
+	}
+}
+
+// TestPasswordLengthCountsRunes 守住密码长度按字符算。
+//
+// 缺陷形态：用 len() 是字节数。一个 40 字的中文密码有 120 字节，会被判成超长；
+// 反过来 7 个汉字是 21 字节，看着过得了下界，其实只有 7 个字符。
+func TestPasswordLengthCountsRunes(t *testing.T) {
+	h := authTestServer(t, authTestConfig("", 100), newFakeUserStore(), newFakeCache())
+
+	// 64 个汉字 = 192 字节，正好是字符数的上界。
+	long := strings.Repeat("密", passwordMaxLen)
+	rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/register",
+		map[string]string{"phone": testPhone, "password": long}, nil)
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("64 个汉字注册: status=%d code=%d msg=%s, want 200", rec.Code, env.Code, env.Message)
+	}
+
+	// 能建号还得能登录：哈希与校验两侧的 72 字节截断规则必须一致。
+	rec, env = doJSON(t, h, http.MethodPost, "/api/v1/auth/login",
+		map[string]string{"phone": testPhone, "password": long}, nil)
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("64 个汉字登录: status=%d code=%d msg=%s, want 200", rec.Code, env.Code, env.Message)
+	}
+
+	// 7 个汉字 = 21 字节：按字节算过得了 8 的下界，按字符算必须拒绝。
+	rec, env = doJSON(t, h, http.MethodPost, "/api/v1/auth/register",
+		map[string]string{"phone": "13900139001", "password": strings.Repeat("密", passwordMinLen-1)}, nil)
+	if rec.Code != http.StatusBadRequest || env.Code != 40001 {
+		t.Fatalf("7 个汉字注册: status=%d code=%d, want 400/40001", rec.Code, env.Code)
+	}
+}
+
+// TestLogoutWithoutCacheStillSucceeds 守住"登出不能因为基础设施缺失而失败"。
+//
+// access token 是无状态签发的，登出本来就没法把它收回来；能吊销的只有续期令牌。
+// 没有 Redis 时连这条也做不到，于是回 50001——前端看到的是"点了登出却登不出去"。
+func TestLogoutWithoutCacheStillSucceeds(t *testing.T) {
+	cfg := authTestConfig("", 100)
+	h := authTestServer(t, cfg, newFakeUserStore(), nil)
+
+	tok, err := auth.Sign(cfg.Auth.Secret, cfg.Auth.Issuer,
+		auth.Claims{Sub: "dev-user-0001", Typ: auth.TypAccess, Jti: "jti-logout"}, time.Hour)
+	if err != nil {
+		t.Fatalf("签发测试用 access token: %v", err)
+	}
+
+	rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/logout", nil, authHeader(tok))
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("无缓存登出: status=%d code=%d msg=%s, want 200", rec.Code, env.Code, env.Message)
 	}
 }
 

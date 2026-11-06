@@ -89,7 +89,9 @@ func (a *API) register(c *gin.Context) {
 			WithField("phone", "手机号格式不正确"))
 		return
 	}
-	if len(req.Password) < passwordMinLen || len(req.Password) > passwordMaxLen {
+	// 按字符数而不是字节数校验：len("密码") 是 6，用户以为自己在填 2 个字符，
+	// 界面却提示"需为 8-64 位"。契约里的 minLength/maxLength 也是字符数。
+	if n := utf8.RuneCountInString(req.Password); n < passwordMinLen || n > passwordMaxLen {
 		Fail(c, port.New(port.CodeInvalidArgument, "参数校验失败").
 			WithField("password", "密码长度需为 8-64 位"))
 		return
@@ -286,13 +288,16 @@ func (a *API) refresh(c *gin.Context) {
 // 因为"登出成功"却仍能用 30 天的 refresh 续期，比登出失败更糟。
 func (a *API) logout(c *gin.Context) {
 	uid := UserID(c)
+	log := loggerFrom(c)
 	if a.cache == nil {
-		FailCode(c, port.CodeInternal, msgTokenService)
+		// 没有缓存就吊销不了续期令牌。但登出必须成功：access token 本来就收不回来，
+		// 回 50001 只会把前端卡在"点了登出还是登不进"的死循环里。
+		log.Warn("无缓存，登出仅作废本端会话", "trace_id", TraceID(c))
+		OK(c, nil)
 		return
 	}
 
 	ctx := c.Request.Context()
-	log := loggerFrom(c)
 
 	jti, found, err := a.cache.get(ctx, keyUserRefresh+uid)
 	if err != nil {

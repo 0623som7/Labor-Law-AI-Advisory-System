@@ -43,8 +43,28 @@ func TestHashPasswordRejectsBadInput(t *testing.T) {
 	if _, err := HashPassword(""); err == nil {
 		t.Fatal("空密码应当报错")
 	}
-	if _, err := HashPassword(strings.Repeat("a", 73)); err == nil {
-		t.Fatal("超过 72 字节应当报错")
+}
+
+// TestPasswordBeyond72Bytes 固定 bcrypt 的截断语义。
+//
+// 原先这里断言"超过 72 字节报错"。那条断言是错的：72 字节不是可拒收的输入边界，
+// 而是 bcrypt 只取前 72 字节的算法固有行为。对外契约按字符数限制 8-64，一个
+// 40 字的中文密码就有 120 字节——完全合法，却在建号时被拒成 50001。
+// 正确做法是两侧都按同一规则截断，并把"只看前 72 字节"这件事写进测试。
+func TestPasswordBeyond72Bytes(t *testing.T) {
+	head := strings.Repeat("a", 72)
+	h, err := HashPassword(head + "suffix-ignored-by-bcrypt")
+	if err != nil {
+		t.Fatalf("超长密码应当截断而不是报错: %v", err)
+	}
+	if err := VerifyPassword(h, head); err != nil {
+		t.Fatalf("前 72 字节相同应当通过: %v", err)
+	}
+	if err := VerifyPassword(h, head+"另一个完全不同的后缀"); err != nil {
+		t.Fatalf("前 72 字节相同应当通过（截断两侧一致）: %v", err)
+	}
+	if err := VerifyPassword(h, strings.Repeat("a", 71)); err == nil {
+		t.Fatal("第 72 字节不同不应当通过")
 	}
 }
 

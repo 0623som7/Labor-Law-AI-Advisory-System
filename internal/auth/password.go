@@ -26,6 +26,25 @@ const dummyHash = "$2a$12$C6UzMDM.H6dfI/f/IKcEe.j4nJkvJHqjT3kbd1SxKgQkAJ1rVfLZC"
 // "哈希格式非法" 是两种成因，混在一起会让上层误以为可以据此区分"账号坏"。
 var ErrPasswordMismatch = errors.New("密码不匹配")
 
+// bcryptMaxBytes 是 bcrypt 实际参与运算的明文长度。
+//
+// bcrypt 的输入按 72 字节截断——这是算法本身的定义（Blowfish 的 key schedule
+// 只吃 72 字节），不是库的脾气。Go 版本选择报错而不是静默截断，于是同一件事
+// 在调用方看起来像个"输入不合法"，其实只是一个上限。
+const bcryptMaxBytes = 72
+
+// truncateForBcrypt 把明文截到 bcrypt 的长度上限。
+//
+// 截断必须发生在哈希与校验两侧，且规则一致：只对字节前缀敏感是 bcrypt 的固有
+// 语义，前端按字符数限制密码（8-64 字符），一个 40 字的中文密码就是 120 字节，
+// 不截断的话这种完全合法的密码会在建号时直接失败。
+func truncateForBcrypt(plain string) string {
+	if len(plain) <= bcryptMaxBytes {
+		return plain
+	}
+	return plain[:bcryptMaxBytes]
+}
+
 // HashPassword 生成 bcrypt 哈希。
 //
 // 不做长度以外的强度校验：密码策略属于参数校验层（见 API 的 RegisterRequest），
@@ -34,11 +53,7 @@ func HashPassword(plain string) (string, error) {
 	if plain == "" {
 		return "", errors.New("密码为空")
 	}
-	// bcrypt 只取前 72 字节，超出部分被静默丢弃；显式拒绝比让用户以为长密码更安全要好。
-	if len(plain) > 72 {
-		return "", errors.New("密码超过 72 字节")
-	}
-	h, err := bcrypt.GenerateFromPassword([]byte(plain), bcryptCost)
+	h, err := bcrypt.GenerateFromPassword([]byte(truncateForBcrypt(plain)), bcryptCost)
 	if err != nil {
 		return "", err
 	}
@@ -53,7 +68,7 @@ func VerifyPassword(hash, plain string) error {
 	if hash == "" || plain == "" {
 		return ErrPasswordMismatch
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) != nil {
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(truncateForBcrypt(plain))) != nil {
 		return ErrPasswordMismatch
 	}
 	return nil
@@ -67,7 +82,7 @@ func VerifyPassword(hash, plain string) error {
 func VerifyPasswordAlways(hash, plain string) error {
 	if hash == "" {
 		// 参数顺序是 CompareHashAndPassword(hash, plain)，这里刻意把 dummyHash 放第一位。
-		_ = bcrypt.CompareHashAndPassword([]byte(dummyHash), []byte(plain))
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyHash), []byte(truncateForBcrypt(plain)))
 		return ErrPasswordMismatch
 	}
 	return VerifyPassword(hash, plain)
