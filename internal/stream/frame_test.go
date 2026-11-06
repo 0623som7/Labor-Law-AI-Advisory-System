@@ -10,7 +10,7 @@ import (
 func TestEncodeFrame(t *testing.T) {
 	ev := port.Event{Type: port.AgentEventDelta, Seq: 7, Text: "你好"}
 
-	f, err := encodeFrame(ev)
+	f, err := encodeFrame(ev.Type, toWire(ev))
 	if err != nil {
 		t.Fatalf("encodeFrame() 返回错误: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestEncodeFrameIsSingleLine(t *testing.T) {
 		Text: "第一行\n第二行", // 模型输出里真的有换行
 	}
 
-	f, err := encodeFrame(ev)
+	f, err := encodeFrame(ev.Type, toWire(ev))
 	if err != nil {
 		t.Fatalf("encodeFrame() 返回错误: %v", err)
 	}

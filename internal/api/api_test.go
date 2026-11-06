@@ -34,7 +34,7 @@ func testConfig(devUser string) config.Config {
 func newTestAPI(t *testing.T, devUser string, checkers ...Checker) http.Handler {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	return New(testConfig(devUser), discardLogger(), checkers...).Handler()
+	return New(testConfig(devUser), discardLogger(), WithCheckers(checkers...)).Handler()
 }
 
 // doRequest 发一个请求并解出包络。非 JSON 响应会在测试里直接失败，

@@ -42,6 +42,13 @@ type wireEvent struct {
 	Tool     *wireTool     `json:"tool,omitempty"`
 	Code     int           `json:"code,omitempty"`
 	Message  string        `json:"message,omitempty"`
+
+	// 以下字段只出现在 meta / done 帧里。
+	MessageID    string     `json:"message_id,omitempty"`
+	SessionID    string     `json:"session_id,omitempty"`
+	Model        string     `json:"model,omitempty"`
+	FinishReason string     `json:"finish_reason,omitempty"`
+	Usage        *wireUsage `json:"usage,omitempty"`
 }
 
 // wireCitation 是引用卡片载荷。
@@ -58,6 +65,13 @@ type wireTool struct {
 	Tool   string `json:"tool"`
 	Status string `json:"status"`
 	Detail string `json:"detail,omitempty"`
+}
+
+// wireUsage 是 done 帧里的 token 计量。
+type wireUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 // toWire 把内部事件映射成线上形状。
@@ -96,22 +110,22 @@ func toWire(ev port.Event) wireEvent {
 //
 // JSON 由 encoding/json 生成，保证是单行（没有换行），所以 data 只需要一个前缀，
 // 不需要按行拆分——多行 data 的拼接规则是 SSE 实现里第二常见的错。
-func encodeFrame(ev port.Event) (frame, error) {
-	payload, err := json.Marshal(toWire(ev))
+func encodeFrame(typ port.AgentEventType, payload wireEvent) (frame, error) {
+	raw, err := json.Marshal(payload)
 	if err != nil {
-		return frame{}, fmt.Errorf("编码事件 %s: %w", ev.Type, err)
+		return frame{}, fmt.Errorf("编码事件 %s: %w", typ, err)
 	}
 
 	var buf []byte
 	buf = append(buf, "id: "...)
-	buf = append(buf, fmt.Sprintf("%d", ev.Seq)...)
+	buf = append(buf, fmt.Sprintf("%d", payload.Seq)...)
 	buf = append(buf, "\nevent: "...)
-	buf = append(buf, string(ev.Type)...)
+	buf = append(buf, string(typ)...)
 	buf = append(buf, "\ndata: "...)
-	buf = append(buf, payload...)
+	buf = append(buf, raw...)
 	buf = append(buf, "\n\n"...)
 
-	return frame{seq: ev.Seq, typ: ev.Type, data: buf}, nil
+	return frame{seq: payload.Seq, typ: typ, data: buf}, nil
 }
 
 // droppable 判断队列满时该事件是否可以丢弃。

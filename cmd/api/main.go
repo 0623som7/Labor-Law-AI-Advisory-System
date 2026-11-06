@@ -22,6 +22,7 @@ import (
 	"laborlaw/internal/api"
 	"laborlaw/internal/config"
 	"laborlaw/internal/store"
+	"laborlaw/internal/stream"
 )
 
 func main() {
@@ -84,8 +85,13 @@ func run(migrateOnly bool) error {
 	}
 
 	srv := &http.Server{
-		Addr:              cfg.HTTP.Addr,
-		Handler:           api.New(cfg, logger, inf.checkers...).Handler(),
+		Addr: cfg.HTTP.Addr,
+		Handler: api.New(cfg, logger,
+			api.WithCheckers(inf.checkers...),
+			// B 的 agent.Runner 交付前先用 stub：链路能跑通，替换只改这一行。
+			api.WithRunner(newStubRunner(logger)),
+			api.WithHub(stream.NewHub(stream.Options{}, 0, logger)),
+		).Handler(),
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,

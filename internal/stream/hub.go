@@ -39,7 +39,7 @@ type stream struct {
 	seq  int
 	buf  *frameBuffer
 	subs map[*Writer]struct{}
-	// last 是"最后一个订阅者离开"的时间，用于 TTL 回收。
+	// last 是"最后一个订阅者离开"（或建流）的时间，用于 TTL 回收。
 	last time.Time
 }
 
@@ -51,10 +51,9 @@ func NewHub(opts Options, ttl time.Duration, log *slog.Logger) *Hub {
 	if log == nil {
 		log = slog.Default()
 	}
-	o := opts.withDefaults()
 	return &Hub{
 		streams: make(map[string]*stream),
-		opts:    o,
+		opts:    opts.withDefaults(),
 		ttl:     ttl,
 		log:     log,
 		now:     time.Now,
@@ -63,8 +62,8 @@ func NewHub(opts Options, ttl time.Duration, log *slog.Logger) *Hub {
 
 // Attach 为一条消息挂一个 SSE 连接，并补发 seq > lastEventID 的历史帧。
 //
-// lastEventID <= 0 表示新连接，不补发。返回的 Writer 用完必须 Close，
-// 否则写协程会一直活着直到 ctx 取消。
+// lastEventID <= 0 表示新连接，一样会补发：Agent 可能比浏览器先跑了几帧。
+// 返回的 Writer 用完必须 Close，否则写协程会一直活着直到 ctx 取消。
 func (h *Hub) Attach(ctx context.Context, key string, lastEventID int, w http.ResponseWriter) (*Writer, error) {
 	var writer *Writer
 
@@ -79,9 +78,7 @@ func (h *Hub) Attach(ctx context.Context, key string, lastEventID int, w http.Re
 	h.evictLocked()
 	s := h.streamLocked(key)
 	s.subs[writer] = struct{}{}
-	// 无论 lastEventID 是否为 0 都取一次快照：lastEventID=0 表示"新连接"，
-	// 但 Agent 可能已经先跑了几帧（浏览器加载慢、重连时丢了 header），
-	// 这些帧必须补上，否则用户看到的是从半句话开始的回答。
+	// 在锁内取快照：保证"补发到哪一帧"与"从哪一帧开始收实时"是一致的。
 	writer.backlog = s.buf.from(lastEventID)
 	h.mu.Unlock()
 
@@ -91,19 +88,64 @@ func (h *Hub) Attach(ctx context.Context, key string, lastEventID int, w http.Re
 	return writer, nil
 }
 
-// Publish 给一条消息分配 seq、写入缓冲、并按订阅者分发。
+// Publish 分发一条 Agent 事件：分配 seq、写入缓冲、推给所有订阅者。
 //
 // 没有订阅者时也会创建流并缓冲：Agent 可能比浏览器先开始跑，
 // 客户端晚几百毫秒连上时应当能看到从头开始的完整回答。
 func (h *Hub) Publish(key string, ev port.Event) (int, error) {
+	return h.publish(key, ev.Type, func(seq int) wireEvent {
+		w := toWire(ev)
+		w.Seq = seq
+		return w
+	})
+}
+
+// PublishMeta 发送首帧。message_id / session_id 不在 port.Event 里，
+// 所以单独给一个入口，而不是往共享契约里加字段。
+func (h *Hub) PublishMeta(key, messageID, sessionID, model string) (int, error) {
+	return h.publish(key, port.AgentEventMeta, func(seq int) wireEvent {
+		return wireEvent{Seq: seq, MessageID: messageID, SessionID: sessionID, Model: model}
+	})
+}
+
+// PublishDone 发送终止帧。它必须由 A 补发：B 的 Run 返回值里才有完整的
+// usage 与 finish_reason，而这两项要等生成结束才拿得到。
+func (h *Hub) PublishDone(key, messageID, finishReason string, usage port.Usage) (int, error) {
+	return h.publish(key, port.AgentEventDone, func(seq int) wireEvent {
+		return wireEvent{
+			Seq:          seq,
+			MessageID:    messageID,
+			FinishReason: finishReason,
+			Usage: &wireUsage{
+				PromptTokens:     usage.PromptTokens,
+				CompletionTokens: usage.CompletionTokens,
+				TotalTokens:      usage.TotalTokens,
+			},
+		}
+	})
+}
+
+// PublishError 发送异常终止帧。之后不会再有任何事件。
+func (h *Hub) PublishError(key string, appErr *port.AppError) (int, error) {
+	e := appErr
+	if e == nil {
+		e = port.New(port.CodeInternal, "服务内部错误")
+	}
+	return h.publish(key, port.AgentEventError, func(seq int) wireEvent {
+		return wireEvent{Seq: seq, Code: int(e.Code), Message: e.Message}
+	})
+}
+
+// publish 是三种事件共用的落库与分发路径。
+//
+// build 在持锁状态下调用，必须只做纯计算：任何阻塞都会卡住所有消息流。
+func (h *Hub) publish(key string, typ port.AgentEventType, build func(seq int) wireEvent) (int, error) {
 	h.mu.Lock()
 	h.evictLocked()
 	s := h.streamLocked(key)
 
 	s.seq++
-	ev.Seq = s.seq
-
-	encoded, err := encodeFrame(ev)
+	encoded, err := encodeFrame(typ, build(s.seq))
 	if err != nil {
 		s.seq-- // 编码失败不该在 seq 上留洞
 		h.mu.Unlock()

@@ -41,7 +41,7 @@ func (a *API) buildRouter() *gin.Engine {
 		authed.DELETE("/sessions/:sessionId", a.notImplemented("删除会话"))
 		authed.GET("/sessions/:sessionId/messages", a.notImplemented("消息历史"))
 
-		authed.POST("/chat/completions", a.notImplemented("流式问答"))
+		authed.POST("/chat/completions", a.chatCompletions)
 
 		authed.POST("/files", a.notImplemented("上传合同"))
 		authed.GET("/files/:fileId", a.notImplemented("文件详情"))
