@@ -1,30 +1,31 @@
 # 目录归属（GitHub CODEOWNERS 语法）
-# TODO(确认): 把 @A-owner / @B-owner 换成两人的 GitHub 用户名，否则分支保护规则生不生效。
+# A = @karry55（后端），B = @0623som7（Agent）。用户名必须与 GitHub 账号逐字一致，
+# 写成占位符时 GitHub 会静默忽略整条规则，分支保护就形同虚设。
 # 规则越靠后优先级越高，所以具体目录放后面。
 
-*                                   @A-owner @B-owner
+*                                   @karry55 @0623som7
 
 # A 独占：后端进程、存储、并发、传输、文件解析、部署
-/cmd/                               @A-owner
-/internal/config/                   @A-owner
-/internal/api/                      @A-owner
-/internal/store/                    @A-owner
-/internal/worker/                   @A-owner
-/internal/llm/                      @A-owner
-/internal/file/                     @A-owner
-/internal/stream/                   @A-owner
-/deploy/                            @A-owner
-/contract/                          @A-owner
-/web/src/utils/pdf/                 @A-owner
+/cmd/                               @karry55
+/internal/config/                   @karry55
+/internal/api/                      @karry55
+/internal/store/                    @karry55
+/internal/worker/                   @karry55
+/internal/llm/                      @karry55
+/internal/file/                     @karry55
+/internal/stream/                   @karry55
+/deploy/                            @karry55
+/contract/                          @karry55
+/web/src/utils/pdf/                 @karry55
 
 # 共用：改这里必须两人都 review（五个 interface 只加不改）
-/internal/port/                     @A-owner @B-owner
+/internal/port/                     @karry55 @0623som7
 
 # B 独占：Agent 编排、prompt、检索、抽取、规则、评测、数据
-/internal/agent/                    @B-owner
-/internal/prompt/                   @B-owner
-/internal/retrieval/                @B-owner
-/internal/extract/                  @B-owner
-/internal/rules/                    @B-owner
-/eval/                              @B-owner
-/data/                              @B-owner
+/internal/agent/                    @0623som7
+/internal/prompt/                   @0623som7
+/internal/retrieval/                @0623som7
+/internal/extract/                  @0623som7
+/internal/rules/                    @0623som7
+/eval/                              @0623som7
+/data/                              @0623som7
