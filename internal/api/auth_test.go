@@ -119,6 +119,21 @@ func (f *fakeCache) get(_ context.Context, key string) (string, bool, error) {
 	return v, ok, nil
 }
 
+func (f *fakeCache) getdel(_ context.Context, key string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down {
+		return "", false, errAuthCacheDown
+	}
+	v, ok := f.kv[key]
+	if !ok {
+		return "", false, nil
+	}
+	// 锁覆盖"读 + 删"整段：被测代码指望的正是这个原子性。
+	delete(f.kv, key)
+	return v, true, nil
+}
+
 func (f *fakeCache) set(_ context.Context, key, value string, ttl time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

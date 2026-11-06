@@ -188,8 +188,8 @@ func (a *API) login(c *gin.Context) {
 
 // refresh 处理 POST /api/v1/auth/refresh。
 //
-// 轮换语义：旧 jti 先从白名单删掉，再签新的一对。删成功才继续——删不掉就说明
-// 缓存不可用，此时若照签新令牌，旧令牌仍然有效，等于允许无限次重放。
+// 轮换语义：旧 jti 从白名单里原子取出并删除，再签新的一对。只有取到值的那一个
+// 请求能继续——取不到或取到别人的就按失效处理，所以同一枚 refresh 只能用一次。
 func (a *API) refresh(c *gin.Context) {
 	var req refreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -223,7 +223,9 @@ func (a *API) refresh(c *gin.Context) {
 		return
 	}
 
-	owner, found, err := a.cache.get(ctx, keyRefreshToken+claims.Jti)
+	// 取值与删除合并成一次 GETDEL：分两步做的话，两个并发请求可以都 get 命中、
+	// 都 del 成功，同一枚 refresh 于是换出两条续期链，轮换形同虚设。
+	owner, found, err := a.cache.getdel(ctx, keyRefreshToken+claims.Jti)
 	if err != nil {
 		log.Warn("续期白名单不可用", "trace_id", TraceID(c), "err", err.Error())
 		FailCode(c, port.CodeInternal, msgTokenService)
@@ -234,11 +236,6 @@ func (a *API) refresh(c *gin.Context) {
 		// owner 不匹配：令牌与白名单记录对不上，按伪造处理。
 		log.Warn("续期令牌不在白名单", "trace_id", TraceID(c), "found", found)
 		failUnauthorized(c)
-		return
-	}
-	if err := a.cache.del(ctx, keyRefreshToken+claims.Jti); err != nil {
-		log.Warn("续期令牌作废失败", "trace_id", TraceID(c), "err", err.Error())
-		FailCode(c, port.CodeInternal, msgTokenService)
 		return
 	}
 
