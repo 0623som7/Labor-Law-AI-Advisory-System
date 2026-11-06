@@ -340,11 +340,27 @@ func (c *Client) applyHeaders(req *http.Request, traceID string) {
 }
 
 // transportError 把网络层错误翻译成业务码。
+//
+// 超时有三条来源，必须全部认出来，否则同一个 50ms 超时在不同 Go 版本上会
+// 落到不同业务码：
+//  1. ctx 到点 → context.DeadlineExceeded；
+//  2. 调用方取消 → context.Canceled；
+//  3. transport 的 ResponseHeaderTimeout 先到 → net.Error.Timeout() == true，
+//     它既不是 context 错误，文本也不稳定（"timeout awaiting response headers"）。
+//
+// 第 3 条是 CI 上才暴露的：Go 1.22 里 transport 超时先生效，Go 1.27 里 ctx 先生效，
+// 同一份代码给出 50201 与 50301 两个码。
 func (c *Client) transportError(err error) error {
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || isTimeout(err) {
 		return port.Wrap(port.CodeUpstreamTimeout, c.redact(err), "模型调用超时")
 	}
 	return port.Wrap(port.CodeUpstream, c.redact(err), "模型调用失败")
+}
+
+// isTimeout 识别 transport 层超时（ctx 超时不会走到这里，但两者都判一次更稳）。
+func isTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // statusError 把非 200 映射成业务码。
