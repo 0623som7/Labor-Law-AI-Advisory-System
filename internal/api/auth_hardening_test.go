@@ -51,6 +51,42 @@ func TestSecondLoginKillsFirstRefresh(t *testing.T) {
 	}
 }
 
+// TestClientIPIgnoresUntrustedXFF 守住限流键的来源。
+//
+// 缺陷形态：没有 SetTrustedProxies，gin 默认信任 0.0.0.0/0，ClientIP() 无条件采信
+// X-Forwarded-For。撞库方每发一次请求换一个 XFF 就换一个计数桶，限流形同虚设；
+// 而真挂上 nginx 之后，反过来所有人会被认成同一个代理 IP。
+func TestClientIPIgnoresUntrustedXFF(t *testing.T) {
+	cfg := authTestConfig("", 100)
+	// 只信任本机回环，与生产默认一致。测试请求来自 192.0.2.1，属于不可信来源。
+	cfg.HTTP.TrustedProxies = []string{"127.0.0.1", "::1"}
+	cache := newFakeCache()
+	h := authTestServer(t, cfg, newFakeUserStore(), cache)
+
+	body := map[string]string{"phone": "13900139000", "password": "wrong-password"}
+	doJSON(t, h, http.MethodPost, "/api/v1/auth/login", body, nil)
+	doJSON(t, h, http.MethodPost, "/api/v1/auth/login", body,
+		map[string]string{"X-Forwarded-For": "203.0.113.9"})
+
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if len(cache.kv) != 1 {
+		keys := make([]string, 0, len(cache.kv))
+		for k := range cache.kv {
+			keys = append(keys, k)
+		}
+		t.Fatalf("限流键 = %v, want 只有一个桶（XFF 不得改变计数域）", keys)
+	}
+	for k, v := range cache.kv {
+		if k != keyLoginAttempts+"192.0.2.1" {
+			t.Fatalf("限流键 = %q, want %q（应以 TCP 对端为准）", k, keyLoginAttempts+"192.0.2.1")
+		}
+		if v != "2" {
+			t.Fatalf("计数 = %q, want 2（两次请求必须落在同一个桶）", v)
+		}
+	}
+}
+
 // TestRefreshUserLookupFailureIsInternal 区分"用户没了"和"库挂了"。
 //
 // 缺陷形态：refresh 里 a.users.Get 的任何错误都走 failUnauthorized，

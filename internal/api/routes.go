@@ -15,6 +15,15 @@ import (
 // （它要能看到最终状态码，包括后面中间件写下的 401/403）。
 func (a *API) buildRouter() *gin.Engine {
 	r := gin.New()
+	// 必须显式设置。不调用时 gin 信任 0.0.0.0/0，ClientIP() 就无条件采信
+	// X-Forwarded-For——登录限流按 IP 计数，这等于让客户端自己挑计数桶。
+	// 配错（例如写了域名）时退回"谁都不信"，绝不带着默认值继续跑。
+	if err := r.SetTrustedProxies(a.cfg.HTTP.TrustedProxies); err != nil {
+		a.log.Error("TRUSTED_PROXIES 配置无效，退回只信任 RemoteAddr", "err", err.Error())
+		if err := r.SetTrustedProxies(nil); err != nil {
+			a.log.Error("关闭代理信任失败，ClientIP 仍按默认值工作", "err", err.Error())
+		}
+	}
 	r.HandleMethodNotAllowed = true
 	r.Use(recovery(a.log), traceID(), accessLog(a.log))
 

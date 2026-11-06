@@ -80,6 +80,13 @@ type HTTPConfig struct {
 	ShutdownTimeout time.Duration
 	// MaxBodyBytes 是请求体硬上限，必须大于 STORAGE_MAX_UPLOAD_MB。
 	MaxBodyBytes int64
+	// TrustedProxies 是允许通过 X-Forwarded-For 声明客户端 IP 的代理地址。
+	//
+	// 空表示不信任任何代理，ClientIP() 退回 RemoteAddr。gin 的默认行为是信任
+	// 0.0.0.0/0，也就是任何一个客户端都能用 XFF 伪造自己的来源 IP——限流按 IP
+	// 计数时，这意味着换一个头就换一个计数桶。反过来，挂了 nginx 却谁都不信，
+	// 所有人会被认成同一个 127.0.0.1，同样把限流打成一锅粥。
+	TrustedProxies []string
 }
 
 // AuthConfig 是令牌签发参数。
@@ -227,6 +234,7 @@ func LoadFrom(get func(string) string) (Config, error) {
 			IdleTimeout:       l.dur("HTTP_IDLE_TIMEOUT", 120*time.Second),
 			ShutdownTimeout:   l.dur("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
 			MaxBodyBytes:      int64(l.num("HTTP_MAX_BODY_BYTES", 12<<20, 1<<20, 64<<20)),
+			TrustedProxies:    l.list("TRUSTED_PROXIES", []string{"127.0.0.1", "::1"}),
 		},
 		Auth: AuthConfig{
 			Secret:         l.req("JWT_SECRET"),
@@ -451,6 +459,27 @@ func (l *loader) frac(name string, def, min, max float64) float64 {
 		return def
 	}
 	return f
+}
+
+// list 读逗号分隔的列表。空项被丢掉，"a,,b" 与 "a,b" 等价。
+// 整项缺失或为空时返回默认值——"不信任任何代理"要用显式的 none 语义，
+// 不能靠一个漏写的变量达成，那会让部署时的笔误变成安全默认值反转。
+func (l *loader) list(name string, def []string) []string {
+	raw := strings.TrimSpace(l.get(name))
+	if raw == "" {
+		return def
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return def
+	}
+	return out
 }
 
 // boolean 只接受 true/false/1/0。写成 yes/on 也当错误：
