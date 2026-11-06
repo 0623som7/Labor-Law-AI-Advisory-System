@@ -13,7 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"laborlaw/internal/config"
+	"laborlaw/internal/file"
 	"laborlaw/internal/port"
+	"laborlaw/internal/storage"
 	"laborlaw/internal/stream"
 )
 
@@ -37,7 +39,14 @@ type API struct {
 	checkers []Checker
 	runner   port.Runner
 	hub      *stream.Hub
-	engine   *gin.Engine
+
+	// 文件链路的三个依赖。分开注入而不是塞一个结构体：
+	// 测试与 dev 无存储模式各自缺的只是其中一段，打包会让"缺哪一段"变成布尔猜谜。
+	store     port.Store
+	blobs     *storage.Store
+	extractor *file.Extractor
+
+	engine *gin.Engine
 }
 
 // Option 是装配期的可选依赖。
@@ -60,6 +69,24 @@ func WithRunner(r port.Runner) Option {
 // 没有 Hub 就没有断线续传，宁可明确失败也不要退化成"能连但续不上"。
 func WithHub(h *stream.Hub) Option {
 	return func(a *API) { a.hub = h }
+}
+
+// WithStore 注入持久层。不注入（dev 无存储模式）时 /files/* 返回 501。
+func WithStore(s port.Store) Option {
+	return func(a *API) { a.store = s }
+}
+
+// WithStorage 注入合同原文落盘层。不注入时 /files/* 返回 501。
+func WithStorage(s *storage.Store) Option {
+	return func(a *API) { a.blobs = s }
+}
+
+// WithExtractor 注入 PDF 解析器。不注入时 /files/* 返回 501。
+//
+// 与 Store / Storage 分开注入：解析器依赖外部二进制（pdftotext），
+// 它可以单独换成别的实现或换成桩，而落盘与数据库不该跟着一起动。
+func WithExtractor(e *file.Extractor) Option {
+	return func(a *API) { a.extractor = e }
 }
 
 // New 构造路由树。log 为 nil 时退回 slog.Default，免得测试里到处传 logger。

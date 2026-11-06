@@ -183,6 +183,11 @@ type FileConfig struct {
 	MinConfidence float64
 	// MaxBlocksPerPage 是单页文本块上限，防畸形 PDF 撑爆内存。
 	MaxBlocksPerPage int
+	// PdfToTextPath 是 pdftotext 可执行文件路径。默认走 PATH；
+	// Windows 上 poppler 装完不一定进 PATH，需要填绝对路径。
+	PdfToTextPath string
+	// ExtractTimeout 是单份 PDF 的解析预算，超时返回 50401。
+	ExtractTimeout time.Duration
 }
 
 // LogConfig 是日志输出参数。
@@ -271,6 +276,8 @@ func LoadFrom(get func(string) string) (Config, error) {
 		File: FileConfig{
 			MinConfidence:    l.frac("FILE_MIN_CONFIDENCE", 0.6, 0, 1),
 			MaxBlocksPerPage: l.num("FILE_MAX_BLOCKS_PER_PAGE", 500, 1, 10000),
+			PdfToTextPath:    l.str("FILE_PDFTOTEXT_PATH", "pdftotext"),
+			ExtractTimeout:   l.dur("FILE_EXTRACT_TIMEOUT", 30*time.Second),
 		},
 		Log: LogConfig{
 			Level:  strings.ToLower(l.str("LOG_LEVEL", "info")),

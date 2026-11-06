@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"laborlaw/internal/id"
 	"laborlaw/internal/port"
 )
 
@@ -78,12 +79,12 @@ func (a *API) chatCompletions(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	messageID := newID()
+	messageID := id.New()
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
 		// 会话落库要等 store 的 Session 域，这里先生成一个可用的 ID 返回给前端，
 		// 保证"同一轮问答的 message 与 session 是一对稳定标识"。
-		sessionID = newID()
+		sessionID = id.New()
 	}
 
 	writer, err := a.hub.Attach(ctx, messageID, parseLastEventID(c.GetHeader(lastEventIDHeader)), c.Writer)

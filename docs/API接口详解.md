@@ -1,6 +1,6 @@
 # 你干了什么 · 这些接口是什么
 
-> 对应分支 `feat/m2-llm`、提交 `d47db0f`（2026-11-06 当天 00:38 → 14:21 全部提交）
+> 对应分支 `feat/m3-file`、提交 `0fd8bc8`（最初那批接口文档写于 2026-11-06 当天 00:38 → 14:21）
 > 前置：`docs/零基础导读.md`（怎么看这个仓库）、`docs/框架与业务流程.md`（怎么分层、数据怎么流）
 
 ---
@@ -21,7 +21,7 @@
 | 8 | 部署材料齐了但没上过线 | `deploy/`：Dockerfile、compose、MySQL/Redis 调参、runbook | 文件存在，未实跑 |
 
 **一句话总结**：你现在拥有的是**门面（接口契约 + 路由）、地基（配置 + 数据库 + 迁移）、大脑（模型客户端）**，
-缺的是**把门面后面的房间修好**——25 个接口里只有 2 个（`/healthz`、`/readyz`）真的在处理请求，其余 23 个统一返回：
+缺的是**把门面后面的房间修好**——25 个接口里已有 7 个真的在处理请求（`/healthz`、`/readyz`、`/chat/completions` 与 4 条 `/files`），其余 18 个统一返回：
 
 ```json
 {"code": 50001, "message": "创建会话接口尚未实现", "trace_id": "..."}
@@ -108,7 +108,7 @@ DELETE /api/v1/sessions/{id}   删一个
 | `DELETE /sessions/{id}` | 删除 | **软删**（只置 `deleted_at`），消息保留，用于审计 |
 | `GET /sessions/{id}/messages` | 消息历史 | 按时间正序，默认 50 条 |
 
-### 组 3 · 咨询 chat（1 条，501，**最重要的一条**）
+### 组 3 · 咨询 chat（1 条，已接真 handler，**最重要的一条**；背后仍是 `stubRunner`，B 的 Agent 待接）
 
 | 接口 | 干什么 |
 |---|---|
@@ -140,7 +140,7 @@ data: {"seq":4,"message_id":"01J8Z0K3Q7","finish_reason":"stop","usage":{...}}
 3. `citation` 里的法条原文**必须来自数据库**（`statutes` 表），B 不许现场编造——这是"零编造"铁律的落点
 4. 这条接口的实现分两半：A 做 SSE 分帧、心跳、背压（`internal/stream`），B 做 `Runner.Run` 往里 `emit` 事件
 
-### 组 4 · 文件 files（4 条，全 501）
+### 组 4 · 文件 files（4 条，已全部实现 `b9c3c77`）
 
 | 接口 | 干什么 | 关键点 |
 |---|---|---|
@@ -260,10 +260,10 @@ curl -i -X PUT http://127.0.0.1:8080/api/v1/sessions
 
 | 顺序 | 接口 | 依赖什么 | 归属 |
 |---|---|---|---|
-| 1 | `POST /chat/completions` | `internal/stream`（SSE）+ `agent.Runner`（B） | A+B |
+| 1 | `POST /chat/completions` | ~~`internal/stream`~~（已完成 `bb7bdac`）+ `agent.Runner`（B） | ✅ handler 已有 `de00845`，等 B 的 Runner |
 | 2 | auth 五条 | `store.UserStore` + JWT + bcrypt | A |
 | 3 | sessions + messages | `store.Session/Message` 实现 | A |
-| 4 | files 四条 | `internal/file` 解析 + 坐标 | A |
+| 4 | files 四条 | `internal/file` 解析 + 坐标 | ✅ 已完成 `b9c3c77` |
 | 5 | contracts/review + tasks | `internal/worker` + `agent.Runner`（review 场景） | A+B |
 | 6 | reviews 四条 | `store.Review` 实现 | A |
 | 7 | statutes 两条 | 法条数据入库（500 条）+ 全文检索 | B |

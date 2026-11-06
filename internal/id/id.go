@@ -1,4 +1,8 @@
-package api
+// Package id 生成 26 位 ULID。
+//
+// 为什么单独成包：api 要它（message_id / session_id）、store 要它（file_id / page_id），
+// 两处各写一份必然漂移——一处用 Crockford 字母表、另一处用 hex，落库后长度都对不上。
+package id
 
 import (
 	"crypto/rand"
@@ -9,14 +13,15 @@ import (
 // 避免人工转录时把 1 和 I、0 和 O 看混。
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-// newID 生成 26 位 ULID：前 10 位是毫秒时间戳，后 16 位是 80 位随机数。
+// Len 是 ULID 的字符数，与库里 CHAR(26) 的主键定义一致。
+const Len = 26
+
+// New 生成一个 ULID：前 10 位是毫秒时间戳，后 16 位是 80 位随机数。
 //
-// 为什么不用自增或 UUID：ULID 按字典序排列就是时间序，列表页可以直接
-// ORDER BY id 而不建额外索引；同时它不暴露"系统里一共有多少条记录"。
-//
-// 与 port 里的 CHAR(26) 约定一致，可以直接落库。
-func newID() string {
-	var out [26]byte
+// 用它而不是自增/UUID 的原因：按字典序排就是时间序，列表页可以直接 ORDER BY id；
+// 同时它不暴露"系统里一共有多少条记录"。
+func New() string {
+	var out [Len]byte
 
 	ms := uint64(time.Now().UnixMilli())
 	for i := 9; i >= 0; i-- {
@@ -26,10 +31,10 @@ func newID() string {
 
 	var rnd [10]byte
 	if _, err := rand.Read(rnd[:]); err != nil {
-		// crypto/rand 失败意味着内核熵池异常。此时代码不能 panic（库代码禁止），
+		// crypto/rand 失败意味着内核熵池异常。库代码禁止 panic，
 		// 退化用纳秒时间戳填满后 16 位：可预测但唯一，宁可弱一点也不能让请求 500。
 		nanos := uint64(time.Now().UnixNano())
-		for i := 10; i < 26; i++ {
+		for i := 10; i < Len; i++ {
 			out[i] = crockford[(nanos>>uint((i%8)*5))&0x1F]
 			nanos++
 		}

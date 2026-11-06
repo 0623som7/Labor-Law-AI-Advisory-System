@@ -1,8 +1,7 @@
 package port
 
 import (
-	"encoding/json"
-	"strings"
+	"reflect"
 	"testing"
 )
 
@@ -68,17 +67,32 @@ func TestTextBlockCharSpan(t *testing.T) {
 	}
 }
 
-// CoordsJSON 的契约形状：BBox 必须序列化成 4 个数的数组，不能变成 {"x0":...} 对象，
-// 否则前端标注层的解构会静默拿到 undefined，画出一个 0×0 的框。
-func TestBBoxSerializesAsArray(t *testing.T) {
-	blk := TextBlock{ID: "b1", Page: 2, BBox: [4]float64{1, 2, 3, 4}, Text: "试用期三个月"}
-	raw, err := json.Marshal(blk)
-	if err != nil {
-		t.Fatalf("Marshal 失败: %v", err)
+// 这条用例原来断言 want := `"BBox":[1,2,3,4]`，也就是把 "port 结构直接序列化"
+// 当成了线上契约。那是错的：JSON 形状（file_id / bbox / char_start / ocr_used）
+// 由 internal/api 的 DTO 负责（见 internal/api/dto_file.go），port 是 A 与 B
+// 共用且已冻结的契约，它一旦长上 json tag，B 侧的序列化行为会跟着变，
+// 前端拿到的字段名也会随 port 的字段重构而漂移。
+// 改写后守 port 侧真正不变的两件事：
+//  1. BBox 的类型固定是 [4]float64，顺序 x0,y0,x1,y1 —— 换顺序等于整层标注歪；
+//  2. TextBlock / ParsedPage / ParsedDoc 的任何字段都不许带 json tag。
+func TestPortStructsCarryNoJSONTags(t *testing.T) {
+	bbox, ok := reflect.TypeOf(TextBlock{}).FieldByName("BBox")
+	if !ok {
+		t.Fatal("TextBlock 缺少 BBox 字段")
 	}
-	want := `"BBox":[1,2,3,4]`
-	if !strings.Contains(string(raw), want) {
-		t.Fatalf("序列化结果不含 %s: %s", want, raw)
+	if want := reflect.TypeOf([4]float64{}); bbox.Type != want {
+		t.Fatalf("BBox 类型 = %v, want %v（顺序 x0,y0,x1,y1）", bbox.Type, want)
+	}
+
+	for _, v := range []any{TextBlock{}, ParsedPage{}, ParsedDoc{}} {
+		tp := reflect.TypeOf(v)
+		for i := 0; i < tp.NumField(); i++ {
+			f := tp.Field(i)
+			if tag, ok := f.Tag.Lookup("json"); ok {
+				t.Fatalf("%s.%s 带了 json tag %q：JSON 形状必须由 api 层 DTO 负责，port 只承载类型",
+					tp.Name(), f.Name, tag)
+			}
+		}
 	}
 }
 
