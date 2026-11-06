@@ -15,6 +15,15 @@ import (
 // （它要能看到最终状态码，包括后面中间件写下的 401/403）。
 func (a *API) buildRouter() *gin.Engine {
 	r := gin.New()
+	// 必须显式设置。不调用时 gin 信任 0.0.0.0/0，ClientIP() 就无条件采信
+	// X-Forwarded-For——登录限流按 IP 计数，这等于让客户端自己挑计数桶。
+	// 配错（例如写了域名）时退回"谁都不信"，绝不带着默认值继续跑。
+	if err := r.SetTrustedProxies(a.cfg.HTTP.TrustedProxies); err != nil {
+		a.log.Error("TRUSTED_PROXIES 配置无效，退回只信任 RemoteAddr", "err", err.Error())
+		if err := r.SetTrustedProxies(nil); err != nil {
+			a.log.Error("关闭代理信任失败，ClientIP 仍按默认值工作", "err", err.Error())
+		}
+	}
 	r.HandleMethodNotAllowed = true
 	r.Use(recovery(a.log), traceID(), accessLog(a.log))
 
@@ -25,9 +34,12 @@ func (a *API) buildRouter() *gin.Engine {
 	v1 := r.Group("/api/v1")
 
 	// 公开接口：注册、登录、续期不需要令牌。
-	v1.POST("/auth/register", a.register)
-	v1.POST("/auth/login", a.login)
-	v1.POST("/auth/refresh", a.refresh)
+	//
+	// 三条都挂 bodyLimit：它们是最容易被打的入口，而请求体本身不到 200 字节，
+	// 没有任何正当理由让它们接受任意长度的输入。
+	v1.POST("/auth/register", bodyLimit(maxAuthBodyBytes), a.register)
+	v1.POST("/auth/login", bodyLimit(maxAuthBodyBytes), a.login)
+	v1.POST("/auth/refresh", bodyLimit(maxAuthBodyBytes), a.refresh)
 
 	// 受保护接口：分组挂 requireAuth，新增路由时不会漏鉴权。
 	authed := v1.Group("", a.requireAuth())

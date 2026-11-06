@@ -23,6 +23,11 @@ var errAuthCacheDown = errors.New("auth: 缓存不可用")
 type authCache interface {
 	// get 取值。found=false 表示键不存在（不是错误）。
 	get(ctx context.Context, key string) (value string, found bool, err error)
+	// getdel 原子地取值并删除。found=false 表示键本来就不存在。
+	//
+	// refresh 轮换必须用它：先 get 再 del 是两步，两个并发请求可以都通过 get、
+	// 都拿到"白名单命中"的结论，于是同一枚令牌换出两条续期链——轮换等于没做。
+	getdel(ctx context.Context, key string) (value string, found bool, err error)
 	// set 写入并设置过期。
 	set(ctx context.Context, key, value string, ttl time.Duration) error
 	// del 删除若干键，键不存在不算错误。
@@ -56,6 +61,22 @@ func (c *redisAuthCache) get(ctx context.Context, key string) (string, bool, err
 		return "", false, errAuthCacheDown
 	}
 	val, err := c.client.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return val, true, nil
+}
+
+// getdel 用 Redis 的 GETDEL：取值与删除在服务端一次完成，
+// 并发请求里只有一个能拿到值，其余拿到 redis.Nil。
+func (c *redisAuthCache) getdel(ctx context.Context, key string) (string, bool, error) {
+	if c == nil || c.client == nil {
+		return "", false, errAuthCacheDown
+	}
+	val, err := c.client.GetDel(ctx, key).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", false, nil
 	}
@@ -106,13 +127,19 @@ func (c *redisAuthCache) expire(ctx context.Context, key string, ttl time.Durati
 const (
 	// keyLoginAttempts 是登录失败计数的前缀，后面接客户端 IP。
 	keyLoginAttempts = "auth:login:"
+	// keyRegisterAttempts 是注册尝试计数的前缀。
+	//
+	// 注册要跑 cost 12 的 bcrypt（约 250ms CPU），不限流的话单 IP 每秒几个
+	// 请求就能占满一个核——这是比登录更容易被利用的放大器。
+	keyRegisterAttempts = "auth:register:"
 	// keyRefreshToken 是 refresh 白名单前缀，后面接 jti，值为 uid。
 	keyRefreshToken = "auth:refresh:"
 	// keyUserRefresh 是"用户当前有效的 refresh jti"前缀，后面接 uid。
 	//
 	// 为什么要这条反查键：登出时手里只有 access token（其 sub 是 uid），
 	// 没有 refresh 的 jti，没有反查就只能把该用户全部 refresh 都留着。
-	// 单键意味着一个用户同时只有一条有效续期链——第二台设备登录会顶掉第一台，
-	// 这是 MVP 阶段有意的选择，换来的是登出能真正吊销。
+	// 单键意味着一个用户同时只有一条有效续期链——第二台设备登录会顶掉第一台
+	// （issueTokens 先注销旧 jti 再写新链，顺序不能反），这是 MVP 阶段有意的选择，
+	// 换来的是登出能真正吊销。
 	keyUserRefresh = "auth:refresh:uid:"
 )

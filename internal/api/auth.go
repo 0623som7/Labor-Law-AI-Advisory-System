@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,8 +26,11 @@ const (
 	msgNeedLogin      = "请先登录"
 	msgUserService    = "账号服务未就绪"
 	msgTokenService   = "令牌服务暂不可用"
+	msgRefreshService = "续期服务暂不可用"
 	msgRateLimited    = "登录尝试过于频繁，请稍后再试"
+	msgRegRateLimited = "注册尝试过于频繁，请稍后再试"
 	msgBadBody        = "请求体格式不正确"
+	msgBodyTooLarge   = "请求体过大"
 )
 
 // 注册请求的字段边界，与 contract/openapi.yaml 的 RegisterRequest 对齐。
@@ -37,6 +41,9 @@ const (
 	// loginWindow 是登录限流窗口。每 IP 每分钟 N 次，窗口固定而非滑动：
 	// 实现只有一次 INCR + 一次 EXPIRE，而滑动窗口要 ZSET，MVP 阶段收益不值这个复杂度。
 	loginWindow = time.Minute
+	// registerRateLimit 是注册接口每 IP 每分钟的上限。与登录同量级，但更值钱：
+	// 注册没有"猜密码"可言，每放行一次就实打实烧掉约 250ms 的 bcrypt CPU。
+	registerRateLimit = 5
 )
 
 // registerRequest 对应 components.schemas.RegisterRequest。
@@ -66,8 +73,13 @@ type refreshRequest struct {
 // 不做"注册归注册、登录归登录"的两次握手。
 func (a *API) register(c *gin.Context) {
 	var req registerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		FailCode(c, port.CodeInvalidArgument, msgBadBody)
+	if !bindAuthBody(c, &req) {
+		return
+	}
+
+	// 限流排在哈希之前：要在花掉 bcrypt 的 CPU 之前就把流量挡住。
+	if a.rateLimited(c.Request.Context(), c, keyRegisterAttempts, registerRateLimit) {
+		FailCode(c, port.CodeRateLimited, msgRegRateLimited)
 		return
 	}
 
@@ -77,7 +89,9 @@ func (a *API) register(c *gin.Context) {
 			WithField("phone", "手机号格式不正确"))
 		return
 	}
-	if len(req.Password) < passwordMinLen || len(req.Password) > passwordMaxLen {
+	// 按字符数而不是字节数校验：len("密码") 是 6，用户以为自己在填 2 个字符，
+	// 界面却提示"需为 8-64 位"。契约里的 minLength/maxLength 也是字符数。
+	if n := utf8.RuneCountInString(req.Password); n < passwordMinLen || n > passwordMaxLen {
 		Fail(c, port.New(port.CodeInvalidArgument, "参数校验失败").
 			WithField("password", "密码长度需为 8-64 位"))
 		return
@@ -133,8 +147,7 @@ func (a *API) register(c *gin.Context) {
 //  2. 任何失败都是同一个 40101 和同一句文案，且都花掉一次 bcrypt 的时间。
 func (a *API) login(c *gin.Context) {
 	var req loginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		FailCode(c, port.CodeInvalidArgument, msgBadBody)
+	if !bindAuthBody(c, &req) {
 		return
 	}
 
@@ -178,6 +191,14 @@ func (a *API) login(c *gin.Context) {
 		return
 	}
 
+	// 成功即清零。计数器只减不增的话，一天里正常登录几次就会攒到上限，
+	// 把自己锁进 429——限流本来是防撞库，不该惩罚本人。
+	if a.cache != nil {
+		if err := a.cache.del(ctx, keyLoginAttempts+c.ClientIP()); err != nil {
+			log.Warn("登录成功但限流计数未清零", "trace_id", TraceID(c), "err", err.Error())
+		}
+	}
+
 	res, err := a.issueTokens(ctx, u, log)
 	if err != nil {
 		Fail(c, err)
@@ -188,12 +209,11 @@ func (a *API) login(c *gin.Context) {
 
 // refresh 处理 POST /api/v1/auth/refresh。
 //
-// 轮换语义：旧 jti 先从白名单删掉，再签新的一对。删成功才继续——删不掉就说明
-// 缓存不可用，此时若照签新令牌，旧令牌仍然有效，等于允许无限次重放。
+// 轮换语义：旧 jti 从白名单里原子取出并删除，再签新的一对。只有取到值的那一个
+// 请求能继续——取不到或取到别人的就按失效处理，所以同一枚 refresh 只能用一次。
 func (a *API) refresh(c *gin.Context) {
 	var req refreshRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		FailCode(c, port.CodeInvalidArgument, msgBadBody)
+	if !bindAuthBody(c, &req) {
 		return
 	}
 	token := strings.TrimSpace(req.RefreshToken)
@@ -223,7 +243,9 @@ func (a *API) refresh(c *gin.Context) {
 		return
 	}
 
-	owner, found, err := a.cache.get(ctx, keyRefreshToken+claims.Jti)
+	// 取值与删除合并成一次 GETDEL：分两步做的话，两个并发请求可以都 get 命中、
+	// 都 del 成功，同一枚 refresh 于是换出两条续期链，轮换形同虚设。
+	owner, found, err := a.cache.getdel(ctx, keyRefreshToken+claims.Jti)
 	if err != nil {
 		log.Warn("续期白名单不可用", "trace_id", TraceID(c), "err", err.Error())
 		FailCode(c, port.CodeInternal, msgTokenService)
@@ -236,15 +258,18 @@ func (a *API) refresh(c *gin.Context) {
 		failUnauthorized(c)
 		return
 	}
-	if err := a.cache.del(ctx, keyRefreshToken+claims.Jti); err != nil {
-		log.Warn("续期令牌作废失败", "trace_id", TraceID(c), "err", err.Error())
-		FailCode(c, port.CodeInternal, msgTokenService)
-		return
-	}
 
 	u, err := a.users.Get(ctx, claims.Sub)
 	if err != nil {
-		failUnauthorized(c)
+		if errors.Is(err, &port.AppError{Code: port.CodeNotFound}) {
+			// 用户已被删除：这就是"凭证失效"，403 语义，不必让前端看见故障码。
+			failUnauthorized(c)
+			return
+		}
+		// 库抖动不能报成"登录失效"。此刻旧 jti 已经删了，若混进 40101，
+		// 用户看到的是"重新登录"，而日志把它记成一次正常过期，故障就被藏起来了。
+		log.Error("续期查询用户失败", "trace_id", TraceID(c), "err", err.Error())
+		Fail(c, port.New(port.CodeInternal, msgRefreshService))
 		return
 	}
 
@@ -263,13 +288,16 @@ func (a *API) refresh(c *gin.Context) {
 // 因为"登出成功"却仍能用 30 天的 refresh 续期，比登出失败更糟。
 func (a *API) logout(c *gin.Context) {
 	uid := UserID(c)
+	log := loggerFrom(c)
 	if a.cache == nil {
-		FailCode(c, port.CodeInternal, msgTokenService)
+		// 没有缓存就吊销不了续期令牌。但登出必须成功：access token 本来就收不回来，
+		// 回 50001 只会把前端卡在"点了登出还是登不进"的死循环里。
+		log.Warn("无缓存，登出仅作废本端会话", "trace_id", TraceID(c))
+		OK(c, nil)
 		return
 	}
 
 	ctx := c.Request.Context()
-	log := loggerFrom(c)
 
 	jti, found, err := a.cache.get(ctx, keyUserRefresh+uid)
 	if err != nil {
@@ -330,6 +358,16 @@ func (a *API) issueTokens(ctx context.Context, u *port.User, log *slog.Logger) (
 	}
 
 	if a.cache != nil {
+		// 先注销旧链，再写新链。顺序反过来会留出一小段两条链同时有效的时间窗，
+		// 而"同一用户只有一条续期链"正是靠这里保证的：不注销的话，上一枚 refresh
+		// 会活满 30 天，logout 也吊销不到它（反查键已经被新 jti 覆盖）。
+		if old, ok, err := a.cache.get(ctx, keyUserRefresh+u.ID); err != nil {
+			log.Warn("查询旧续期链失败，旧链将留到自然过期", "err", err.Error())
+		} else if ok && old != "" && old != refreshJti {
+			if err := a.cache.del(ctx, keyRefreshToken+old); err != nil {
+				log.Warn("旧续期链作废失败，该令牌将留到自然过期", "err", err.Error())
+			}
+		}
 		if err := a.cache.set(ctx, keyRefreshToken+refreshJti, u.ID, a.cfg.Auth.RefreshTTL); err != nil {
 			log.Warn("续期令牌入白名单失败，该令牌将无法续期", "err", err.Error())
 		} else if err := a.cache.set(ctx, keyUserRefresh+u.ID, refreshJti, a.cfg.Auth.RefreshTTL); err != nil {
@@ -348,29 +386,51 @@ func (a *API) issueTokens(ctx context.Context, u *port.User, log *slog.Logger) (
 }
 
 // loginRateLimited 判断该 IP 是否已超过登录尝试上限。
+func (a *API) loginRateLimited(ctx context.Context, c *gin.Context) bool {
+	return a.rateLimited(ctx, c, keyLoginAttempts, a.cfg.Auth.LoginRateLimit)
+}
+
+// rateLimited 是限流原语：prefix 区分计数域，limit 是窗口内允许的次数。
 //
 // 失败一律放行并 Warn：限流是防撞库的减速带，不是可用性的前置条件。
 // Redis 挂掉时把所有人挡在门外，等于用限流造成一次自己发起的故障。
-func (a *API) loginRateLimited(ctx context.Context, c *gin.Context) bool {
-	limit := a.cfg.Auth.LoginRateLimit
+func (a *API) rateLimited(ctx context.Context, c *gin.Context, prefix string, limit int) bool {
 	if limit <= 0 || a.cache == nil {
 		return false
 	}
-	key := keyLoginAttempts + c.ClientIP()
+	key := prefix + c.ClientIP()
 	n, err := a.cache.incr(ctx, key)
 	if err != nil {
-		loggerFrom(c).Warn("登录限流不可用，本次放行", "trace_id", TraceID(c), "err", err.Error())
+		loggerFrom(c).Warn("限流不可用，本次放行", "trace_id", TraceID(c), "err", err.Error())
 		return false
 	}
 	if n == 1 {
 		if err := a.cache.expire(ctx, key, loginWindow); err != nil {
 			// 计数器没有过期时间会变成永久封禁：宁可删键重来，也不能锁死这个 IP。
-			loggerFrom(c).Warn("登录限流窗口设置失败，重置计数", "trace_id", TraceID(c), "err", err.Error())
+			loggerFrom(c).Warn("限流窗口设置失败，重置计数", "trace_id", TraceID(c), "err", err.Error())
 			_ = a.cache.del(ctx, key)
 			return false
 		}
 	}
 	return n > int64(limit)
+}
+
+// bindAuthBody 解析账号域请求体，并把"超限"与"格式错"分成两个错误码。
+//
+// 请求体上限由 bodyLimit 中间件用 http.MaxBytesReader 施加，越界时那个
+// 错误会原样从 ShouldBindJSON 里带出来。两者混成一个 40001 的话，
+// 前端只看得到"请求体格式不正确"，永远查不出真正撞的是哪堵墙。
+func bindAuthBody(c *gin.Context, dst any) bool {
+	if err := c.ShouldBindJSON(dst); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			FailCode(c, port.CodeFileTooLarge, msgBodyTooLarge)
+			return false
+		}
+		FailCode(c, port.CodeInvalidArgument, msgBadBody)
+		return false
+	}
+	return true
 }
 
 // failBadCredentials 是登录失败的唯一出口，文案与错误码都不可分叉。

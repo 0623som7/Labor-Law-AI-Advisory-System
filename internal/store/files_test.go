@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"laborlaw/internal/id"
@@ -281,5 +283,58 @@ func TestFilesLoadPagesNotFound(t *testing.T) {
 	_, err := files.LoadPages(context.Background(), id.New())
 	if code := port.CodeOf(err); code != port.CodeNotFound {
 		t.Fatalf("未解析文件的错误码 = %v, want 40401", code)
+	}
+}
+
+// TestFilesLoadPagesEmptyBlocksIsArray 守住"无文本页的 blocks 不是 null"。
+//
+// 缺陷形态：LoadPages 用 blocks[p.id] 直接取值，没有块的页拿到 nil 切片，
+// 序列化成 JSON null。前端 pages[i].blocks.map(...) 一碰就抛
+// "Cannot read properties of null"，一个没有文本层的扫描页就能白屏整页。
+func TestFilesLoadPagesEmptyBlocksIsArray(t *testing.T) {
+	db := testDB(t)
+	userID := id.New()
+	cleanupUser(t, db, userID)
+
+	files := NewFiles(db)
+	rec := newFile(userID)
+	if err := files.Create(context.Background(), rec); err != nil {
+		t.Fatalf("Create() 失败: %v", err)
+	}
+
+	want := []port.ParsedPage{
+		{
+			Index: 0, Width: 595.32, Height: 841.92,
+			Blocks: []port.TextBlock{
+				{ID: "e1", Page: 0, BBox: [4]float64{72, 700, 300, 720}, Text: "有字的页", CharStart: 0, CharEnd: 4},
+			},
+		},
+		// 第二页整页是扫描图，解析层不会给出任何块。
+		{Index: 1, Width: 595.32, Height: 841.92},
+	}
+	if err := files.SavePages(context.Background(), rec.ID, want); err != nil {
+		t.Fatalf("SavePages() 返回错误: %v", err)
+	}
+
+	got, err := files.LoadPages(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("LoadPages() 返回错误: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("页数 = %d, want 2", len(got))
+	}
+	if got[1].Blocks == nil {
+		t.Fatal("无文本页的 Blocks 是 nil，序列化会变成 null")
+	}
+	if len(got[1].Blocks) != 0 {
+		t.Fatalf("无文本页的 Blocks 长度 = %d, want 0", len(got[1].Blocks))
+	}
+
+	raw, err := json.Marshal(got[1])
+	if err != nil {
+		t.Fatalf("序列化失败: %v", err)
+	}
+	if !strings.Contains(string(raw), `"Blocks":[]`) {
+		t.Fatalf("无文本页序列化 = %s, want 含 \"Blocks\":[]", raw)
 	}
 }

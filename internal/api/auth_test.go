@@ -50,6 +50,8 @@ type fakeUserStore struct {
 	byPhone map[string]*port.User
 	// createErr 让测试注入"不是唯一键冲突"的存储故障。
 	createErr error
+	// getErr 让测试注入按 ID 查询时的存储故障（区别于"查无此人"）。
+	getErr error
 }
 
 func newFakeUserStore() *fakeUserStore {
@@ -89,6 +91,9 @@ func (f *fakeUserStore) GetByPhone(_ context.Context, phone string) (*port.User,
 func (f *fakeUserStore) Get(_ context.Context, id string) (*port.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	u, ok := f.byID[id]
 	if !ok {
 		return nil, port.New(port.CodeNotFound, "用户不存在")
@@ -117,6 +122,21 @@ func (f *fakeCache) get(_ context.Context, key string) (string, bool, error) {
 	}
 	v, ok := f.kv[key]
 	return v, ok, nil
+}
+
+func (f *fakeCache) getdel(_ context.Context, key string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down {
+		return "", false, errAuthCacheDown
+	}
+	v, ok := f.kv[key]
+	if !ok {
+		return "", false, nil
+	}
+	// 锁覆盖"读 + 删"整段：被测代码指望的正是这个原子性。
+	delete(f.kv, key)
+	return v, true, nil
 }
 
 func (f *fakeCache) set(_ context.Context, key, value string, ttl time.Duration) error {
@@ -423,12 +443,25 @@ func TestRefreshRejectsForgedToken(t *testing.T) {
 	reg := registerUser(t, h, testPhone, testPassword)
 
 	// 换掉签名的最后一个字符：结构合法、签名无效。
-	forged := reg.RefreshToken[:len(reg.RefreshToken)-1] + "A"
+	//
+	// 不能无条件替换成 "A"：HS256 签名是 32 字节，RawURLEncoding 下末位只承载
+	// 2 bit，取值只能是 A/B/C/D 四个字符之一。原末位本来就是 "A" 时替换后
+	// 得到的是原令牌，测试会以约 1/4 的概率断言一次"合法令牌被拒"，看着像偶发失败。
+	forged := reg.RefreshToken[:len(reg.RefreshToken)-1] + forgeChar(reg.RefreshToken[len(reg.RefreshToken)-1])
+
 	rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/refresh",
 		map[string]string{"refresh_token": forged}, nil)
 	if rec.Code != http.StatusUnauthorized || env.Code != 40101 {
 		t.Fatalf("伪造 refresh: status=%d code=%d, want 401/40101", rec.Code, env.Code)
 	}
+}
+
+// forgeChar 返回一个与原字符不同的合法 base64url 字符。
+func forgeChar(orig byte) string {
+	if orig == 'A' {
+		return "B"
+	}
+	return "A"
 }
 
 func TestMeReturnsMaskedPhoneOnly(t *testing.T) {
