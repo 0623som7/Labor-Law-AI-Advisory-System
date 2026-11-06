@@ -2,9 +2,11 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
+	"laborlaw/internal/auth"
 	"laborlaw/internal/port"
 )
 
@@ -25,18 +27,42 @@ func (a *API) notImplemented(feature string) gin.HandlerFunc {
 
 // requireAuth 把当前用户写进上下文，后续 handler 只认 UserID(c)。
 //
-// M1 阶段只有一种来源：配置里的 AUTH_DEV_USER。真正的 JWT 校验要等
-// internal/store 的 UserStore 落地——没有用户表，签出来的令牌无法验证归属，
-// 现在写一套"看起来能验"的代码只会把安全缺口藏到联调之后。
-// production 下 config.Validate 禁止 AUTH_DEV_USER，所以线上这里只会返回 40101。
+// 令牌解析必须排在 DevUser 之前，且解析失败**不许回落**到 DevUser：
+// 早先的实现是"只要配了 AUTH_DEV_USER 就放行任何人"，于是本地联调时
+// 一个过期令牌也会被当成合法用户——这类洞在演示里看不出来，
+// 只会在换到真实环境时变成"为什么谁都能进"。
+// 现在的顺序：带了 Authorization 就必须是有效令牌；只有完全不带该头时才用 DevUser。
+// production 下 config.Validate 禁止 AUTH_DEV_USER，所以线上这里只有令牌一条路。
 func (a *API) requireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if raw := strings.TrimSpace(c.GetHeader("Authorization")); raw != "" {
+			const prefix = "bearer "
+			if len(raw) <= len(prefix) || !strings.EqualFold(raw[:len(prefix)], prefix) {
+				Fail(c, port.New(port.CodeUnauthorized, msgUnauthorized))
+				c.Abort()
+				return
+			}
+			claims, err := auth.Parse(a.cfg.Auth.Secret, a.cfg.Auth.Issuer,
+				strings.TrimSpace(raw[len(prefix):]), auth.TypAccess)
+			if err != nil {
+				// 失败原因只进日志：alg=none / 过期 / 伪造 对前端是同一件事——
+				// 重新登录。把 err 回显给调用方等于给探测者一份免费的诊断报告。
+				loggerFrom(c).Warn("访问令牌校验失败", "trace_id", TraceID(c), "err", err.Error())
+				Fail(c, port.New(port.CodeUnauthorized, msgUnauthorized))
+				c.Abort()
+				return
+			}
+			c.Set(ctxUserID, claims.Sub)
+			c.Next()
+			return
+		}
+
 		if a.cfg.Auth.DevUser != "" {
 			c.Set(ctxUserID, a.cfg.Auth.DevUser)
 			c.Next()
 			return
 		}
-		Fail(c, port.New(port.CodeUnauthorized, "请先登录"))
+		Fail(c, port.New(port.CodeUnauthorized, msgNeedLogin))
 		c.Abort()
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	"laborlaw/internal/config"
 	"laborlaw/internal/file"
@@ -45,6 +46,12 @@ type API struct {
 	store     port.Store
 	blobs     *storage.Store
 	extractor *file.Extractor
+
+	// 账号域。users 与 store 分开：UserStore 是独立接口（端口草案未挂进 Store），
+	// 且它有自己的密钥依赖，跟着 store 走会被迫在无密钥环境里也构造一遍。
+	users port.UserStore
+	// cache 承载登录限流与 refresh 白名单。nil 表示无缓存：限流放行、续期拒绝。
+	cache authCache
 
 	engine *gin.Engine
 }
@@ -87,6 +94,20 @@ func WithStorage(s *storage.Store) Option {
 // 它可以单独换成别的实现或换成桩，而落盘与数据库不该跟着一起动。
 func WithExtractor(e *file.Extractor) Option {
 	return func(a *API) { a.extractor = e }
+}
+
+// WithUsers 注入账号存储。不注入时 /auth/register、/auth/login 返回 50001
+// （账号服务未就绪）——注册与登录没有"降级实现"可言，编一个假用户比报错更危险。
+func WithUsers(u port.UserStore) Option {
+	return func(a *API) { a.users = u }
+}
+
+// WithRedis 注入缓存客户端，用于登录限流与 refresh 白名单。
+//
+// 不注入（dev 无 Redis）不是致命错误：限流转为放行，续期接口明确失败，
+// 其余接口不受影响。传 nil 客户端等同于不注入。
+func WithRedis(client *redis.Client) Option {
+	return func(a *API) { a.cache = newRedisAuthCache(client) }
 }
 
 // New 构造路由树。log 为 nil 时退回 slog.Default，免得测试里到处传 logger。

@@ -25,15 +25,15 @@ func (a *API) buildRouter() *gin.Engine {
 	v1 := r.Group("/api/v1")
 
 	// 公开接口：注册、登录、续期不需要令牌。
-	v1.POST("/auth/register", a.notImplemented("注册"))
-	v1.POST("/auth/login", a.notImplemented("登录"))
-	v1.POST("/auth/refresh", a.notImplemented("续期"))
+	v1.POST("/auth/register", a.register)
+	v1.POST("/auth/login", a.login)
+	v1.POST("/auth/refresh", a.refresh)
 
 	// 受保护接口：分组挂 requireAuth，新增路由时不会漏鉴权。
 	authed := v1.Group("", a.requireAuth())
 	{
-		authed.GET("/auth/me", a.notImplemented("当前用户"))
-		authed.POST("/auth/logout", a.notImplemented("登出"))
+		authed.GET("/auth/me", a.me)
+		authed.POST("/auth/logout", a.logout)
 
 		authed.GET("/sessions", a.notImplemented("会话列表"))
 		authed.POST("/sessions", a.notImplemented("创建会话"))
