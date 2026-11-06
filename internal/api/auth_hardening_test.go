@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -84,6 +85,30 @@ func TestClientIPIgnoresUntrustedXFF(t *testing.T) {
 		if v != "2" {
 			t.Fatalf("计数 = %q, want 2（两次请求必须落在同一个桶）", v)
 		}
+	}
+}
+
+// TestRegisterRateLimited 守住注册接口的 CPU 预算。
+//
+// 缺陷形态：register 无条件跑 cost 12 的 bcrypt 且完全不限流。注册不需要知道
+// 任何密码，单 IP 每秒几个请求就能把一个核占满。
+func TestRegisterRateLimited(t *testing.T) {
+	cache := newFakeCache()
+	h := authTestServer(t, authTestConfig("", 100), newFakeUserStore(), cache)
+
+	for i := 0; i < registerRateLimit; i++ {
+		phone := "1380013" + strconv.Itoa(8000+i)
+		rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/register",
+			map[string]string{"phone": phone, "password": testPassword}, nil)
+		if rec.Code != http.StatusOK || env.Code != 0 {
+			t.Fatalf("第 %d 次注册: status=%d code=%d msg=%s", i+1, rec.Code, env.Code, env.Message)
+		}
+	}
+
+	rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/register",
+		map[string]string{"phone": "13800139999", "password": testPassword}, nil)
+	if rec.Code != http.StatusTooManyRequests || env.Code != 42901 {
+		t.Fatalf("超限后 status=%d code=%d, want 429/42901", rec.Code, env.Code)
 	}
 }
 

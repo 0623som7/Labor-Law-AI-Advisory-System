@@ -27,6 +27,7 @@ const (
 	msgTokenService   = "令牌服务暂不可用"
 	msgRefreshService = "续期服务暂不可用"
 	msgRateLimited    = "登录尝试过于频繁，请稍后再试"
+	msgRegRateLimited = "注册尝试过于频繁，请稍后再试"
 	msgBadBody        = "请求体格式不正确"
 )
 
@@ -38,6 +39,9 @@ const (
 	// loginWindow 是登录限流窗口。每 IP 每分钟 N 次，窗口固定而非滑动：
 	// 实现只有一次 INCR + 一次 EXPIRE，而滑动窗口要 ZSET，MVP 阶段收益不值这个复杂度。
 	loginWindow = time.Minute
+	// registerRateLimit 是注册接口每 IP 每分钟的上限。与登录同量级，但更值钱：
+	// 注册没有"猜密码"可言，每放行一次就实打实烧掉约 250ms 的 bcrypt CPU。
+	registerRateLimit = 5
 )
 
 // registerRequest 对应 components.schemas.RegisterRequest。
@@ -69,6 +73,12 @@ func (a *API) register(c *gin.Context) {
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		FailCode(c, port.CodeInvalidArgument, msgBadBody)
+		return
+	}
+
+	// 限流排在哈希之前：要在花掉 bcrypt 的 CPU 之前就把流量挡住。
+	if a.rateLimited(c.Request.Context(), c, keyRegisterAttempts, registerRateLimit) {
+		FailCode(c, port.CodeRateLimited, msgRegRateLimited)
 		return
 	}
 
@@ -364,24 +374,28 @@ func (a *API) issueTokens(ctx context.Context, u *port.User, log *slog.Logger) (
 }
 
 // loginRateLimited 判断该 IP 是否已超过登录尝试上限。
+func (a *API) loginRateLimited(ctx context.Context, c *gin.Context) bool {
+	return a.rateLimited(ctx, c, keyLoginAttempts, a.cfg.Auth.LoginRateLimit)
+}
+
+// rateLimited 是限流原语：prefix 区分计数域，limit 是窗口内允许的次数。
 //
 // 失败一律放行并 Warn：限流是防撞库的减速带，不是可用性的前置条件。
 // Redis 挂掉时把所有人挡在门外，等于用限流造成一次自己发起的故障。
-func (a *API) loginRateLimited(ctx context.Context, c *gin.Context) bool {
-	limit := a.cfg.Auth.LoginRateLimit
+func (a *API) rateLimited(ctx context.Context, c *gin.Context, prefix string, limit int) bool {
 	if limit <= 0 || a.cache == nil {
 		return false
 	}
-	key := keyLoginAttempts + c.ClientIP()
+	key := prefix + c.ClientIP()
 	n, err := a.cache.incr(ctx, key)
 	if err != nil {
-		loggerFrom(c).Warn("登录限流不可用，本次放行", "trace_id", TraceID(c), "err", err.Error())
+		loggerFrom(c).Warn("限流不可用，本次放行", "trace_id", TraceID(c), "err", err.Error())
 		return false
 	}
 	if n == 1 {
 		if err := a.cache.expire(ctx, key, loginWindow); err != nil {
 			// 计数器没有过期时间会变成永久封禁：宁可删键重来，也不能锁死这个 IP。
-			loggerFrom(c).Warn("登录限流窗口设置失败，重置计数", "trace_id", TraceID(c), "err", err.Error())
+			loggerFrom(c).Warn("限流窗口设置失败，重置计数", "trace_id", TraceID(c), "err", err.Error())
 			_ = a.cache.del(ctx, key)
 			return false
 		}

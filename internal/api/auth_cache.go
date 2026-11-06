@@ -127,6 +127,11 @@ func (c *redisAuthCache) expire(ctx context.Context, key string, ttl time.Durati
 const (
 	// keyLoginAttempts 是登录失败计数的前缀，后面接客户端 IP。
 	keyLoginAttempts = "auth:login:"
+	// keyRegisterAttempts 是注册尝试计数的前缀。
+	//
+	// 注册要跑 cost 12 的 bcrypt（约 250ms CPU），不限流的话单 IP 每秒几个
+	// 请求就能占满一个核——这是比登录更容易被利用的放大器。
+	keyRegisterAttempts = "auth:register:"
 	// keyRefreshToken 是 refresh 白名单前缀，后面接 jti，值为 uid。
 	keyRefreshToken = "auth:refresh:"
 	// keyUserRefresh 是"用户当前有效的 refresh jti"前缀，后面接 uid。
