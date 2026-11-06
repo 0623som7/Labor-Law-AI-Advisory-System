@@ -1,0 +1,24 @@
+# AI 禁区（方案 v2 §5.4）。此处列出的路径禁止 AI 生成或改写，改动必须由责任人手写并走 PR 评审。
+# 用途：AI 只会按契约写；契约本身、类型生成物、坐标换算、SSE 解析这些"错一处全歪"的文件不许它碰。
+
+# 契约真相源：只有 A 能改，B 只读
+contract/**
+
+# 由 openapi 生成的类型，手改即漂移；CI 会校验它与 contract/openapi.yaml 一致
+web/src/api/types.gen.ts
+
+# PDF 坐标换算：错 5pt 演示时才穿帮，全项目唯一红区
+web/src/utils/pdf/coords.ts
+web/src/components/annotation/**
+
+# SSE 客户端帧解析：seq / Last-Event-ID / 心跳语义必须与 internal/stream 逐字对齐
+web/src/utils/sse.ts
+
+# 后端地基与安全边界
+internal/port/**
+internal/store/migrations/**
+deploy/**
+cmd/**
+
+# 设计规范
+web/specs/_design.md

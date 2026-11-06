@@ -1,0 +1,42 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "go: build ./...",
+      "type": "shell",
+      "command": "go build ./...",
+      "options": { "env": { "GOFLAGS": "-buildvcs=false" } },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: vet ./...",
+      "type": "shell",
+      "command": "go vet ./...",
+      "options": { "env": { "GOFLAGS": "-buildvcs=false" } },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: test ./...",
+      "type": "shell",
+      "command": "go test ./...",
+      "options": { "env": { "GOFLAGS": "-buildvcs=false" } },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: test -cover internal/port",
+      "type": "shell",
+      "command": "go test -cover ./internal/port/",
+      "options": { "env": { "GOFLAGS": "-buildvcs=false" } },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "go: run api",
+      "type": "shell",
+      "command": "go run ./cmd/api",
+      "options": { "env": { "GOFLAGS": "-buildvcs=false" } },
+      "problemMatcher": ["$go"]
+    }
+  ]
+}

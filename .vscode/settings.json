@@ -1,0 +1,33 @@
+{
+  "go.toolsEnvVars": {
+    "GOFLAGS": "-buildvcs=false"
+  },
+  "terminal.integrated.env.windows": {
+    "GOFLAGS": "-buildvcs=false"
+  },
+  "gopls": {
+    "build.buildFlags": ["-buildvcs=false"],
+    "ui.semanticTokens": true,
+    "ui.completion.usePlaceholders": true
+  },
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+  },
+  "[go.mod]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+  },
+  "[json][jsonc][yaml]": {
+    "editor.tabSize": 2
+  },
+  "files.encoding": "utf8",
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.gocache": true,
+    "**/dist": true
+  }
+}

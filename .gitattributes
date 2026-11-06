@@ -1,0 +1,27 @@
+# 统一换行：仓库里一律 LF，Windows 本地检出也保持 LF，
+# 否则 gofmt -l 会把每个文件都标成"未格式化"（CRLF 与 LF 的差异被当成格式问题）。
+* text=auto eol=lf
+
+*.go    text eol=lf
+*.md    text eol=lf
+*.mod   text eol=lf
+*.sum   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sql   text eol=lf
+*.sh    text eol=lf
+*.ps1   text eol=lf
+*.ts    text eol=lf
+*.vue   text eol=lf
+Dockerfile text eol=lf
+
+# 二进制：禁止任何换行/编码转换，否则 docx 与 PDF 会被写坏
+*.docx binary
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.woff binary
+*.woff2 binary

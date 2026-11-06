@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "api: debug",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/api",
+      "buildFlags": "-buildvcs=false"
+    },
+    {
+      "name": "worker: debug",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/worker",
+      "buildFlags": "-buildvcs=false"
+    }
+  ]
+}

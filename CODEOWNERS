@@ -1,0 +1,30 @@
+# 目录归属（GitHub CODEOWNERS 语法）
+# TODO(确认): 把 @A-owner / @B-owner 换成两人的 GitHub 用户名，否则分支保护规则生不生效。
+# 规则越靠后优先级越高，所以具体目录放后面。
+
+*                                   @A-owner @B-owner
+
+# A 独占：后端进程、存储、并发、传输、文件解析、部署
+/cmd/                               @A-owner
+/internal/config/                   @A-owner
+/internal/api/                      @A-owner
+/internal/store/                    @A-owner
+/internal/worker/                   @A-owner
+/internal/llm/                      @A-owner
+/internal/file/                     @A-owner
+/internal/stream/                   @A-owner
+/deploy/                            @A-owner
+/contract/                          @A-owner
+/web/src/utils/pdf/                 @A-owner
+
+# 共用：改这里必须两人都 review（五个 interface 只加不改）
+/internal/port/                     @A-owner @B-owner
+
+# B 独占：Agent 编排、prompt、检索、抽取、规则、评测、数据
+/internal/agent/                    @B-owner
+/internal/prompt/                   @B-owner
+/internal/retrieval/                @B-owner
+/internal/extract/                  @B-owner
+/internal/rules/                    @B-owner
+/eval/                              @B-owner
+/data/                              @B-owner

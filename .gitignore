@@ -1,0 +1,36 @@
+# ---- secrets：LLM key 由 B 填，绝不入库 ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- Go 构建产物 ----
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.out
+go.work
+
+# ---- 前端 web/ ----
+node_modules/
+web/node_modules/
+web/dist/
+.vite/
+*.tsbuildinfo
+pnpm-debug.log*
+
+# ---- 运行时数据（config.storage.path 的落点）----
+/storage/
+/tmp/
+
+# ---- 编辑器 / OS ----
+.idea/
+.vscode/settings.local.json
+.DS_Store
+Thumbs.db
+
+# ---- 日志 ----
+*.log
