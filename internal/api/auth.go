@@ -327,6 +327,16 @@ func (a *API) issueTokens(ctx context.Context, u *port.User, log *slog.Logger) (
 	}
 
 	if a.cache != nil {
+		// 先注销旧链，再写新链。顺序反过来会留出一小段两条链同时有效的时间窗，
+		// 而"同一用户只有一条续期链"正是靠这里保证的：不注销的话，上一枚 refresh
+		// 会活满 30 天，logout 也吊销不到它（反查键已经被新 jti 覆盖）。
+		if old, ok, err := a.cache.get(ctx, keyUserRefresh+u.ID); err != nil {
+			log.Warn("查询旧续期链失败，旧链将留到自然过期", "err", err.Error())
+		} else if ok && old != "" && old != refreshJti {
+			if err := a.cache.del(ctx, keyRefreshToken+old); err != nil {
+				log.Warn("旧续期链作废失败，该令牌将留到自然过期", "err", err.Error())
+			}
+		}
 		if err := a.cache.set(ctx, keyRefreshToken+refreshJti, u.ID, a.cfg.Auth.RefreshTTL); err != nil {
 			log.Warn("续期令牌入白名单失败，该令牌将无法续期", "err", err.Error())
 		} else if err := a.cache.set(ctx, keyUserRefresh+u.ID, refreshJti, a.cfg.Auth.RefreshTTL); err != nil {

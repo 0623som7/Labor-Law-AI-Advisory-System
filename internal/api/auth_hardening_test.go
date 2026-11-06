@@ -21,6 +21,34 @@ func postJSONStatus(h http.Handler, path, body string) int {
 	return rec.Code
 }
 
+// TestSecondLoginKillsFirstRefresh 守住"一个用户只有一条续期链"。
+//
+// 缺陷形态：签发新令牌时只写新链、不注销旧链。上一枚 refresh 会一直活到 30 天
+// 自然过期，logout 也吊销不到它——反查键早已被新 jti 覆盖，等于留下一条隐形通道。
+func TestSecondLoginKillsFirstRefresh(t *testing.T) {
+	h := authTestServer(t, authTestConfig("", 100), newFakeUserStore(), newFakeCache())
+	first := registerUser(t, h, testPhone, testPassword)
+
+	_, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/login",
+		map[string]string{"phone": testPhone, "password": testPassword}, nil)
+	if env.Code != 0 {
+		t.Fatalf("第二次登录失败: code=%d msg=%s", env.Code, env.Message)
+	}
+	second := authResult(t, env)
+
+	rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/refresh",
+		map[string]string{"refresh_token": first.RefreshToken}, nil)
+	if rec.Code != http.StatusUnauthorized || env.Code != 40101 {
+		t.Fatalf("第一台设备的 refresh 仍然可用: status=%d code=%d（新登录没有顶掉旧链）", rec.Code, env.Code)
+	}
+
+	rec, env = doJSON(t, h, http.MethodPost, "/api/v1/auth/refresh",
+		map[string]string{"refresh_token": second.RefreshToken}, nil)
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("新链不可用: status=%d code=%d", rec.Code, env.Code)
+	}
+}
+
 // TestRefreshConcurrentOnlyOneWins 守住轮换的原子性。
 //
 // 缺陷形态：refresh 先 get 白名单再 del。八个并发请求可以全部 get 命中，
