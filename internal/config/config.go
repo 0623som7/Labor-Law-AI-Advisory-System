@@ -144,6 +144,13 @@ type LLMConfig struct {
 	Timeout time.Duration
 	// MaxRetries 是上游可重试错误的额外尝试次数。
 	MaxRetries int
+	// RetryBackoff 是首次重试前的等待，之后每次翻倍（上限 8s）。
+	// 放配置而不是写死：本地打假上游时要把它调成 0，否则测试会慢得没法看。
+	RetryBackoff time.Duration
+	// PriceInputPer1K 是每千输入 token 的单价（元），用于 CostEst。
+	PriceInputPer1K float64
+	// PriceOutputPer1K 是每千输出 token 的单价（元）。
+	PriceOutputPer1K float64
 	// QPS 是全局令牌桶速率，防止并发一高就把预算烧穿。
 	QPS float64
 	// DailyBudgetYuan 是日成本硬闸，超过即降级到 ModelExtract 并告警。
@@ -238,15 +245,18 @@ func LoadFrom(get func(string) string) (Config, error) {
 			DialTimeout: l.dur("REDIS_DIAL_TIMEOUT", 2*time.Second),
 		},
 		LLM: LLMConfig{
-			BaseURL:         l.str("LLM_BASE_URL", "https://api.deepseek.com/v1"),
-			APIKey:          l.str("LLM_API_KEY", ""),
-			ModelConsult:    l.str("LLM_MODEL_CONSULT", "deepseek-chat"),
-			ModelExtract:    l.str("LLM_MODEL_EXTRACT", "deepseek-chat"),
-			ModelAdvise:     l.str("LLM_MODEL_ADVISE", "deepseek-chat"),
-			Timeout:         l.dur("LLM_TIMEOUT", 60*time.Second),
-			MaxRetries:      l.num("LLM_MAX_RETRIES", 2, 0, 5),
-			QPS:             l.frac("LLM_QPS", 5, 0.1, 1000),
-			DailyBudgetYuan: l.frac("LLM_DAILY_BUDGET_YUAN", 20, 0.1, 100000),
+			BaseURL:          l.str("LLM_BASE_URL", "https://api.deepseek.com/v1"),
+			APIKey:           l.str("LLM_API_KEY", ""),
+			ModelConsult:     l.str("LLM_MODEL_CONSULT", "deepseek-chat"),
+			ModelExtract:     l.str("LLM_MODEL_EXTRACT", "deepseek-chat"),
+			ModelAdvise:      l.str("LLM_MODEL_ADVISE", "deepseek-chat"),
+			Timeout:          l.dur("LLM_TIMEOUT", 60*time.Second),
+			MaxRetries:       l.num("LLM_MAX_RETRIES", 2, 0, 5),
+			RetryBackoff:     l.durAllowZero("LLM_RETRY_BACKOFF", 300*time.Millisecond),
+			PriceInputPer1K:  l.frac("LLM_PRICE_INPUT_PER_1K", 0.001, 0, 1000),
+			PriceOutputPer1K: l.frac("LLM_PRICE_OUTPUT_PER_1K", 0.002, 0, 1000),
+			QPS:              l.frac("LLM_QPS", 5, 0.1, 1000),
+			DailyBudgetYuan:  l.frac("LLM_DAILY_BUDGET_YUAN", 20, 0.1, 100000),
 		},
 		Storage: StorageConfig{
 			Root:        l.str("STORAGE_ROOT", "./storage"),
