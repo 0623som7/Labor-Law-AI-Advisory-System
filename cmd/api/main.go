@@ -19,13 +19,16 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"laborlaw/internal/agent"
 	"laborlaw/internal/api"
 	"laborlaw/internal/config"
+	"laborlaw/internal/extract"
 	"laborlaw/internal/file"
 	"laborlaw/internal/llm"
 	"laborlaw/internal/storage"
 	"laborlaw/internal/store"
 	"laborlaw/internal/stream"
+	"laborlaw/internal/worker"
 )
 
 func main() {
@@ -108,12 +111,20 @@ func run(migrateOnly bool) error {
 		usageRec = agg.Usage()
 	}
 
+	// 全进程只构造一个 llm.Client：它内部带令牌桶与日预算闸，两个实例会让
+	// LLM_QPS 与 LLM_DAILY_BUDGET_YUAN 在配置不变的情况下翻倍。
+	// 没有密钥时不构造，让 newRunner 走演示桩（见 cmd/api/runner.go）。
+	var llmClient *llm.Client
+	if cfg.LLM.APIKey != "" {
+		llmClient = newLLM(cfg, logger, usageRec)
+	}
+
 	// 检索器只构造一次：编排层（Runner）与 /statutes 接口必须用同一套口语归一规则，
 	// 各造一个的话改词表只会生效一半，而这类不一致在演示时看不出来。
 	searcher := newSearcher(inf.db)
 	opts := []api.Option{
 		api.WithCheckers(inf.checkers...),
-		api.WithRunner(newRunner(cfg, logger, searcher, newHistory(inf.db), usageRec)),
+		api.WithRunner(newRunner(logger, llmClient, searcher, newHistory(inf.db))),
 		api.WithHub(stream.NewHub(stream.Options{}, 0, logger)),
 		api.WithExtractor(extractor),
 	}
@@ -124,6 +135,37 @@ func run(migrateOnly bool) error {
 	// 而不是在 handler 里对一个 nil 接口发请求。
 	if agg != nil {
 		opts = append(opts, api.WithStore(agg), api.WithUsers(agg.Users()))
+
+		// 任务池与审查 handler 都依赖 DB，只能装在这里：
+		// 无存储模式下 /contracts/review 继续返回 501 才是正确的。
+		pool := worker.New(cfg.Worker, logger)
+		pool.SetProgressSink(func(ctx context.Context, taskID string, percent int, stage string) error {
+			return agg.Task().UpdateProgress(ctx, taskID, percent, stage)
+		})
+		// 上次进程被 kill 时正在跑的任务不会再有人推进它：启动时统一收尾，
+		// 否则用户会拿着一个永远 running 的 task_id 轮询。
+		if n, err := agg.Task().FailRunning(ctx, "服务重启，任务中断"); err != nil {
+			logger.Warn("清理遗留 running 任务失败", "err", err.Error())
+		} else if n > 0 {
+			logger.Info("已把遗留的 running 任务标记为失败", "count", n)
+		}
+		// defer 在 run() 返回时执行，此时 srv 已 Shutdown 完：先停 HTTP 再停池，
+		// 不会出现"接口还在收请求、池已经关了"的窗口。
+		defer pool.Shutdown(context.Background())
+
+		opts = append(opts, api.WithTaskSubmitter(pool))
+		// 审查要靠模型抽取要素：没有客户端时装上去只会每次 50001，
+		// 不如不装——接口退回 501"尚未实现"，语义上就是"这台机器没接模型"。
+		if llmClient != nil {
+			reviewHandler := agent.NewReviewHandler(agent.ReviewDeps{
+				Files:     agg.File(),
+				Reviews:   agg.Review(),
+				Statutes:  agg.Statute(),
+				Extractor: extract.New(llmClient),
+				Logger:    logger,
+			})
+			opts = append(opts, api.WithReviewHandler(reviewHandler))
+		}
 	}
 	// Redis 只影响限流与续期：没起 Redis 时 WithRedis(nil) 等价于不注入，
 	// 登录照常、续期明确失败，不会把整个服务拖成不可用。

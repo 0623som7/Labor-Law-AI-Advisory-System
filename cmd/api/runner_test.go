@@ -9,13 +9,16 @@ import (
 	"laborlaw/internal/config"
 )
 
-// 装配降级的风险不是编译不过，而是"演示时以为接了真模型，实际还是桩"。
-// 所以把两条分支都钉死。
-func TestNewRunnerFallsBackToStubWithoutKey(t *testing.T) {
-	cfg := config.Config{}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
-	if _, ok := newRunner(cfg, log, nil, nil, nil).(*stubRunner); !ok {
+// 装配降级的风险不是编译不过，而是"演示时以为接了真模型，实际还是桩"。
+// 所以两条分支都钉死。
+func TestNewRunnerWithoutAPIKey(t *testing.T) {
+	// 没有密钥时调用方不构造客户端（见 main.go），这里传 nil。
+	// 断言的是"不 panic 且明确退回桩"，而不是某个字段。
+	if _, ok := newRunner(testLogger(), nil, nil, nil).(*stubRunner); !ok {
 		t.Error("API key 为空时必须退回演示桩")
 	}
 }
@@ -24,10 +27,20 @@ func TestNewRunnerUsesAgentWithKey(t *testing.T) {
 	cfg := config.Config{}
 	cfg.LLM.APIKey = "test-key"
 	cfg.LLM.BaseURL = "http://127.0.0.1:0"
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, ok := newRunner(cfg, log, nil, nil, nil).(*agent.Runner); !ok {
+	client := newLLM(cfg, testLogger(), nil)
+	if _, ok := newRunner(testLogger(), client, nil, nil).(*agent.Runner); !ok {
 		t.Error("配置了 API key 后必须启用真实编排")
+	}
+}
+
+// 全进程只能有一个客户端：QPS 与日预算闸都长在它身上。
+// 用例直接钉住"两次调用是不同的实例、同一个构造点"这件事没有意义，
+// 真正要守的是 newLLM 不校验密钥（否则上面的桩分支根本走不到）。
+func TestNewLLMDoesNotRequireKey(t *testing.T) {
+	client := newLLM(config.Config{}, testLogger(), nil)
+	if client == nil {
+		t.Fatal("密钥为空时 newLLM 也必须能安全构造")
 	}
 }
 
