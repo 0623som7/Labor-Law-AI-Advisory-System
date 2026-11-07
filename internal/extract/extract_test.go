@@ -1,0 +1,290 @@
+package extract
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"math"
+	"strings"
+	"testing"
+
+	"laborlaw/internal/llm"
+	"laborlaw/internal/port"
+)
+
+// recordingClient 记录入参，正文由内嵌的 FakeClient 提供。
+//
+// 内嵌而不是重写全部方法：ChatStream 的语义由 FakeClient 保证，
+// 这里只需要在 Chat 上多抓一份请求，用来断言场景、schema 与 prompt 约束。
+type recordingClient struct {
+	llm.FakeClient
+	got   port.ChatRequest
+	calls int
+}
+
+func (c *recordingClient) Chat(ctx context.Context, req port.ChatRequest) (port.ChatResponse, error) {
+	c.calls++
+	c.got = req
+	return c.FakeClient.Chat(ctx, req)
+}
+
+const fullJSON = `{
+  "party_a": "东莞某某科技有限公司",
+  "party_b": "张三",
+  "contract_type": "固定期限",
+  "term_start": "2024-01-01",
+  "term_end": "2027-01-01",
+  "probation_months": 3,
+  "salary_monthly": 8000,
+  "salary_probation": 5000,
+  "social_insurance": false,
+  "work_location": "东莞市南城区",
+  "position": "后端开发",
+  "working_hours": "标准工时",
+  "has_overtime_pay": false,
+  "deposit": true,
+  "raw_clauses": [
+    {"section": "第二条", "page": 0, "bbox": [10, 700, 300, 720], "text": "试用期为三个月。"},
+    {"section": "第四条", "page": 1, "bbox": [10, 100, 300, 120], "text": "乙方入职时缴纳服装押金 500 元。"}
+  ]
+}`
+
+func TestParseFullDocument(t *testing.T) {
+	doc, err := Parse(fullJSON)
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if doc.PartyA != "东莞某某科技有限公司" || doc.Position != "后端开发" {
+		t.Fatalf("字符串字段错误：%+v", doc.Contract)
+	}
+	if doc.ProbationMonths != 3 || doc.SalaryMonthly != 8000 || doc.SalaryProbation != 5000 {
+		t.Fatalf("数字字段错误：%+v", doc.Contract)
+	}
+	if doc.SocialInsurance == nil || *doc.SocialInsurance {
+		t.Fatalf("social_insurance 应为明确的 false：%+v", doc.SocialInsurance)
+	}
+	if doc.Deposit == nil || !*doc.Deposit {
+		t.Fatalf("deposit 应为 true：%+v", doc.Deposit)
+	}
+	if len(doc.Clauses) != 2 {
+		t.Fatalf("条款数 %d，期望 2", len(doc.Clauses))
+	}
+	if doc.Clauses[1].Section != "第四条" || doc.Clauses[1].Page != 1 || doc.Clauses[1].BBox[3] != 120 {
+		t.Fatalf("条款定位错误：%+v", doc.Clauses[1])
+	}
+	if len(doc.Missing) != 0 {
+		t.Fatalf("完整文档不应有缺失字段：%v", doc.Missing)
+	}
+	if math.Abs(doc.Confidence-1) > 1e-9 {
+		t.Fatalf("confidence=%v，期望 1", doc.Confidence)
+	}
+}
+
+func TestParseCodeFence(t *testing.T) {
+	fenced := "```json\n" + fullJSON + "\n```"
+	doc, err := Parse(fenced)
+	if err != nil {
+		t.Fatalf("带围栏的正文应能解析：%v", err)
+	}
+	if doc.SalaryMonthly != 8000 {
+		t.Fatalf("围栏解析后字段丢失：%+v", doc.Contract)
+	}
+
+	// 围栏后带空白的变体。
+	spaced := "\n\n```\n{\"salary_monthly\": 6000}\n```\n\n"
+	doc, err = Parse(spaced)
+	if err != nil {
+		t.Fatalf("无语言标记的围栏应能解析：%v", err)
+	}
+	if doc.SalaryMonthly != 6000 {
+		t.Fatalf("salar_monthly 解析错误：%v", doc.SalaryMonthly)
+	}
+}
+
+func TestParseMissingFields(t *testing.T) {
+	doc, err := Parse(`{"party_a": "A 公司", "probation_months": 2}`)
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if doc.PartyA != "A 公司" || doc.ProbationMonths != 2 {
+		t.Fatalf("已给字段解析错误：%+v", doc.Contract)
+	}
+	wantMissing := map[string]bool{
+		"party_b": true, "contract_type": true, "term_start": true, "term_end": true,
+		"salary_monthly": true, "salary_probation": true, "social_insurance": true,
+		"work_location": true, "position": true, "working_hours": true,
+		"has_overtime_pay": true, "deposit": true,
+	}
+	if len(doc.Missing) != len(wantMissing) {
+		t.Fatalf("缺失字段 %v，期望 %d 个", doc.Missing, len(wantMissing))
+	}
+	for _, m := range doc.Missing {
+		if !wantMissing[m] {
+			t.Fatalf("多报了缺失字段：%s", m)
+		}
+	}
+	// 14 个字段里命中 2 个。
+	if math.Abs(doc.Confidence-2.0/14.0) > 1e-9 {
+		t.Fatalf("confidence=%v，期望 %v", doc.Confidence, 2.0/14.0)
+	}
+}
+
+func TestParseInvalidJSON(t *testing.T) {
+	for _, body := range []string{
+		"抱歉，我无法完成该任务。",
+		`{"party_a": "A 公司"`,
+		`["不是对象"]`,
+		"",
+		"```json\n```",
+	} {
+		doc, err := Parse(body)
+		if err == nil {
+			t.Fatalf("正文 %q 应当解析失败，却得到 %+v", body, doc)
+		}
+		var pe *ParseError
+		if !errors.As(err, &pe) {
+			t.Fatalf("错误类型应为 *ParseError，实际 %T：%v", err, err)
+		}
+		if !strings.Contains(err.Error(), "解析失败") {
+			t.Fatalf("错误信息不可读：%v", err)
+		}
+	}
+}
+
+func TestParseWrongTypes(t *testing.T) {
+	cases := []string{
+		`{"salary_monthly": {"amount": 8000}}`,
+		`{"salary_monthly": "面议"}`,
+		`{"social_insurance": 1}`,
+		`{"raw_clauses": "试用期三个月"}`,
+		`{"raw_clauses": [{"text": "x", "bbox": [1, 2, 3]}]}`,
+		`{"raw_clauses": [{"text": "x", "page": "第一页"}]}`,
+	}
+	for _, body := range cases {
+		_, err := Parse(body)
+		var pe *ParseError
+		if !errors.As(err, &pe) {
+			t.Fatalf("正文 %s 应以 ParseError 失败，实际 %v", body, err)
+		}
+	}
+}
+
+func TestParseLooseValues(t *testing.T) {
+	doc, err := Parse(`{"salary_monthly": "8,000 元", "probation_months": "1.5 个月", "social_insurance": "是", "has_overtime_pay": "否"}`)
+	if err != nil {
+		t.Fatalf("宽松写法应能解析：%v", err)
+	}
+	if doc.SalaryMonthly != 8000 || doc.ProbationMonths != 1.5 {
+		t.Fatalf("数值纠偏失败：%+v", doc.Contract)
+	}
+	if doc.SocialInsurance == nil || !*doc.SocialInsurance {
+		t.Fatalf("中文布尔纠偏失败：%+v", doc.SocialInsurance)
+	}
+	if doc.HasOvertimePay == nil || *doc.HasOvertimePay {
+		t.Fatalf("中文布尔纠偏失败：%+v", doc.HasOvertimePay)
+	}
+
+	doc, err = Parse(`{"salary_monthly": "1.2万"}`)
+	if err != nil {
+		t.Fatalf("万元写法应能解析：%v", err)
+	}
+	if doc.SalaryMonthly != 12000 {
+		t.Fatalf("万元换算错误：%v", doc.SalaryMonthly)
+	}
+}
+
+func TestExtractSendsPromptAndSchema(t *testing.T) {
+	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
+	doc, err := New(client).Extract(context.Background(), "  劳动合同正文  ")
+	if err != nil {
+		t.Fatalf("抽取失败：%v", err)
+	}
+	if doc.SalaryMonthly != 8000 {
+		t.Fatalf("抽取结果错误：%+v", doc.Contract)
+	}
+	if client.got.Scene != Scene || Scene != "review.extract" {
+		t.Fatalf("场景错误：%q", client.got.Scene)
+	}
+	if client.got.JSONSchema == nil || client.got.JSONSchema.Name != "contract_extract" || !client.got.JSONSchema.Strict {
+		t.Fatalf("未携带结构化输出约束：%+v", client.got.JSONSchema)
+	}
+	if len(client.got.Messages) != 2 {
+		t.Fatalf("消息条数 %d，期望 2", len(client.got.Messages))
+	}
+	sys := client.got.Messages[0]
+	if sys.Role != port.RoleSystem {
+		t.Fatalf("首条必须是 system，实际 %s", sys.Role)
+	}
+	for _, must := range []string{"不许编造", "不得改写", "只输出一个 JSON 对象", "raw_clauses"} {
+		if !strings.Contains(sys.Content, must) {
+			t.Fatalf("系统提示词缺少约束 %q：%s", must, sys.Content)
+		}
+	}
+	if client.got.Messages[1].Content != "劳动合同正文" {
+		t.Fatalf("用户消息未去除首尾空白：%q", client.got.Messages[1].Content)
+	}
+	if client.got.MaxTokens != maxOutputTokens {
+		t.Fatalf("MaxTokens=%d，期望 %d", client.got.MaxTokens, maxOutputTokens)
+	}
+}
+
+func TestExtractTruncatesLongInput(t *testing.T) {
+	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
+	long := strings.Repeat("劳", maxInputRunes+500)
+	if _, err := New(client).Extract(context.Background(), long); err != nil {
+		t.Fatalf("长文本不应失败：%v", err)
+	}
+	got := []rune(client.got.Messages[1].Content)
+	if len(got) != maxInputRunes {
+		t.Fatalf("输入截断到 %d 字，期望 %d", len(got), maxInputRunes)
+	}
+}
+
+func TestExtractUpstreamErrorKeepsCode(t *testing.T) {
+	upstream := llm.FakeClient{Err: port.New(port.CodeRateLimited, "上游限流")}
+	_, err := New(&upstream).Extract(context.Background(), "合同正文")
+	if port.CodeOf(err) != port.CodeRateLimited {
+		t.Fatalf("错误码应保留 42901，实际 %v", port.CodeOf(err))
+	}
+	if !port.IsRetryable(err) {
+		t.Fatalf("限流错误应可重试，worker 否则会直接放弃")
+	}
+
+	timeout := llm.FakeClient{Err: port.New(port.CodeUpstreamTimeout, "上游超时")}
+	if _, err := New(&timeout).Extract(context.Background(), "合同正文"); port.CodeOf(err) != port.CodeUpstreamTimeout {
+		t.Fatalf("超时码应保留 50301，实际 %v", port.CodeOf(err))
+	}
+
+	bad := llm.FakeClient{Err: port.New(port.CodeInvalidArgument, "请求不合法")}
+	if _, err := New(&bad).Extract(context.Background(), "合同正文"); port.CodeOf(err) != port.CodeInvalidArgument {
+		t.Fatalf("参数错误应原样返回，实际 %v", port.CodeOf(err))
+	}
+}
+
+func TestExtractGuards(t *testing.T) {
+	if _, err := New(nil).Extract(context.Background(), "合同正文"); port.CodeOf(err) != port.CodeInternal {
+		t.Fatalf("未装配客户端应返回 50001，实际 %v", port.CodeOf(err))
+	}
+	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
+	if _, err := New(client).Extract(context.Background(), "   "); port.CodeOf(err) != port.CodeInvalidArgument {
+		t.Fatalf("空正文应返回 40001，实际 %v", port.CodeOf(err))
+	}
+	if client.calls != 0 {
+		t.Fatalf("空正文不应调用模型，实际调用 %d 次", client.calls)
+	}
+}
+
+func TestParseConfidenceCap(t *testing.T) {
+	// 字段全给但 confidence 通过 missing 反推：确认不会超过 1。
+	doc, err := Parse(fullJSON)
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if doc.Confidence > 1 {
+		t.Fatalf("confidence 超过 1：%v", doc.Confidence)
+	}
+	// payload 必须可序列化：contract_extracts.payload 是 JSON 列。
+	if _, err := json.Marshal(doc); err != nil {
+		t.Fatalf("抽取结果无法序列化：%v", err)
+	}
+}
