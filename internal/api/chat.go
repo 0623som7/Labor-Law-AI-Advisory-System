@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -61,6 +63,24 @@ func (a *API) chatCompletions(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, a.cfg.HTTP.MaxBodyBytes)
 	}
 
+	// UTF-8 校验必须落在原始字节上，不能等解码之后再查 req.Input。
+	// encoding/json 遇到字符串里的非法字节不会报错，而是静默替换成 U+FFFD
+	// （见 encoding/json 文档 "invalid UTF-8 ... replaced by the Unicode
+	// replacement character"）：等到 req.Input 里已经是替换字符时，
+	// ValidString 永远为真，用户只会看到一段像乱码的"正常回答"，
+	// 而不是一条明确的 40001。所以这里整体读入、先验字节、再交回解码。
+	var raw []byte
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		FailCode(c, port.CodeInvalidArgument, "请求体读取失败")
+		return
+	}
+	if !utf8.Valid(raw) {
+		FailCode(c, port.CodeInvalidArgument, "请求体不是合法的 UTF-8")
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
+
 	var req chatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		FailCode(c, port.CodeInvalidArgument, "请求体不是合法 JSON")
@@ -68,6 +88,10 @@ func (a *API) chatCompletions(c *gin.Context) {
 	}
 
 	req.Input = strings.TrimSpace(req.Input)
+	if !utf8.ValidString(req.Input) {
+		FailCode(c, port.CodeInvalidArgument, "请求体不是合法的 UTF-8")
+		return
+	}
 	if req.Input == "" {
 		FailCode(c, port.CodeInvalidArgument, "input 不能为空")
 		return

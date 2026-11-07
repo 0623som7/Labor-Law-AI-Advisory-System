@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -165,6 +166,28 @@ func TestChatInputTooLong(t *testing.T) {
 	}
 	if env := decodeEnvelope(t, rec.Body.Bytes()); env.Code != int(port.CodeInvalidArgument) {
 		t.Fatalf("code = %d, want 40001", env.Code)
+	}
+}
+
+// TestChatRejectsInvalidUTF8：非法字节必须在解码前就被拦掉。
+//
+// 这条测试盯的正是"解码后检查永远为真"这个坑：json 解码会把 \xff\xfe
+// 换成两个 U+FFFD，之后 utf8.ValidString 全部通过。断言 40001 才说明
+// 校验真的落在了原始字节上。
+func TestChatRejectsInvalidUTF8(t *testing.T) {
+	h := newChatHandler(t, &fakeRunner{})
+
+	body := []byte("{\"input\":\"\xff\xfe\"}")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400（body=%s）", rec.Code, rec.Body.String())
+	}
+	if env := decodeEnvelope(t, rec.Body.Bytes()); env.Code != int(port.CodeInvalidArgument) {
+		t.Fatalf("code = %d, want 40001（body=%s）", env.Code, rec.Body.String())
 	}
 }
 
