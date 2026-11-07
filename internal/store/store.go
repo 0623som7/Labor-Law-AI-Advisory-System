@@ -91,10 +91,22 @@ func (s *DB) Users() port.UserStore {
 }
 
 // Session 返回会话域。
-func (s *DB) Session() port.SessionStore { return unimplementedSession{} }
+func (s *DB) Session() port.SessionStore {
+	q := s.q()
+	if q == nil {
+		return unimplementedSession{}
+	}
+	return newSessionsOn(q)
+}
 
 // Message 返回消息域。
-func (s *DB) Message() port.MessageStore { return unimplementedMessage{} }
+func (s *DB) Message() port.MessageStore {
+	q := s.q()
+	if q == nil {
+		return unimplementedMessage{}
+	}
+	return newMessagesOn(q)
+}
 
 // Review 返回审查域。
 func (s *DB) Review() port.ReviewStore {
