@@ -97,7 +97,13 @@ func (s *DB) Session() port.SessionStore { return unimplementedSession{} }
 func (s *DB) Message() port.MessageStore { return unimplementedMessage{} }
 
 // Review 返回审查域。
-func (s *DB) Review() port.ReviewStore { return unimplementedReview{} }
+func (s *DB) Review() port.ReviewStore {
+	q := s.q()
+	if q == nil {
+		return unimplementedReview{}
+	}
+	return newReviewsOn(q)
+}
 
 // Statute 返回法条/判例/向量域。
 //
@@ -112,4 +118,10 @@ func (s *DB) Statute() port.StatuteStore {
 }
 
 // Task 返回任务域。
-func (s *DB) Task() port.TaskStore { return unimplementedTask{} }
+func (s *DB) Task() port.TaskStore {
+	q := s.q()
+	if q == nil {
+		return unimplementedTask{}
+	}
+	return newTasksOn(q)
+}

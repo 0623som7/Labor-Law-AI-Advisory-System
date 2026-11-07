@@ -60,13 +60,13 @@ func (a *API) buildRouter() *gin.Engine {
 		authed.GET("/files/:fileId/pages", a.getFilePages)
 		authed.GET("/files/:fileId/content", a.downloadFile)
 
-		authed.POST("/contracts/review", a.notImplemented("合同审查"))
-		authed.GET("/reviews", a.notImplemented("审查历史"))
-		authed.GET("/reviews/:reviewId", a.notImplemented("审查详情"))
-		authed.GET("/reviews/:reviewId/findings", a.notImplemented("风险清单"))
+		authed.POST("/contracts/review", a.createReview)
+		authed.GET("/reviews", a.listReviews)
+		authed.GET("/reviews/:reviewId", a.getReview)
+		authed.GET("/reviews/:reviewId/findings", a.listFindings)
 
-		authed.GET("/tasks/:taskId", a.notImplemented("任务进度"))
-		authed.POST("/tasks/:taskId/cancel", a.notImplemented("取消任务"))
+		authed.GET("/tasks/:taskId", a.getTask)
+		authed.POST("/tasks/:taskId/cancel", a.cancelTask)
 
 		authed.GET("/statutes", a.listStatutes)
 		authed.GET("/statutes/:statuteId", a.getStatute)
