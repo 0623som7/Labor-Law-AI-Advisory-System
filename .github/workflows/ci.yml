@@ -9,6 +9,26 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # store 包的 4000 行 DAL 测试挂在 TEST_MYSQL_DSN 上：不设这个变量时它们整包 skip，
+    # CI 一路绿灯却一行 SQL 都没跑过——这正是"本地绿、线上炸"的典型来源。
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: laborlaw
+        ports:
+          - "3306:3306"
+        # mysql:8.0 首启（初始化 datadir + 建库）要 20 秒以上；
+        # health 没绿之前 job 不会开始，retries 给小了会直接判服务不可用。
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      # loc=UTC 与服务端一致：store 的 COUNT/TIMESTAMP 断言按 UTC 写。
+      TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/laborlaw?parseTime=true&charset=utf8mb4&loc=UTC
     steps:
       - uses: actions/checkout@v4
 
