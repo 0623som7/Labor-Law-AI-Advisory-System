@@ -59,6 +59,32 @@ func (a *API) listStatutes(c *gin.Context) {
 	OK(c, toStatuteHitDTOs(hits))
 }
 
+// getStatute 处理 GET /api/v1/statutes/{statuteId}。
+//
+// 走 store 直取单条，不过检索器：详情要的是"这一条原文是什么"，
+// 与"哪几条和这个问题相关"是两件事，套上归一反而可能拿不到用户手里那个 ID。
+func (a *API) getStatute(c *gin.Context) {
+	if a.store == nil {
+		a.notImplemented("法条详情")(c)
+		return
+	}
+
+	id := strings.TrimSpace(c.Param("statuteId"))
+	if id == "" {
+		FailCode(c, port.CodeInvalidArgument, "法条 ID 不能为空")
+		return
+	}
+
+	st, err := a.store.Statute().Get(c.Request.Context(), id)
+	if err != nil {
+		// store 已经把"查不到"折成 CodeNotFound（40401）、SQL 故障折成 CodeInternal（50001）。
+		// 这里不再按错误类型分支：两处各判一遍迟早判出不一致的两套口径。
+		Fail(c, err)
+		return
+	}
+	OK(c, toStatuteDTO(*st))
+}
+
 // parseStatuteTopK 解析 top_k：缺省取契约的 default，越界或非数字一律 40001。
 //
 // 不静默截断：前端传 100 是以为能拿到 100 条，悄悄减到 20 只会让它以为库里只有 20 条。

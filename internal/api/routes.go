@@ -69,7 +69,7 @@ func (a *API) buildRouter() *gin.Engine {
 		authed.POST("/tasks/:taskId/cancel", a.notImplemented("取消任务"))
 
 		authed.GET("/statutes", a.listStatutes)
-		authed.GET("/statutes/:statuteId", a.notImplemented("法条详情"))
+		authed.GET("/statutes/:statuteId", a.getStatute)
 	}
 
 	r.NoRoute(func(c *gin.Context) {

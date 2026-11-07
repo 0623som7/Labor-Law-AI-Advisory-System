@@ -177,3 +177,133 @@ func repeatRune(r rune, n int) string {
 	}
 	return string(out)
 }
+
+// fakeStatuteStore 只实现 Get。其余方法通过嵌入的 nil 接口转发，
+// 一旦被调用就会 panic——详情 handler 若绕道去查别的东西，测试会立刻炸出来。
+type fakeStatuteStore struct {
+	port.StatuteStore
+	statute *port.Statute
+	err     error
+	gotID   string
+}
+
+func (f *fakeStatuteStore) Get(_ context.Context, id string) (*port.Statute, error) {
+	f.gotID = id
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.statute, nil
+}
+
+// fakeStore 只提供 Statute()，其余域同样是嵌入 nil。
+type fakeStore struct {
+	port.Store
+	statutes port.StatuteStore
+}
+
+func (f fakeStore) Statute() port.StatuteStore { return f.statutes }
+
+func newStatuteDetailAPI(t *testing.T, s port.Store) http.Handler {
+	t.Helper()
+	return New(testConfig("dev-user-0001"), discardLogger(), WithStore(s)).Handler()
+}
+
+func TestGetStatute(t *testing.T) {
+	text := "用人单位有下列情形之一的，劳动者可以解除劳动合同：\n（一）未按照劳动合同约定提供劳动保护或者劳动条件的；"
+	ss := &fakeStatuteStore{statute: &port.Statute{
+		ID:          "LCL-38",
+		Law:         "中华人民共和国劳动合同法",
+		Article:     "第三十八条",
+		Title:       "劳动者单方解除劳动合同",
+		Text:        text,
+		URL:         "https://www.shanghai.gov.cn/rcjygj/20250606/658d064be68c46fc892530a8cde92258.html",
+		EffectiveAt: time.Date(2008, 1, 1, 0, 0, 0, 0, time.UTC),
+	}}
+	h := newStatuteDetailAPI(t, fakeStore{statutes: ss})
+
+	rec, env := doRequest(t, h, http.MethodGet, "/api/v1/statutes/LCL-38", nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	if env.Code != int(port.CodeOK) {
+		t.Fatalf("code = %d, want 0", env.Code)
+	}
+	if ss.gotID != "LCL-38" {
+		t.Fatalf("store 收到的 ID = %q, want LCL-38", ss.gotID)
+	}
+
+	raw, err := json.Marshal(env.Data)
+	if err != nil {
+		t.Fatalf("重新序列化 data 失败: %v", err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatalf("data 不是对象: %v, raw=%s", err, raw)
+	}
+	if data["id"] != "LCL-38" {
+		t.Fatalf("id = %v, want LCL-38", data["id"])
+	}
+	if data["article"] != "第三十八条" {
+		t.Fatalf("article = %v, want 第三十八条", data["article"])
+	}
+	// 换行必须原样带出：条款里的分项靠 \n 分条，被压成一行就没法逐项引用了。
+	if data["text"] != text {
+		t.Fatalf("text 与原文不一致: %q", data["text"])
+	}
+	if _, ok := data["effective_at"]; !ok {
+		t.Fatalf("缺少 effective_at: %v", data)
+	}
+}
+
+// TestGetStatuteErrors 守住错误码分工：查不到 40401、DB 故障 50001。
+// 两者都是 404 在演示里看不出来，只能靠测试钉住。
+func TestGetStatuteErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   port.ErrorCode
+	}{
+		{
+			name:       "法条不存在",
+			err:        port.New(port.CodeNotFound, "法条不存在"),
+			wantStatus: http.StatusNotFound,
+			wantCode:   port.CodeNotFound,
+		},
+		{
+			name:       "数据库故障",
+			err:        port.New(port.CodeInternal, "查询法条失败"),
+			wantStatus: http.StatusInternalServerError,
+			wantCode:   port.CodeInternal,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ss := &fakeStatuteStore{err: tc.err}
+			h := newStatuteDetailAPI(t, fakeStore{statutes: ss})
+			rec, env := doRequest(t, h, http.MethodGet, "/api/v1/statutes/NOPE-1", nil)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if env.Code != int(tc.wantCode) {
+				t.Fatalf("code = %d, want %d", env.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
+// TestGetStatuteWithoutStore 守住无存储模式：没接 store 时明确 501。
+func TestGetStatuteWithoutStore(t *testing.T) {
+	h := newTestAPI(t, "dev-user-0001")
+	rec, env := doRequest(t, h, http.MethodGet, "/api/v1/statutes/LCL-38", nil)
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501", rec.Code)
+	}
+	if env.Code != int(port.CodeInternal) {
+		t.Fatalf("code = %d, want %d", env.Code, port.CodeInternal)
+	}
+}
