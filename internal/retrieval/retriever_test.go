@@ -21,6 +21,8 @@ func TestExtractKeywordsNormalizesSpokenLanguage(t *testing.T) {
 		{"无领域词", "今天天气怎么样", []string{}},
 		{"空输入", "   ", []string{}},
 		{"同一归一词不重复", "辞退和开除是一回事吗", []string{"解除"}},
+		// 多轮追问的典型形态：只回一句"那我能要补偿吗"，没有"补偿金"字样。
+		{"补偿归一到经济补偿", "那我能要补偿吗", []string{"经济补偿"}},
 	}
 
 	for _, tc := range cases {
