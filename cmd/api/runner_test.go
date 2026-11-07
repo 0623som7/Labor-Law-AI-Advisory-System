@@ -15,7 +15,7 @@ func TestNewRunnerFallsBackToStubWithoutKey(t *testing.T) {
 	cfg := config.Config{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, ok := newRunner(cfg, log, nil, nil).(*stubRunner); !ok {
+	if _, ok := newRunner(cfg, log, nil, nil, nil).(*stubRunner); !ok {
 		t.Error("API key 为空时必须退回演示桩")
 	}
 }
@@ -26,7 +26,7 @@ func TestNewRunnerUsesAgentWithKey(t *testing.T) {
 	cfg.LLM.BaseURL = "http://127.0.0.1:0"
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, ok := newRunner(cfg, log, nil, nil).(*agent.Runner); !ok {
+	if _, ok := newRunner(cfg, log, nil, nil, nil).(*agent.Runner); !ok {
 		t.Error("配置了 API key 后必须启用真实编排")
 	}
 }

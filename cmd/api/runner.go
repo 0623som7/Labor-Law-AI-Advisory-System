@@ -41,7 +41,11 @@ func newHistory(db *sql.DB) agent.MessageHistory {
 // 没有 API key 时保留演示桩而不是直接上真 Runner：真 Runner 在密钥为空时
 // 只会让每次问答都以上游错误收场，演示反而倒退。降级必须在启动日志里喊出来，
 // 否则评审时会把桩回答当成模型效果来验收。
-func newRunner(cfg config.Config, log *slog.Logger, statutes agent.StatuteSearcher, history agent.MessageHistory) port.Runner {
+//
+// usage 是计量落库口，接在 llm.Client 上而不是 Runner 上：一次咨询会在 llm 层
+// 发出一次（未来可能多次）调用，只有那里拿得到真实的 token 数与上游耗时；
+// 挂在编排层只能记到"这一轮答了多久"，对不上账。
+func newRunner(cfg config.Config, log *slog.Logger, statutes agent.StatuteSearcher, history agent.MessageHistory, usage llm.UsageRecorder) port.Runner {
 	if cfg.LLM.APIKey == "" {
 		log.Warn("LLM_API_KEY 为空，对话接口使用演示桩回答，不是真实模型输出")
 		return newStubRunner(log)
@@ -54,5 +58,9 @@ func newRunner(cfg config.Config, log *slog.Logger, statutes agent.StatuteSearch
 	if history != nil {
 		opts = append(opts, agent.WithHistory(history))
 	}
-	return agent.New(llm.New(cfg.LLM, llm.WithLogger(log)), opts...)
+	llmOpts := []llm.Option{llm.WithLogger(log)}
+	if usage != nil {
+		llmOpts = append(llmOpts, llm.WithUsageRecorder(usage))
+	}
+	return agent.New(llm.New(cfg.LLM, llmOpts...), opts...)
 }

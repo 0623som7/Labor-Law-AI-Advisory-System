@@ -90,6 +90,18 @@ func (s *DB) Users() port.UserStore {
 	return newUsersOn(q, s.secret)
 }
 
+// Usage 返回模型调用计量域。
+//
+// 与 Users 同理：计量域还没挂进 port.Store（字段集待 B 签字），
+// 所以这里只作为聚合体上的便捷通道，供 cmd 把 llm.Client 的计量落库接上。
+func (s *DB) Usage() UsageStore {
+	q := s.q()
+	if q == nil {
+		return unimplementedUsage{}
+	}
+	return newUsageOn(q)
+}
+
 // Session 返回会话域。
 func (s *DB) Session() port.SessionStore {
 	q := s.q()

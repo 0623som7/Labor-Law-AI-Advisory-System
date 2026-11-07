@@ -22,6 +22,7 @@ import (
 	"laborlaw/internal/api"
 	"laborlaw/internal/config"
 	"laborlaw/internal/file"
+	"laborlaw/internal/llm"
 	"laborlaw/internal/storage"
 	"laborlaw/internal/store"
 	"laborlaw/internal/stream"
@@ -96,12 +97,23 @@ func run(migrateOnly bool) error {
 		logger.Warn("pdftotext 自检未通过，PDF 上传将无法解析", "err", err.Error())
 	}
 
+	// 没有 MySQL 时计量无处可写：传 nil 让 llm 只累加进程内预算，
+	// 而不是每轮问答都打一条"记录模型用量失败"的告警。
+	var usageRec llm.UsageRecorder
+	var agg *store.DB
+	if inf.db != nil {
+		// 账号 DAL 需要 JWT 密钥做手机号 HMAC：把密钥随聚合体一起构造，
+		// 事务回调里拿到的 Users 才不会丢密钥（见 store.NewWithSecret 的注释）。
+		agg = store.NewWithSecret(inf.db, cfg.Auth.Secret)
+		usageRec = agg.Usage()
+	}
+
 	// 检索器只构造一次：编排层（Runner）与 /statutes 接口必须用同一套口语归一规则，
 	// 各造一个的话改词表只会生效一半，而这类不一致在演示时看不出来。
 	searcher := newSearcher(inf.db)
 	opts := []api.Option{
 		api.WithCheckers(inf.checkers...),
-		api.WithRunner(newRunner(cfg, logger, searcher, newHistory(inf.db))),
+		api.WithRunner(newRunner(cfg, logger, searcher, newHistory(inf.db), usageRec)),
 		api.WithHub(stream.NewHub(stream.Options{}, 0, logger)),
 		api.WithExtractor(extractor),
 	}
@@ -110,10 +122,7 @@ func run(migrateOnly bool) error {
 	}
 	// 无存储模式（dev 连不上 MySQL）不注入 Store：让 /files/* 明确返回 501，
 	// 而不是在 handler 里对一个 nil 接口发请求。
-	if inf.db != nil {
-		// 账号 DAL 需要 JWT 密钥做手机号 HMAC：把密钥随聚合体一起构造，
-		// 事务回调里拿到的 Users 才不会丢密钥（见 store.NewWithSecret 的注释）。
-		agg := store.NewWithSecret(inf.db, cfg.Auth.Secret)
+	if agg != nil {
 		opts = append(opts, api.WithStore(agg), api.WithUsers(agg.Users()))
 	}
 	// Redis 只影响限流与续期：没起 Redis 时 WithRedis(nil) 等价于不注入，

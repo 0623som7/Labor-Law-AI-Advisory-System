@@ -132,7 +132,7 @@ func (c *Client) Chat(ctx context.Context, req port.ChatRequest) (port.ChatRespo
 	for attempt := 0; ; attempt++ {
 		resp, callErr := c.doChat(ctx, body, req.TraceID)
 		if callErr == nil {
-			c.afterSuccess(ctx, req.Scene, model, resp)
+			c.afterSuccess(ctx, req, model, resp)
 			return resp, nil
 		}
 		if !c.canRetry(callErr, attempt) {
@@ -178,7 +178,7 @@ func (c *Client) ChatStream(ctx context.Context, req port.ChatRequest, onDelta f
 	for attempt := 0; ; attempt++ {
 		resp, callErr := c.doChatStream(ctx, body, req.TraceID, emit)
 		if callErr == nil {
-			c.afterSuccess(ctx, req.Scene, model, resp)
+			c.afterSuccess(ctx, req, model, resp)
 			return resp, nil
 		}
 		if !c.canRetry(callErr, attempt) || emitted {
@@ -234,7 +234,7 @@ func (c *Client) Budget() (spent, limit float64) {
 //
 // 落库失败不返回给用户：模型已经答完了，把"记账失败"变成用户侧 500 是错误的取舍。
 // 但必须打日志，否则成本闸会在无人察觉的情况下失效。
-func (c *Client) afterSuccess(ctx context.Context, scene, model string, resp port.ChatResponse) {
+func (c *Client) afterSuccess(ctx context.Context, req port.ChatRequest, model string, resp port.ChatResponse) {
 	cost := c.Cost(resp.Usage)
 	c.budget.add(cost)
 
@@ -242,7 +242,10 @@ func (c *Client) afterSuccess(ctx context.Context, scene, model string, resp por
 		return
 	}
 	rec := port.UsageRecord{
-		Scene:            scene,
+		// trace_id 是 usage_records 与 messages 之间唯一的连接键：
+		// 表里不存 user_id，按人归集只能靠它。
+		TraceID:          req.TraceID,
+		Scene:            req.Scene,
 		Model:            model,
 		PromptTokens:     resp.Usage.PromptTokens,
 		CompletionTokens: resp.Usage.CompletionTokens,
@@ -251,7 +254,7 @@ func (c *Client) afterSuccess(ctx context.Context, scene, model string, resp por
 		CreatedAt:        c.now(),
 	}
 	if err := c.rec.Record(ctx, rec); err != nil {
-		c.log.Error("记录模型用量失败，成本账可能不准", "err", err.Error(), "scene", scene)
+		c.log.Error("记录模型用量失败，成本账可能不准", "err", err.Error(), "scene", req.Scene)
 	}
 }
 

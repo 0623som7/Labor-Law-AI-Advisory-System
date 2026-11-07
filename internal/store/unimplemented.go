@@ -184,8 +184,19 @@ func (unimplementedTask) FailRunning(context.Context, string) (int64, error) {
 	return 0, errNotImplemented("任务")
 }
 
-// errNotImplemented 统一构造"域尚未实现"的 50001。
+// unimplementedUsage 是计量域占位。
 //
+// 它出现在无存储模式（dev 连不上 MySQL）下。返回错误而不是静默丢弃：
+// 让 llm 层打一条"记录模型用量失败"，从而在日志里能看出"这台机器的账没落"。
+type unimplementedUsage struct{}
+
+var _ UsageStore = unimplementedUsage{}
+
+func (unimplementedUsage) Record(context.Context, port.UsageRecord) error {
+	return errNotImplemented("计量")
+}
+
+// errNotImplemented 统一构造"域尚未实现"的 50001。
 // 刻意用 50001 而不是新增错误码：这是一个"代码还没写完"的状态，不是业务分支；
 // 用户在演示时看到它，说明有人接了这条链路却没接数据。
 func errNotImplemented(domain string) error {
