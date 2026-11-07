@@ -60,7 +60,7 @@ func (r *Retriever) Search(ctx context.Context, input string, topK int) ([]port.
 		return []port.StatuteHit{}, nil
 	}
 
-	keywords := ExtractKeywords(input)
+	keywords := extractKeywords(input)
 	if len(keywords) == 0 {
 		return []port.StatuteHit{}, nil
 	}
@@ -73,7 +73,7 @@ func (r *Retriever) Search(ctx context.Context, input string, topK int) ([]port.
 	var lastErr error
 
 	for _, kw := range keywords {
-		hits, err := r.store.SearchText(ctx, kw, "", r.perQueryK)
+		hits, err := r.store.SearchText(ctx, kw.term, "", kw.topK(r.perQueryK))
 		if err != nil {
 			// 单个关键词失败不拖垮整次检索：多词本来就是冗余召回，
 			// 只要还有一个词查到了，就值得把结果给用户。
@@ -88,9 +88,9 @@ func (r *Retriever) Search(ctx context.Context, input string, topK int) ([]port.
 				merged[id] = agg
 			}
 			agg.matched++
-			if h.Score > agg.hit.Score {
-				agg.hit.Score = h.Score
-			}
+			// 加权累加而不是取最大值：一条同时被"解除"和"经济补偿"命中的条文，
+			// 比只被其中一个命中的更贴合，而单看最大分看不出这种组合。
+			agg.hit.Score += kw.weight * h.Score
 		}
 	}
 

@@ -13,50 +13,118 @@ import (
 	"strings"
 )
 
-// aliases 把口语说法归一到法条用语。
+// aliases 把口语说法归一到法条用语，一个口语词可以对应多个检索词。
 //
 // 键是用户可能说的词，值是检索时真正拿去匹配的词。
 // 归一的方向必须是"口语 → 法条用语"，反过来会搜不到：
 // 条文里写"经济补偿"，几乎不会写"N+1"。
-var aliases = map[string]string{
+//
+// 一对多是拿真实法条原文校准出来的，不是预防性设计：
+//   - 用户说"加班费"，而《劳动法》第四十四条通篇只有"延长工作时间"，没有"加班"二字；
+//   - 用户说"双倍工资"，而《劳动合同法》第八十二条写的是"每月支付二倍的工资"，
+//     "二倍工资"这个连续词在整部法律里一次都没出现过。
+//
+// 所以归一目标必须是"库里真的出现的字串"，不是"看起来更专业的说法"。
+var aliases = map[string][]string{
 	// 解除与终止
-	"辞退": "解除", "被辞退": "解除", "开除": "解除", "解雇": "解除",
-	"劝退": "解除", "裁员": "裁减人员", "优化": "裁减人员",
-	"离职": "解除", "辞职": "解除", "自离": "解除",
-	"合同到期": "终止", "续签": "续订", "不续签": "终止",
+	"辞退": {"解除"}, "被辞退": {"解除"}, "开除": {"解除"}, "解雇": {"解除"},
+	"劝退": {"解除"}, "裁员": {"裁减人员"}, "优化": {"裁减人员"},
+	"离职": {"解除"}, "辞职": {"解除"}, "自离": {"解除"},
+	"合同到期": {"终止"}, "续签": {"续订"}, "不续签": {"终止"},
 
 	// 钱
-	"欠薪": "工资", "拖欠工资": "工资", "克扣工资": "工资", "工资": "工资",
-	"降薪": "工资", "减薪": "工资", "底薪": "工资", "提成": "工资",
-	"年终奖": "奖金", "绩效": "工资", "加班费": "加班", "加班": "加班",
-	"双倍工资": "二倍工资", "两倍工资": "二倍工资",
-	"补偿金": "经济补偿", "经济补偿": "经济补偿", "经济补偿金": "经济补偿",
-	"n+1": "经济补偿", "n+3": "经济补偿",
-	"赔偿金": "赔偿", "2n": "赔偿",
-	"违约金": "违约金", "押金": "押金", "保证金": "押金",
+	"欠薪": {"工资", "拖欠"}, "拖欠工资": {"工资", "拖欠"}, "克扣工资": {"工资", "克扣"},
+	"工资": {"工资"}, "降薪": {"工资"}, "减薪": {"工资"}, "底薪": {"工资"}, "提成": {"工资"},
+	"年终奖": {"奖金"}, "绩效": {"工资"},
+	"加班费": {"加班", "延长工作时间"}, "加班": {"加班", "延长工作时间"},
+	"双倍工资": {"二倍"}, "两倍工资": {"二倍"}, "二倍工资": {"二倍"},
+	"补偿金": {"经济补偿"}, "经济补偿": {"经济补偿"}, "经济补偿金": {"经济补偿"},
+	"n+1": {"经济补偿"}, "n+3": {"经济补偿"},
+	"赔偿金": {"赔偿"}, "2n": {"赔偿"},
+	"违约金": {"违约金"}, "押金": {"押金"}, "保证金": {"押金"},
 
 	// 合同与用工形式
-	"劳动合同": "劳动合同", "合同": "劳动合同", "没签合同": "劳动合同",
-	"试用期": "试用期", "实习": "实习", "见习": "实习",
-	"劳务派遣": "劳务派遣", "派遣": "劳务派遣", "外包": "劳务派遣",
-	"兼职": "非全日制", "小时工": "非全日制", "临时工": "非全日制",
+	"劳动合同": {"劳动合同"}, "合同": {"劳动合同"}, "没签合同": {"劳动合同"},
+	"试用期": {"试用期"}, "实习": {"实习"}, "见习": {"实习"},
+	"劳务派遣": {"劳务派遣"}, "派遣": {"劳务派遣"}, "外包": {"劳务派遣"},
+	"兼职": {"非全日制"}, "小时工": {"非全日制"}, "临时工": {"非全日制"},
 
 	// 工时与休假
-	"996": "工作时间", "单休": "休息", "调休": "休息",
-	"年假": "年休假", "带薪年假": "年休假", "病假": "病假",
-	"产假": "产假", "陪产假": "产假", "哺乳假": "产假",
-	"婚假": "婚假", "丧假": "丧假",
+	"996": {"工作时间", "延长工作时间"}, "单休": {"休息"}, "调休": {"休息"},
+	"年假": {"年休假"}, "带薪年假": {"年休假"}, "病假": {"病假"},
+	"产假": {"产假"}, "陪产假": {"产假"}, "哺乳假": {"产假"},
+	"婚假": {"婚假"}, "丧假": {"丧假"},
 
 	// 保障与伤害
-	"社保": "社会保险", "五险": "社会保险", "公积金": "住房公积金",
-	"工伤": "工伤", "职业病": "职业病", "工亡": "工伤",
-	"医疗期": "医疗期", "怀孕": "女职工", "孕期": "女职工", "哺乳期": "女职工",
+	"社保": {"社会保险"}, "五险": {"社会保险"}, "公积金": {"住房公积金"},
+	"工伤": {"工伤"}, "职业病": {"职业病"}, "工亡": {"工伤"},
+	"医疗期": {"医疗期"}, "怀孕": {"女职工"}, "孕期": {"女职工"}, "哺乳期": {"女职工"},
 
 	// 争议处理
-	"仲裁": "劳动仲裁", "劳动仲裁": "劳动仲裁", "起诉": "诉讼",
-	"劳动监察": "劳动监察", "投诉": "劳动监察", "证据": "证据",
-	"竞业限制": "竞业限制", "竞业协议": "竞业限制", "保密协议": "保密",
-	"调岗": "变更劳动合同", "调店": "变更劳动合同", "调动": "变更劳动合同",
+	"仲裁": {"劳动仲裁"}, "劳动仲裁": {"劳动仲裁"}, "起诉": {"诉讼"},
+	"劳动监察": {"劳动监察"}, "投诉": {"劳动监察"}, "证据": {"证据"},
+	"竞业限制": {"竞业限制"}, "竞业协议": {"竞业限制"}, "保密协议": {"保密"},
+	"调岗": {"变更劳动合同"}, "调店": {"变更劳动合同"}, "调动": {"变更劳动合同"},
+}
+
+// genericTerms 是在法条里到处都出现的词。
+//
+// "工资"在两百条法条里能命中四五十条，"劳动合同"更多。它们不是没用——
+// 用户确实在问工资——而是单独拿出来没有区分度：让它们和专业词一样深地召回，
+// 结果就是把"未签合同二倍工资"里最该出现的第八十二条挤出前五。
+//
+// 这里的处理是降权 + 浅召回，而不是直接丢掉：全丢掉会损失"这个词也命中了"的信号。
+var genericTerms = map[string]bool{
+	"工资":   true,
+	"劳动合同": true,
+	"劳动者":  true,
+	"用人单位": true,
+}
+
+const (
+	// genericWeight 是泛词在合并打分时的权重。
+	genericWeight = 0.4
+	// genericTopK 是泛词最多召回几条，专业词不受此限。
+	genericTopK = 2
+	// professionalWeight 是法条专门用语的权重。
+	//
+	// 用户问"加班费怎么算"，标准答案是《劳动法》第四十四条，
+	// 而该条通篇没有"加班"二字，只有一处"延长工作时间"；
+	// 反过来《劳动合同法》第三十一条把"加班"写了三次，却只是"应当支付加班费"的原则性规定。
+	// 纯按词频排序会把原则性条文排在计费标准前面，所以法条用语必须比口语词更值钱。
+	professionalWeight = 1.5
+)
+
+// professionalTerms 是"从口语归一出来的法条用语"，由 aliases 自动派生。
+//
+// 手写第二张表迟早会和 aliases 对不上：改了一个归一目标，却忘了改权重表。
+// 这里在 init 里从 aliases 现算，保证两者永远一致。
+var professionalTerms = map[string]bool{}
+
+func init() {
+	for spoken, terms := range aliases {
+		for _, term := range terms {
+			// 自映射（"工资"→"工资"）不算专业用语，它只是原词。
+			if term != spoken {
+				professionalTerms[term] = true
+			}
+		}
+	}
+}
+
+// keyword 是一个待检索词及其在合并打分中的权重。
+type keyword struct {
+	term   string
+	weight float64
+	pos    int
+}
+
+// topK 返回这个词应该召回的深度。
+func (k keyword) topK(fallback int) int {
+	if k.weight < 1 {
+		return genericTopK
+	}
+	return fallback
 }
 
 // maxKeywords 是单次提问最多提取多少个检索词。
@@ -71,45 +139,57 @@ const maxKeywords = 6
 // 而不是退回整句 LIKE：检索到一条不相干的法条比没有法条更糟，
 // 因为模型会强行拿它来解释用户的问题。
 func ExtractKeywords(input string) []string {
+	keywords := extractKeywords(input)
+	words := make([]string, 0, len(keywords))
+	for _, kw := range keywords {
+		words = append(words, kw.term)
+	}
+	return words
+}
+
+// extractKeywords 是 ExtractKeywords 的带权重版本，供检索内部使用。
+func extractKeywords(input string) []keyword {
 	text := strings.ToLower(strings.TrimSpace(input))
 	if text == "" {
-		return []string{}
+		return nil
 	}
 
-	type found struct {
-		word string
-		pos  int
-	}
-	seen := make(map[string]found, len(aliases))
-
-	for spoken, normalized := range aliases {
+	seen := make(map[string]keyword, len(aliases))
+	for spoken, terms := range aliases {
 		pos := strings.Index(text, strings.ToLower(spoken))
 		if pos < 0 {
 			continue
 		}
-		// 同一个归一词只保留最早出现的那次：位置代表用户最先关心的点。
-		if prev, ok := seen[normalized]; !ok || pos < prev.pos {
-			seen[normalized] = found{word: normalized, pos: pos}
+		for _, term := range terms {
+			// 同一个检索词只保留最早出现的那次：位置代表用户最先关心的点。
+			// 权重由词本身决定，所以同一词被多个口语说法命中时不会互相覆盖出错。
+			if prev, ok := seen[term]; ok && prev.pos <= pos {
+				continue
+			}
+			weight := 1.0
+			switch {
+			case genericTerms[term]:
+				weight = genericWeight
+			case professionalTerms[term]:
+				weight = professionalWeight
+			}
+			seen[term] = keyword{term: term, weight: weight, pos: pos}
 		}
 	}
 
-	out := make([]found, 0, len(seen))
-	for _, f := range seen {
-		out = append(out, f)
+	out := make([]keyword, 0, len(seen))
+	for _, kw := range seen {
+		out = append(out, kw)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].pos != out[j].pos {
 			return out[i].pos < out[j].pos
 		}
-		return out[i].word < out[j].word
+		return out[i].term < out[j].term
 	})
 
 	if len(out) > maxKeywords {
 		out = out[:maxKeywords]
 	}
-	words := make([]string, 0, len(out))
-	for _, f := range out {
-		words = append(words, f.word)
-	}
-	return words
+	return out
 }
