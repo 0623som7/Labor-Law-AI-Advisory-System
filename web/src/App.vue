@@ -7,7 +7,7 @@
   <div class="app-shell">
     <header class="app-notice">本系统输出仅供参考，不构成法律意见。</header>
     <main class="app-main">
-      <div class="app-placeholder">页面装配中</div>
+      <RouterView />
     </main>
   </div>
 </template>
@@ -34,11 +34,5 @@
   flex: 1;
   min-height: 0;
   display: flex;
-}
-
-.app-placeholder {
-  margin: auto;
-  font-size: 13px;
-  color: var(--ll-text-weak);
 }
 </style>
