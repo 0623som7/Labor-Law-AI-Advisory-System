@@ -10,7 +10,7 @@
 //   2. 一个坏帧只 warn，不中断整条流（否则一次 JSON 不完整就白屏）；
 //   3. 没等到 done 就结束 = 失败（"连接中断，请重试"），不能当成功渲染半句话。
 
-import { ApiError, getTokens, notifyUnauthorized } from './client'
+import { ApiError, ensureFreshToken, getTokens, MSG_RELOGIN, notifyUnauthorized } from './client'
 import type { ChatRequest, Envelope } from './types'
 import { isKnownEvent, decodeEvent, SSEParser } from '@/utils/sse'
 import type { CitationEvent, DeltaEvent, DoneEvent, MetaEvent, ToolCallEvent } from '@/utils/sse'
@@ -62,6 +62,14 @@ export async function streamChat(
   handlers: ChatStreamHandlers,
   signal?: AbortSignal,
 ): Promise<ChatStreamResult> {
+  // fetch 不经过 axios 拦截器，续期得自己来一次；否则两小时一到，
+  // 用户打完一屏字发出去才被 40101 打回登录页。
+  const usable = await ensureFreshToken()
+  if (!usable) {
+    if (signal?.aborted) return { aborted: true, done: false }
+    throw new ApiError(40101, MSG_RELOGIN)
+  }
+
   const tokens = getTokens()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

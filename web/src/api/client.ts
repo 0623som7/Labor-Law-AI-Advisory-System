@@ -1,11 +1,13 @@
 // REST 客户端。
 //
-// 三件事都在这里做掉，视图层就不再重复：
+// 四件事都在这里做掉，视图层就不再重复：
 //   1. 解包络——后端永远回 {code,message,data}，code !== 0 一律抛 ApiError；
 //   2. 带令牌——请求拦截器统一加 Authorization，页面里不出现 token；
-//   3. 会话失效——收到 40101（或 HTTP 401）就清令牌并通知外层跳登录页。
+//   3. 提前续期——令牌快过期时先换新的，再发原请求（见下面的 createTokenRefresher）；
+//   4. 会话失效——收到 40101（或 HTTP 401）就清令牌并通知外层跳登录页。
 //
-// 流式接口不走这里（axios 处理不了边收边解），见 api/chat.ts。
+// 流式接口不走这里（axios 处理不了边收边解），见 api/chat.ts；它复用这里的
+// ensureFreshToken()，所以"提前续期"只有一份实现。
 
 import axios, { type AxiosRequestConfig } from 'axios'
 
@@ -73,6 +75,80 @@ export function clearTokens(): void {
   localStorage.removeItem(EXPIRES_KEY)
 }
 
+/** 续期失败时统一用后端 40101 的原文，别在前端另编一套说法。 */
+export const MSG_RELOGIN = '登录状态已失效，请重新登录'
+
+/** 令牌剩余时间不足这么长就先换新的：留一分钟给时钟漂移和网络往返。 */
+export const REFRESH_LEAD_MS = 60_000
+
+/** 续期需要的全部外部动作。抽成参数只为一件事：让单飞逻辑能在 Node 里被测试。 */
+export interface TokenRefresherDeps {
+  now: () => number
+  readTokens: () => TokenPair | null
+  saveTokens: (result: AuthResult) => void
+  /** 彻底失效时清本地令牌并通知外层跳登录页。 */
+  onUnauthorized: () => void
+  refreshTokens: (refreshToken: string) => Promise<AuthResult>
+}
+
+export interface TokenRefresher {
+  /**
+   * 令牌可用返回 true（含"还不用换"和"换成功了"两种）；
+   * 不可用返回 false（没登录、或续期失败，此时本地令牌已被清掉），调用方自己抛 ApiError。
+   */
+  ensureFresh: () => Promise<boolean>
+  /** 只判断要不要换，不发请求。 */
+  isStale: () => boolean
+}
+
+/**
+ * 提前续期。
+ *
+ * 为什么不在 401 之后再刷：SSE 流一旦吐出半句话就没法重放，只能让用户重问；
+ * 而 REST 请求重发一次也只是多一个往返。所以统一在发请求前把令牌换好。
+ *
+ * 单飞：多个请求同时发现过期时共用同一个 promise，只打一次 /auth/refresh。
+ * 后端会轮换 refresh_token（旧的立刻失效），所以这里必须整套覆盖，不能只换 access。
+ */
+export function createTokenRefresher(deps: TokenRefresherDeps): TokenRefresher {
+  // 唯一的单飞位：非 null 表示"正在换"，后来的调用直接 await 它。
+  let refreshing: Promise<boolean> | null = null
+
+  function isStale(): boolean {
+    const tokens = deps.readTokens()
+    if (!tokens) return false
+    return tokens.expires_at - REFRESH_LEAD_MS < deps.now()
+  }
+
+  async function run(): Promise<boolean> {
+    const tokens = deps.readTokens()
+    if (!tokens) return false
+    try {
+      const result = await deps.refreshTokens(tokens.refresh_token)
+      deps.saveTokens(result)
+      return true
+    } catch {
+      // 40101、网络失败、后端 5xx 都按"这次登录已经不可信"处理：
+      // 留着过期的令牌只会在下一条请求里再失败一次。
+      deps.onUnauthorized()
+      return false
+    }
+  }
+
+  return {
+    ensureFresh(): Promise<boolean> {
+      if (!isStale()) return Promise.resolve(deps.readTokens() !== null)
+      if (!refreshing) {
+        refreshing = run().finally(() => {
+          refreshing = null
+        })
+      }
+      return refreshing
+    },
+    isStale,
+  }
+}
+
 const http = axios.create({
   // 后端路由前缀是 /api/v1；开发期由 Vite 代理到 127.0.0.1:8080，部署期由 nginx 反代。
   baseURL: '/api/v1',
@@ -80,7 +156,48 @@ const http = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-http.interceptors.request.use((config) => {
+// 换令牌必须绕开下面的拦截器：拦截器会先判断"要不要续期"，而 /auth/refresh
+// 自己就是续期，走过去等于自己等自己。
+const rawHttp = axios.create({
+  baseURL: '/api/v1',
+  timeout: 30000,
+  headers: { 'Content-Type': 'application/json' },
+})
+
+async function refreshTokensDirect(refreshToken: string): Promise<AuthResult> {
+  const response = await rawHttp.post<Envelope<AuthResult>>('/auth/refresh', {
+    refresh_token: refreshToken,
+  })
+  const body = response.data
+  if (body.code !== 0) {
+    throw new ApiError(body.code, body.message || '刷新令牌失败', body.fields, body.retryable ?? false)
+  }
+  return body.data as AuthResult
+}
+
+const tokenRefresher = createTokenRefresher({
+  now: () => Date.now(),
+  readTokens: getTokens,
+  saveTokens: setTokens,
+  onUnauthorized: notifyUnauthorized,
+  refreshTokens: refreshTokensDirect,
+})
+
+/** REST 与 SSE 共用的入口：发请求前确保手上的令牌还能用。 */
+export function ensureFreshToken(): Promise<boolean> {
+  return tokenRefresher.ensureFresh()
+}
+
+http.interceptors.request.use(async (config) => {
+  // 完全没登录时不在这里拦：/auth/login、/auth/register、/auth/refresh 都是匿名接口，
+  // 拦了会把"密码错误"变成"请重新登录"。其它接口缺令牌由后端回 40101，走同一条失效链路。
+  const before = getTokens()
+  if (!before) return config
+
+  if (!(await ensureFreshToken())) {
+    // 拦截器里抛 ApiError，由下面的 request() 原样兜住，视图层拿到的文案与后端一致。
+    throw new ApiError(40101, MSG_RELOGIN)
+  }
   const tokens = getTokens()
   if (tokens) {
     config.headers.set('Authorization', `Bearer ${tokens.access_token}`)

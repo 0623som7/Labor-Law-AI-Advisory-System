@@ -9,6 +9,8 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    // 测试会顺着 client.ts → types.ts 引用到 @/utils/sse，别名在这里也要认得。
+    "paths": { "@/*": ["./src/*"] },
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
