@@ -158,4 +158,3 @@ func emitCitations(emit func(port.Event) error, hits []port.StatuteHit) error {
 	}
 	return nil
 }
-
