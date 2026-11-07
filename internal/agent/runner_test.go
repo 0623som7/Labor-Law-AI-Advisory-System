@@ -514,3 +514,28 @@ func TestPromptStatuteInjection(t *testing.T) {
 		t.Errorf("注入条数 = %d, want 8（超出只会稀释注意力）", n)
 	}
 }
+
+// TestConsultInputLengthLimit 守 contract/openapi.yaml 里 ChatRequest.input 的 maxLength=4000。
+//
+// 用汉字构造而不是单个 ASCII 字符：一个汉字 3 字节，len("欠"*4000) = 12000，
+// 这条用例能同时证伪"按字节数校验"的错误实现。
+func TestConsultInputLengthLimit(t *testing.T) {
+	const cjk = "欠"
+
+	t.Run("正好4000字通过", func(t *testing.T) {
+		r := New(&recordingClient{chunks: []string{"ok"}})
+		var c collector
+		if _, err := r.Run(context.Background(), port.Request{Scene: SceneConsult, Input: strings.Repeat(cjk, maxConsultInputRunes)}, c.emit); err != nil {
+			t.Fatalf("4000 字应通过，得到错误: %v", err)
+		}
+	})
+
+	t.Run("4001字被拒", func(t *testing.T) {
+		r := New(&recordingClient{chunks: []string{"ok"}})
+		var c collector
+		_, err := r.Run(context.Background(), port.Request{Scene: SceneConsult, Input: strings.Repeat(cjk, maxConsultInputRunes+1)}, c.emit)
+		if !errors.Is(err, &port.AppError{Code: port.CodeInvalidArgument}) {
+			t.Errorf("错误 = %v, want %v", err, port.CodeInvalidArgument)
+		}
+	})
+}

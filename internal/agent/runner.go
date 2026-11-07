@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"laborlaw/internal/port"
 )
@@ -24,6 +25,10 @@ const (
 	SceneQA      = "qa"
 	SceneReview  = "review"
 )
+
+// maxConsultInputRunes 对齐 contract/openapi.yaml 里 ChatRequest.input 的 maxLength=4000。
+// 按 rune 计而不是 len()：一个汉字是 3 字节，用字节数会把 4000 字的中文描述当成 12000 字拒掉。
+const maxConsultInputRunes = 4000
 
 // StatuteSearcher 是 agent 需要的最小检索能力：一句话进来，一组可引用的条文出去。
 //
@@ -138,6 +143,9 @@ func (r *Runner) Run(ctx context.Context, req port.Request, emit func(port.Event
 	}
 	if strings.TrimSpace(req.Input) == "" {
 		return port.Result{}, port.New(port.CodeInvalidArgument, "输入不能为空")
+	}
+	if n := utf8.RuneCountInString(req.Input); n > maxConsultInputRunes {
+		return port.Result{}, port.New(port.CodeInvalidArgument, "input 超过 %d 字", maxConsultInputRunes)
 	}
 
 	unlock := r.lockSession(req.SessionID)
