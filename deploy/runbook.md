@@ -111,7 +111,19 @@ chmod 600 deploy/nginx/certs/server.key
 
 # 3.6 起 TLS 层（api 的端口已改成 127.0.0.1:8080，公网只看得到 8443）
 docker compose -f deploy/docker-compose.yml up -d nginx
+
+# 3.7 存储目录属主（Linux 上必做，Windows 本机不用）
+#      compose 用 ../storage:/app/storage 把宿主目录盖在镜像的 /app/storage 上，
+#      Dockerfile 里那句 chown app:app /app 对 bind mount 不生效。
+#      宿主目录默认属主是 root，容器内进程是 uid 10001，写不进去 → 上传接口 500
+#      （日志里是 open /app/storage/...: permission denied）。
+sudo mkdir -p storage
+sudo chown -R 10001:10001 storage
+sudo chmod 750 storage
 ```
+
+> 这一步不能省。Windows 的 bind mount 忽略 uid，
+> 所以本机怎么试都正常，第一次上 Linux ECS 就会在上传那一刻炸。
 
 > `deploy/nginx/certs/` 在 `.gitignore` 里：证书与私钥绝不入库。
 > 换正式证书时把 cert/key 覆盖进去再 `docker compose ... restart nginx` 即可，配置不用改。
@@ -131,6 +143,10 @@ curl -s localhost:8080/readyz                       # checks 里 mysql/redis 都
 docker stats --no-stream                            # 三个容器 RSS，api 应 < 400MB
 free -m                                             # available 必须 > 300MB
 docker compose logs --tail=50 api                   # 无 ERROR、有 trace_id
+
+# 存储目录可写（§3.7 没做时这条必挂：permission denied）
+curl -k -H "Authorization: Bearer <token>" -F "file=@sample.pdf" \
+  https://<公网IP>:8443/api/v1/files                # code=0 且带回 file id
 ```
 
 浏览器侧（8443，经过 nginx 的 TLS 层）：
