@@ -98,7 +98,24 @@ docker compose -f deploy/docker-compose.yml run --rm api -migrate
 
 # 3.4 起服务
 docker compose -f deploy/docker-compose.yml up -d api
+
+# 3.5 自签证书（8443 的 TLS 由 nginx 终止，证书必须先在宿主机生成）
+#     没有证书时 nginx 会直接退出（ssl_certificate 指向不存在的文件），
+#     于是 8443 连不上——这不是"还没配好"，是容器起不来。
+mkdir -p deploy/nginx/certs
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -subj "/CN=<公网IP>" \
+  -keyout deploy/nginx/certs/server.key \
+  -out deploy/nginx/certs/server.crt
+chmod 600 deploy/nginx/certs/server.key
+
+# 3.6 起 TLS 层（api 的端口已改成 127.0.0.1:8080，公网只看得到 8443）
+docker compose -f deploy/docker-compose.yml up -d nginx
 ```
+
+> `deploy/nginx/certs/` 在 `.gitignore` 里：证书与私钥绝不入库。
+> 换正式证书时把 cert/key 覆盖进去再 `docker compose ... restart nginx` 即可，配置不用改。
+> 自签证书浏览器会拦一次，演示时点"继续访问"；答辩前若买了域名，用 acme.sh 签发替换这两个文件。
 
 > `AUTO_MIGRATE` 在 `production` 下会被 config 拒绝，这是故意的：schema 变更必须人工确认。
 > 迁移走 `api -migrate`：跑完即退出，不需要装 mysql 客户端，也不会在线上悄悄改表。
@@ -116,10 +133,25 @@ free -m                                             # available 必须 > 300MB
 docker compose logs --tail=50 api                   # 无 ERROR、有 trace_id
 ```
 
-浏览器侧（8443）：
+浏览器侧（8443，经过 nginx 的 TLS 层）：
 
 ```bash
-curl -k -H 'X-Request-ID: smoke-001' https://<公网IP>:8443/healthz
+curl -k https://<公网IP>:8443/healthz                 # {"status":"ok"}
+curl -k https://<公网IP>:8443/readyz                  # mysql/redis 都是 up
+```
+
+> 8080 只绑在宿主机 loopback 上（compose 里写的是 `127.0.0.1:8080:8080`）：
+> 在机器上 `curl localhost:8080` 能通，从公网打 8080 必须是不通的。
+> 这条要亲测——测试时就遇到过"镜像里还是旧配置"的情况。
+
+SSE 必须逐帧出来，不能最后一次性吐完：
+
+```bash
+# 先登录拿 token（中文请求体写 UTF-8 文件再 --data-binary，别用 -d '中文'）
+curl -k -N -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' \
+  --data-binary @req.json https://<公网IP>:8443/api/v1/chat/completions
+# 期望：先看到 id: / event: meta，随后 event: delta 一行行刷出来；
+# 若停顿 30 秒后整屏一起出现，说明 nginx 的 proxy_buffering 没关。
 ```
 
 ---
