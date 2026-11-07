@@ -87,7 +87,7 @@ func (r *Runner) retrieve(ctx context.Context, query string, emit func(port.Even
 		return nil, err
 	}
 
-	hits, err := r.statutes.SearchText(ctx, query, "", r.retrieveTopK)
+	hits, err := r.statutes.Search(ctx, query, r.retrieveTopK)
 	if err != nil {
 		r.log.Warn("statute search degraded", "err", err.Error())
 		if emitErr := emit(port.Event{

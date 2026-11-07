@@ -119,8 +119,8 @@ type fakeSearcher struct {
 	gotTopK  int
 }
 
-func (f *fakeSearcher) SearchText(_ context.Context, query, _ string, topK int) ([]port.StatuteHit, error) {
-	f.gotQuery, f.gotTopK = query, topK
+func (f *fakeSearcher) Search(_ context.Context, input string, topK int) ([]port.StatuteHit, error) {
+	f.gotQuery, f.gotTopK = input, topK
 	if f.err != nil {
 		return nil, f.err
 	}

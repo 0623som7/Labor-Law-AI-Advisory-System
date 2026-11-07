@@ -25,13 +25,13 @@ const (
 	SceneReview  = "review"
 )
 
-// StatuteSearcher 是 agent 需要的最小检索能力。
+// StatuteSearcher 是 agent 需要的最小检索能力：一句话进来，一组可引用的条文出去。
 //
-// 刻意定义窄接口而不是直接用 port.StatuteStore：后者还包含 ReplaceAll、
-// SaveEmbeddings 这些写方法，编排层拿到了只会增加误用面。
-// port.StatuteStore 天然满足本接口，装配时直接传即可。
+// 入参是用户原话而不是关键词，是有意的分层的：查询清洗、同义归一、多路召回与排序
+// 都属于检索策略，应当能在不动编排的情况下独立演进（以后加向量召回也一样）。
+// internal/retrieval.Retriever 满足本接口，装配时直接传入。
 type StatuteSearcher interface {
-	SearchText(ctx context.Context, query, law string, topK int) ([]port.StatuteHit, error)
+	Search(ctx context.Context, input string, topK int) ([]port.StatuteHit, error)
 }
 
 // MessageHistory 是 agent 需要的最小历史读取能力。
