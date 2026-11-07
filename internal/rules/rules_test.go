@@ -187,6 +187,10 @@ func TestTermNoEnd(t *testing.T) {
 		t.Fatalf("缺期限应建议补充条款，实际 %s", frags[0].Suggestion.Type)
 	}
 	mustHit(t, r, Contract{TermStart: "2024-01-01", TermEnd: "2026-01-01"}, 0)
+	// 只写起始日、类型又是固定期限：同样是期限约定不完整。
+	if frags := mustHit(t, r, Contract{TermStart: "2024-01-01", ContractType: "固定期限"}, 1); !strings.Contains(frags[0].Evidence, "2024-01-01") {
+		t.Fatalf("证据应写出已约定的起始日：%s", frags[0].Evidence)
+	}
 	mustHit(t, r, Contract{ContractType: "无固定期限劳动合同"}, 0)
 	mustHit(t, r, Contract{ContractType: "以完成一定工作任务为期限的劳动合同"}, 0)
 }

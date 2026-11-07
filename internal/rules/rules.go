@@ -284,8 +284,8 @@ func ruleNoSocialInsurance() Rule {
 		Severity: port.SeverityHigh,
 		Title:    "未约定缴纳社会保险",
 		Articles: []ArticleRef{
-			{Law: LawLaborContract, Article: "第七十二条"},
-			{Law: LawSocialInsure, Article: "第五十八条"},
+			{Law: LawLaborContract, Article: "第十七条"},
+			{Law: LawLabor, Article: "第七十二条"},
 		},
 		Check: func(c Contract) []Fragment {
 			if c.SocialInsurance != nil && *c.SocialInsurance {
@@ -302,7 +302,7 @@ func ruleNoSocialInsurance() Rule {
 				port.Suggestion{
 					Type:    "add",
 					Revised: "甲方自用工之日起为乙方办理社会保险登记并按时足额缴纳基本养老保险、基本医疗保险、失业保险、工伤保险和生育保险。",
-					Reason:  "劳动合同法第七十二条规定，用人单位和劳动者必须依法参加社会保险、缴纳社会保险费；社会保险法第五十八条规定用人单位应当自用工之日起三十日内为其职工办理社会保险登记。",
+					Reason:  "劳动法第七十二条规定，用人单位和劳动者必须依法参加社会保险、缴纳社会保险费；劳动合同法第十七条把社会保险列为劳动合同必备条款。",
 				})}
 		},
 	}
@@ -314,7 +314,7 @@ func ruleWageUnderMin() Rule {
 		ID:       "R-WAGE-UNDER-MIN",
 		Severity: port.SeverityMedium,
 		Title:    "约定工资低于当地最低工资标准",
-		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第四十八条"}},
+		Articles: []ArticleRef{{Law: LawLabor, Article: "第四十八条"}},
 		Check: func(c Contract) []Fragment {
 			if c.SalaryMonthly <= 0 {
 				return nil
@@ -334,7 +334,7 @@ func ruleWageUnderMin() Rule {
 					Type:     "rewrite",
 					Original: clauseText(c, "工资", "薪资", "劳动报酬"),
 					Revised:  fmt.Sprintf("甲方每月支付乙方工资不低于 %s 元（不低于当地最低工资标准）。", formatMoney(min)),
-					Reason:   "劳动合同法第四十八条规定，用人单位支付的劳动报酬低于当地最低工资标准的，应当支付其差额部分。",
+					Reason:   "劳动法第四十八条规定国家实行最低工资保障制度，用人单位支付劳动者的工资不得低于当地最低工资标准。",
 				})}
 		},
 	}
@@ -348,15 +348,28 @@ func ruleTermNoEnd() Rule {
 		Title:    "未约定劳动合同期限",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第十二条"}},
 		Check: func(c Contract) []Fragment {
-			if strings.TrimSpace(c.TermStart) != "" || strings.TrimSpace(c.TermEnd) != "" {
+			start := strings.TrimSpace(c.TermStart)
+			end := strings.TrimSpace(c.TermEnd)
+			// 无固定期限与以完成一定工作任务为期限的合同本来就没有终止日，不算缺失。
+			if strings.Contains(c.ContractType, "无固定期限") || strings.Contains(c.ContractType, "以完成一定工作任务") {
 				return nil
 			}
-			if strings.Contains(c.ContractType, "无固定期限") || strings.Contains(c.ContractType, "以完成一定工作任务") {
+			evidence := "合同未见起始日与终止日的约定"
+			switch {
+			case start == "" && end == "":
+				// 完全没写期限，走默认证据文案。
+			case start != "" && end == "":
+				// 有起始日没有终止日：固定期限合同必须两者都有，
+				// 只写一半在争议时会被认定为未约定期限（甚至被视为无固定期限）。
+				evidence = "合同只约定了起始日（" + start + "），未约定终止日"
+			case start == "" && end != "":
+				evidence = "合同只约定了终止日（" + end + "），未约定起始日"
+			default:
 				return nil
 			}
 			at := firstClause(c)
 			return []Fragment{newFragmentAt(at,
-				"合同未见起始日与终止日的约定",
+				evidence,
 				port.Suggestion{
 					Type:    "add",
 					Revised: "本合同为固定期限劳动合同，期限自 ____ 年 __ 月 __ 日起至 ____ 年 __ 月 __ 日止。",
@@ -372,7 +385,7 @@ func ruleOvertimeFree() Rule {
 		ID:       "R-OVERTIME-FREE",
 		Severity: port.SeverityMedium,
 		Title:    "约定无偿加班或不支付加班费",
-		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第四十四条"}},
+		Articles: []ArticleRef{{Law: LawLabor, Article: "第四十四条"}},
 		Check: func(c Contract) []Fragment {
 			explicit := c.HasOvertimePay != nil && !*c.HasOvertimePay
 			hits := clausesMentioning(c, "不支付加班费", "加班费不予支付", "无加班费", "不另计加班费",
@@ -395,7 +408,7 @@ func ruleOvertimeFree() Rule {
 					Type:     "rewrite",
 					Original: original,
 					Revised:  "乙方延长工作时间的，甲方按下列标准支付加班工资：工作日延长工作时间支付不低于工资的 150%；休息日安排工作又不能安排补休的支付不低于 200%；法定休假日安排工作的支付不低于 300%。",
-					Reason:   "劳动合同法第四十四条规定了延长工作时间、休息日、法定休假日三种情形下加班工资的法定标准，约定不支付或低于法定标准的部分无效。",
+					Reason:   "劳动法第四十四条规定了延长工作时间、休息日、法定休假日三种情形下加班工资的法定标准，约定不支付或低于法定标准的部分无效。",
 				})}
 		},
 	}
