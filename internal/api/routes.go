@@ -47,11 +47,11 @@ func (a *API) buildRouter() *gin.Engine {
 		authed.GET("/auth/me", a.me)
 		authed.POST("/auth/logout", a.logout)
 
-		authed.GET("/sessions", a.notImplemented("会话列表"))
-		authed.POST("/sessions", a.notImplemented("创建会话"))
-		authed.GET("/sessions/:sessionId", a.notImplemented("会话详情"))
-		authed.DELETE("/sessions/:sessionId", a.notImplemented("删除会话"))
-		authed.GET("/sessions/:sessionId/messages", a.notImplemented("消息历史"))
+		authed.GET("/sessions", a.listSessions)
+		authed.POST("/sessions", a.createSession)
+		authed.GET("/sessions/:sessionId", a.getSession)
+		authed.DELETE("/sessions/:sessionId", a.deleteSession)
+		authed.GET("/sessions/:sessionId/messages", a.listMessages)
 
 		authed.POST("/chat/completions", a.chatCompletions)
 

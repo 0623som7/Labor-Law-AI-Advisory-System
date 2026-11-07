@@ -35,6 +35,12 @@ const messageColumns = `id, session_id, role, content, prompt_tokens, completion
 const (
 	defaultSessionPageSize = 20
 	maxSessionPageSize     = 100
+
+	// 消息的分页与 openapi 的 /sessions/{id}/messages 对齐：默认 50，上限 200。
+	// 两个上限不同是因为会话列表是侧边栏（一屏十几条够用），
+	// 而消息历史要回填一整个上下文，给得太小会让前端翻三次才拼出完整对话。
+	defaultMessageLimit = 50
+	maxMessageLimit     = 200
 )
 
 // defaultSessionTitle 是没有传标题时的兜底。
@@ -220,12 +226,7 @@ func (m *Messages) Append(ctx context.Context, msg *port.ChatMessage) error {
 // 实现上是"先倒序取 limit 条，再翻转"：直接正序 LIMIT 拿到的是最早的一批，
 // 而对话历史要的永远是最新的那几轮。
 func (m *Messages) ListBySession(ctx context.Context, sessionID string, limit int) ([]port.ChatMessage, error) {
-	if limit <= 0 {
-		limit = defaultSessionPageSize
-	}
-	if limit > maxSessionPageSize {
-		limit = maxSessionPageSize
-	}
+	limit = normalizePage(limit, defaultMessageLimit, maxMessageLimit)
 
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT `+messageColumns+` FROM messages
