@@ -130,11 +130,15 @@ func main() {
 	fmt.Printf("总结：%d 条用例，hit@3 %d/%d = %.1f%%，hit@5 %d/%d = %.1f%%，零召回 %d 条\n",
 		len(cases), hit3, len(cases), total3, hit5, len(cases), total5, empty)
 
-	// 失败不算崩：这是评测，不是断言。低于基线要在评审时被看见，
+	// 失败不算崩：这是评测，不是断言。低于目标要在评审时被看见，
 	// 但不该让"跑评测"这件事本身变成 CI 里的红灯——检索质量是渐进的。
-	const baseline3 = 0.75
-	if total3 < baseline3*100 {
-		fmt.Printf("提示：hit@3 低于基线 %.0f%%，先看词表是不是漏了口语说法\n", baseline3*100)
+	//
+	// 叫 goal3 而不是 baseline3：baseline 是本轮实测下来的现状（见 README），
+	// 随词表改动上下浮动；这个常量是"做到什么程度算合格"的目标线，不随运行变化。
+	// 两个词混用，输出看起来就像"回归了"，其实只是离目标还有距离。
+	const goal3 = 0.75
+	if total3 < goal3*100 {
+		fmt.Printf("提示：hit@3 %.0f%% 低于目标 %.0f%%，先看词表是不是漏了口语说法\n", total3, goal3*100)
 	}
 }
 
