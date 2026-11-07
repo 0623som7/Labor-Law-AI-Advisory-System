@@ -3,11 +3,14 @@ package retrieval
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"laborlaw/internal/port"
 	"laborlaw/internal/store"
 )
 
@@ -30,7 +33,66 @@ func realRetriever(t *testing.T) *Retriever {
 		t.Fatalf("打开数据库失败: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+
+	ctx := context.Background()
+	if _, err := store.Migrate(ctx, db); err != nil {
+		t.Fatalf("执行迁移失败: %v", err)
+	}
+	ensureCorpus(t, db)
 	return New(store.NewStatutes(db))
+}
+
+// ensureCorpus 保证库里已经有种子法条。
+//
+// CI 的 MySQL service 是一个空库：这里不补数据，检索用例就只能全红或全体跳过，
+// 而"在 CI 里真跑一遍召回"正是这个 job 存在的理由。种子文件是仓库里的权威数据，
+// 测试直接读它，不经过 HTTP、不依赖 .env，也不改任何线上数据——库是测试库。
+func ensureCorpus(t *testing.T, db *sql.DB) {
+	t.Helper()
+	ctx := context.Background()
+	st := store.NewStatutes(db)
+	n, err := st.Count(ctx)
+	if err != nil {
+		t.Fatalf("查询法条总数失败: %v", err)
+	}
+	if n > 0 {
+		return
+	}
+
+	const seedPath = "../../deploy/seed/statutes.json"
+	raw, err := os.ReadFile(seedPath)
+	if err != nil {
+		t.Skipf("法条库为空，且读不到种子文件 %s（%v），跳过真实库检索测试", seedPath, err)
+	}
+	var rows []struct {
+		ID          string `json:"id"`
+		Law         string `json:"law"`
+		Article     string `json:"article"`
+		Title       string `json:"title"`
+		Text        string `json:"text"`
+		URL         string `json:"url"`
+		EffectiveAt string `json:"effective_at"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatalf("解析种子文件失败: %v", err)
+	}
+	items := make([]port.Statute, 0, len(rows))
+	for _, r := range rows {
+		var effective time.Time
+		if r.EffectiveAt != "" {
+			if d, perr := time.Parse("2006-01-02", r.EffectiveAt); perr == nil {
+				effective = d
+			}
+		}
+		items = append(items, port.Statute{
+			ID: r.ID, Law: r.Law, Article: r.Article, Title: r.Title,
+			Text: r.Text, URL: r.URL, EffectiveAt: effective,
+		})
+	}
+	if err := st.ReplaceAll(ctx, items); err != nil {
+		t.Fatalf("导入种子法条失败: %v", err)
+	}
+	t.Logf("库中没有法条，已从 %s 导入 %d 条", seedPath, len(items))
 }
 
 // realConsultCases 是最典型的劳动咨询口语，以及这个问题必须召回的法条。
