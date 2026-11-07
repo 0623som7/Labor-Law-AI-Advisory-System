@@ -115,7 +115,10 @@ func (unimplementedReview) ListByUser(context.Context, string, int, int) ([]port
 	return nil, errNotImplemented("审查")
 }
 
-// unimplementedStatute 是法条域占位。
+// unimplementedStatute 是法条域在 MySQL 未配置时的兜底。
+//
+// 有连接时走 statutes.go 的真实实现；判例与向量方法即便在真实实现上也仍返回
+// errNotImplemented，两者不矛盾：这里兜的是"没有数据库"，那里挡的是"还没做"。
 type unimplementedStatute struct{}
 
 var _ port.StatuteStore = unimplementedStatute{}
