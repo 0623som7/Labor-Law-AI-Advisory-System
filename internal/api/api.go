@@ -58,7 +58,21 @@ type API struct {
 	// 直接拿 store.SearchText 查整句会绕过归一，召回率掉到看起来像"库里没有"。
 	statutes statuteSearcher
 
+	// 审查链路的两段：submitter 把任务送进 worker 池，reviewHandler 是编排层
+	// （internal/agent）给出的真正干活函数。两者分开注入，是因为它们在测试里
+	// 需要各自被替换——一个假实现 Submit 就能验证 202 载荷，不必拉起整个池。
+	submitter     taskSubmitter
+	reviewHandler port.Handler
+
 	engine *gin.Engine
+}
+
+// taskSubmitter 是任务入池能力，*worker.Pool 满足它。
+//
+// 不直接依赖 *worker.Pool 的原因：api 一旦 import worker，测试就得连池的
+// 生命周期一起管理（Submit/Shutdown/队列满），而 handler 只关心"能不能塞进去"。
+type taskSubmitter interface {
+	Submit(ctx context.Context, t *port.Task, h port.Handler) error
 }
 
 // statuteSearcher 是 /statutes 需要的检索能力，*retrieval.Retriever 满足它。
@@ -118,6 +132,19 @@ func WithUsers(u port.UserStore) Option {
 // WithStatutes 注入法条检索器。不注入时 /statutes 返回 501。
 func WithStatutes(s statuteSearcher) Option {
 	return func(a *API) { a.statutes = s }
+}
+
+// WithTaskSubmitter 注入任务入池能力。不注入时 /contracts/review 返回 501。
+func WithTaskSubmitter(s taskSubmitter) Option {
+	return func(a *API) { a.submitter = s }
+}
+
+// WithReviewHandler 注入审查编排。不注入时 /contracts/review 返回 501。
+//
+// 缺任何一个依赖都返回 501 而不是 500：这是装配缺失，不是运行期故障，
+// 让调用方一眼看出"这条链路还没接上"比一条含糊的 50001 有用得多。
+func WithReviewHandler(h port.Handler) Option {
+	return func(a *API) { a.reviewHandler = h }
 }
 
 // WithRedis 注入缓存客户端，用于登录限流与 refresh 白名单。

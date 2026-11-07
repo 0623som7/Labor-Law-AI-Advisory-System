@@ -96,9 +96,11 @@ DELETE /api/v1/sessions/{id}   删一个
 实现要点：`store.UserStore` 手机号 HMAC 落库、bcrypt 口令、JWT 双令牌；refresh 走 Redis 白名单，续期用原子 `GETDEL` 换链（并发换双链会被 40101 拦掉）。
 `requireAuth` 现在认 `Authorization: Bearer <token>`；完全不带这个头时才回落到 `AUTH_DEV_USER`，令牌不合法不会静默降级。
 
-### 组 2 · 会话 session（5 条，全 501）
+### 组 2 · 会话 session（5 条，已实现 `2f9b6b7`）
 
-一个"会话"= 一次连续对话（像微信里一个聊天窗口）。
+一个"会话"= 一次连续对话（像微信里一个聊天窗口）。会话与消息在 `POST /chat/completions` 里自动落库
+（`62f1675`）：不带 `session_id` 就建新会话（标题取首句前 20 字），第二轮带上 `session_id`
+就能把上一轮读回提示词。
 
 | 接口 | 干什么 | 关键点 |
 |---|---|---|
@@ -238,8 +240,10 @@ curl -i http://127.0.0.1:8080/readyz
 # 2. 没带令牌 → 401
 curl -i http://127.0.0.1:8080/api/v1/sessions
 
-# 3. 带了开发用户 → 现在能过鉴权，但接口还是 501（路由通了、实现没有）
+# 3. 带了开发用户 → 能过鉴权并真正建出一个会话
 #    先确认 .env 里 AUTH_DEV_USER 有值，requireAuth 就会放行
+#    注意：Windows 上 curl -d '中文' 会按 GBK 发出去，服务端按 UTF-8 解就是乱码，
+#    含中文的请求体请写进文件再 --data-binary @req.json
 curl -i -X POST http://127.0.0.1:8080/api/v1/sessions \
   -H "Content-Type: application/json" -d '{"scene":"consult","title":"试用期"}'
 
@@ -262,7 +266,7 @@ curl -i -X PUT http://127.0.0.1:8080/api/v1/sessions
 |---|---|---|---|
 | 1 | `POST /chat/completions` | ~~`internal/stream`~~（已完成 `bb7bdac`）+ `agent.Runner` | ✅ `de00845` + 真 Runner `256a201` |
 | 2 | auth 五条 | `store.UserStore` + JWT + bcrypt | ✅ `99ca4c5`（加固 `e2d873a`） |
-| 3 | sessions + messages | `store.Session/Message` 实现 | A |
+| 3 | sessions + messages | `store.Session/Message` 实现 | ✅ 已完成 `7ad5dc2` + `2f9b6b7` |
 | 4 | files 四条 | `internal/file` 解析 + 坐标 | ✅ 已完成 `b9c3c77` |
 | 5 | contracts/review + tasks | `internal/worker` + `agent.Runner`（review 场景） | A+B |
 | 6 | reviews 四条 | `store.Review` 实现 | A |

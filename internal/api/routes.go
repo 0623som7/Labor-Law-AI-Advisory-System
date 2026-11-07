@@ -47,11 +47,11 @@ func (a *API) buildRouter() *gin.Engine {
 		authed.GET("/auth/me", a.me)
 		authed.POST("/auth/logout", a.logout)
 
-		authed.GET("/sessions", a.notImplemented("会话列表"))
-		authed.POST("/sessions", a.notImplemented("创建会话"))
-		authed.GET("/sessions/:sessionId", a.notImplemented("会话详情"))
-		authed.DELETE("/sessions/:sessionId", a.notImplemented("删除会话"))
-		authed.GET("/sessions/:sessionId/messages", a.notImplemented("消息历史"))
+		authed.GET("/sessions", a.listSessions)
+		authed.POST("/sessions", a.createSession)
+		authed.GET("/sessions/:sessionId", a.getSession)
+		authed.DELETE("/sessions/:sessionId", a.deleteSession)
+		authed.GET("/sessions/:sessionId/messages", a.listMessages)
 
 		authed.POST("/chat/completions", a.chatCompletions)
 
@@ -60,13 +60,13 @@ func (a *API) buildRouter() *gin.Engine {
 		authed.GET("/files/:fileId/pages", a.getFilePages)
 		authed.GET("/files/:fileId/content", a.downloadFile)
 
-		authed.POST("/contracts/review", a.notImplemented("合同审查"))
-		authed.GET("/reviews", a.notImplemented("审查历史"))
-		authed.GET("/reviews/:reviewId", a.notImplemented("审查详情"))
-		authed.GET("/reviews/:reviewId/findings", a.notImplemented("风险清单"))
+		authed.POST("/contracts/review", a.createReview)
+		authed.GET("/reviews", a.listReviews)
+		authed.GET("/reviews/:reviewId", a.getReview)
+		authed.GET("/reviews/:reviewId/findings", a.listFindings)
 
-		authed.GET("/tasks/:taskId", a.notImplemented("任务进度"))
-		authed.POST("/tasks/:taskId/cancel", a.notImplemented("取消任务"))
+		authed.GET("/tasks/:taskId", a.getTask)
+		authed.POST("/tasks/:taskId/cancel", a.cancelTask)
 
 		authed.GET("/statutes", a.listStatutes)
 		authed.GET("/statutes/:statuteId", a.getStatute)

@@ -37,6 +37,20 @@ func OK(c *gin.Context, data any) {
 	})
 }
 
+// Accepted 写 202 + code=0。
+//
+// 为什么单独一个函数而不是复用 OK：202 与 200 的语义差一个数量级——200 表示
+// "事情已经做完，data 就是结果"，202 表示"事情接下了，去轮询 task_id"。
+// 前端（和一些 HTTP 客户端）会按 2xx 的细分码分流，混用会让它们把 202 当同步结果解析。
+func Accepted(c *gin.Context, data any) {
+	c.JSON(http.StatusAccepted, Envelope{
+		Code:    int(port.CodeOK),
+		Message: "accepted",
+		Data:    data,
+		TraceID: TraceID(c),
+	})
+}
+
 // Fail 把任意 error 写成响应体与状态码。
 //
 // 只有 *port.AppError 的 Message / Fields 会进响应体，未分类错误一律折成 50001

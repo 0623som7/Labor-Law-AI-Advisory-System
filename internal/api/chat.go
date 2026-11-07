@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,15 @@ const (
 
 	// lastEventIDHeader 是 SSE 断线续传的标准请求头。
 	lastEventIDHeader = "Last-Event-ID"
+
+	// chatSessionTitleRunes 是新建会话时从用户原话截取的标题长度。
+	// 侧边栏一行大约放得下 12 个汉字，20 是留够余量又不至于撑爆列表的折中。
+	chatSessionTitleRunes = 20
+
+	// chatPersistTimeout 是落库的独立超时。
+	// 不能复用请求 ctx：客户端在最后一帧之后立刻断开是常态，
+	// 而此时答案已经生成，理应留下来，不该跟着 ctx 一起被取消。
+	chatPersistTimeout = 5 * time.Second
 )
 
 // chatRequest 是 /chat/completions 的请求体。
@@ -104,11 +114,12 @@ func (a *API) chatCompletions(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	messageID := id.New()
-	sessionID := strings.TrimSpace(req.SessionID)
-	if sessionID == "" {
-		// 会话落库要等 store 的 Session 域，这里先生成一个可用的 ID 返回给前端，
-		// 保证"同一轮问答的 message 与 session 是一对稳定标识"。
-		sessionID = id.New()
+	// 会话解析必须发生在 Attach 之前：一旦写了 SSE 响应头，
+	// "会话不存在"就只能变成流内 error 帧，前端拿到的不是 404。
+	sessionID, err := a.resolveSession(c, strings.TrimSpace(req.SessionID), req.Input)
+	if err != nil {
+		Fail(c, err)
+		return
 	}
 
 	writer, err := a.hub.Attach(ctx, messageID, parseLastEventID(c.GetHeader(lastEventIDHeader)), c.Writer)
@@ -155,6 +166,106 @@ func (a *API) chatCompletions(c *gin.Context) {
 		if _, err := a.hub.PublishDone(messageID, messageID, result.FinishReason, result.Usage); err != nil {
 			a.log.Warn("publish done failed", "message_id", messageID, "err", err.Error())
 		}
+	}
+
+	// 落库放在最后：它不影响用户看到答案的时机（done 已经发出），
+	// 而放在 Run 之前会让本轮提问被 loadHistory 读成"上一轮"，
+	// 模型就会看到两条一模一样的用户消息。
+	a.persistTurn(ctx, UserID(c), sessionID, messageID, req.Input, result)
+}
+
+// resolveSession 解析本轮要挂载的会话。
+//
+// 三种情况：store 未装配（单测/无库部署）→ 不落库，只在内存里用调用方给的 ID；
+// 带 session_id → 必须属于当前用户，否则 40401；不带 → 建一个新会话。
+//
+// 校验归属放在这里而不是让存储层兜底，是因为越权访问要报 404 而不是"查不到消息"：
+// 前者告诉用户这个会话不属于你，后者会让前端以为会话刚被删了。
+func (a *API) resolveSession(c *gin.Context, sessionID, input string) (string, error) {
+	if a.store == nil {
+		if sessionID == "" {
+			return id.New(), nil
+		}
+		return sessionID, nil
+	}
+
+	ctx := c.Request.Context()
+	userID := UserID(c)
+	if sessionID != "" {
+		if _, err := a.store.Session().Get(ctx, userID, sessionID); err != nil {
+			return "", err
+		}
+		return sessionID, nil
+	}
+
+	sn := &port.Session{UserID: userID, Scene: chatScene, Title: sessionTitleFromInput(input)}
+	if err := a.store.Session().Create(ctx, sn); err != nil {
+		return "", err
+	}
+	return sn.ID, nil
+}
+
+// sessionTitleFromInput 把用户第一句话压成会话标题。
+//
+// 按 rune 截断再而不是按字节：汉字 3 字节，按字节切会切出半个字符，
+// MySQL 严格模式下直接报 1406。
+func sessionTitleFromInput(input string) string {
+	// 换行会把侧边栏撑成两行，统一压成空格。
+	flat := strings.Join(strings.Fields(input), " ")
+	r := []rune(flat)
+	if len(r) > chatSessionTitleRunes {
+		return string(r[:chatSessionTitleRunes]) + "…"
+	}
+	return string(r)
+}
+
+// persistTurn 把一轮问答写进库：user 消息 + assistant 消息 + 会话时间戳。
+//
+// 三条消息必须在一个事务里：只写进 user 而不写 assistant 会留下一条
+// 永远没有回答的提问，用户刷新页面就会看到一个卡住的对话。
+// 落库失败只记 Warn 不报错：答案是用户真正要的东西，写库失败不该把它吞掉。
+func (a *API) persistTurn(parent context.Context, userID, sessionID, messageID, input string, result port.Result) {
+	if a.store == nil || sessionID == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), chatPersistTimeout)
+	defer cancel()
+
+	answer := strings.TrimSpace(result.Content)
+
+	fn := func(st port.Store) error {
+		if err := st.Message().Append(ctx, &port.ChatMessage{
+			SessionID: sessionID,
+			Role:      port.RoleUser,
+			Content:   input,
+		}); err != nil {
+			return err
+		}
+		if answer == "" {
+			return nil
+		}
+		// assistant 消息的 ID 就是 meta 帧里的 message_id，
+		// 前端刷新历史后可以据此把占位气泡替换成真正的那条。
+		if err := st.Message().Append(ctx, &port.ChatMessage{
+			ID:               messageID,
+			SessionID:        sessionID,
+			Role:             port.RoleAssistant,
+			Content:          answer,
+			PromptTokens:     result.Usage.PromptTokens,
+			CompletionTokens: result.Usage.CompletionTokens,
+		}); err != nil {
+			return err
+		}
+		return st.Session().Touch(ctx, userID, sessionID)
+	}
+
+	if err := a.store.Tx(ctx, fn); err != nil {
+		a.log.Warn("persist chat turn failed",
+			"session_id", sessionID,
+			"message_id", messageID,
+			"err", err.Error(),
+		)
 	}
 }
 

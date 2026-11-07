@@ -24,12 +24,24 @@ func newSearcher(db *sql.DB) *retrieval.Retriever {
 	return retrieval.New(store.NewStatutes(db))
 }
 
+// newHistory 装配会话历史读取。
+//
+// 与 newSearcher 同理：没有 MySQL 就返回 nil 而不是一个每次读都失败的实现。
+// Runner 对 nil 历史的处理是"每轮都是无状态问答"，那是能力降级；
+// 非 nil 的坏实现会让每轮问答都带一条读取失败告警，那是故障。
+func newHistory(db *sql.DB) agent.MessageHistory {
+	if db == nil {
+		return nil
+	}
+	return store.NewMessages(db)
+}
+
 // newRunner 装配对话编排。
 //
 // 没有 API key 时保留演示桩而不是直接上真 Runner：真 Runner 在密钥为空时
 // 只会让每次问答都以上游错误收场，演示反而倒退。降级必须在启动日志里喊出来，
 // 否则评审时会把桩回答当成模型效果来验收。
-func newRunner(cfg config.Config, log *slog.Logger, statutes agent.StatuteSearcher) port.Runner {
+func newRunner(cfg config.Config, log *slog.Logger, statutes agent.StatuteSearcher, history agent.MessageHistory) port.Runner {
 	if cfg.LLM.APIKey == "" {
 		log.Warn("LLM_API_KEY 为空，对话接口使用演示桩回答，不是真实模型输出")
 		return newStubRunner(log)
@@ -39,7 +51,8 @@ func newRunner(cfg config.Config, log *slog.Logger, statutes agent.StatuteSearch
 	if statutes != nil {
 		opts = append(opts, agent.WithStatutes(statutes))
 	}
-	// WithHistory 等 Message DAL 落地后再接：会话历史现在还没落库，
-	// 接上只会让每次问答多一条 degraded 告警，不会多出任何能力。
+	if history != nil {
+		opts = append(opts, agent.WithHistory(history))
+	}
 	return agent.New(llm.New(cfg.LLM, llm.WithLogger(log)), opts...)
 }

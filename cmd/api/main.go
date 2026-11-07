@@ -101,7 +101,7 @@ func run(migrateOnly bool) error {
 	searcher := newSearcher(inf.db)
 	opts := []api.Option{
 		api.WithCheckers(inf.checkers...),
-		api.WithRunner(newRunner(cfg, logger, searcher)),
+		api.WithRunner(newRunner(cfg, logger, searcher, newHistory(inf.db))),
 		api.WithHub(stream.NewHub(stream.Options{}, 0, logger)),
 		api.WithExtractor(extractor),
 	}
