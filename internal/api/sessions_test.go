@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,7 @@ type fakeSessionStore struct {
 	gotLimit int
 	gotOff   int
 	deleted  string
+	touched  string
 }
 
 func newFakeSessions() *fakeSessionStore {
@@ -79,7 +81,10 @@ func (f *fakeSessionStore) ListByUser(_ context.Context, _ string, limit, offset
 	}}, nil
 }
 
-func (f *fakeSessionStore) Touch(_ context.Context, _, _ string) error { return nil }
+func (f *fakeSessionStore) Touch(_ context.Context, _, id string) error {
+	f.touched = id
+	return nil
+}
 
 func (f *fakeSessionStore) Delete(_ context.Context, _, id string) error {
 	if f.deleteErr != nil {
@@ -100,6 +105,8 @@ type fakeMessageStore struct {
 	err      error
 	gotLimit int
 	calls    int
+	// appended 记录所有写入，供"问答是否落库"类用例断言。
+	appended []port.ChatMessage
 }
 
 func (f *fakeMessageStore) ListBySession(_ context.Context, _ string, limit int) ([]port.ChatMessage, error) {
@@ -111,7 +118,16 @@ func (f *fakeMessageStore) ListBySession(_ context.Context, _ string, limit int)
 	return f.msgs, nil
 }
 
-func (f *fakeMessageStore) Append(_ context.Context, _ *port.ChatMessage) error { return nil }
+func (f *fakeMessageStore) Append(_ context.Context, msg *port.ChatMessage) error {
+	if f.err != nil {
+		return f.err
+	}
+	if msg.ID == "" {
+		msg.ID = "msg-" + strconv.Itoa(len(f.appended)+1)
+	}
+	f.appended = append(f.appended, *msg)
+	return nil
+}
 
 // sessionFakeStore 只提供 Session() 与 Message()，其余域嵌入 nil。
 type sessionFakeStore struct {

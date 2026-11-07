@@ -15,7 +15,7 @@ func TestNewRunnerFallsBackToStubWithoutKey(t *testing.T) {
 	cfg := config.Config{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, ok := newRunner(cfg, log, nil).(*stubRunner); !ok {
+	if _, ok := newRunner(cfg, log, nil, nil).(*stubRunner); !ok {
 		t.Error("API key 为空时必须退回演示桩")
 	}
 }
@@ -26,7 +26,7 @@ func TestNewRunnerUsesAgentWithKey(t *testing.T) {
 	cfg.LLM.BaseURL = "http://127.0.0.1:0"
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, ok := newRunner(cfg, log, nil).(*agent.Runner); !ok {
+	if _, ok := newRunner(cfg, log, nil, nil).(*agent.Runner); !ok {
 		t.Error("配置了 API key 后必须启用真实编排")
 	}
 }
@@ -35,5 +35,12 @@ func TestNewRunnerUsesAgentWithKey(t *testing.T) {
 func TestNewSearcherWithoutDB(t *testing.T) {
 	if got := newSearcher(nil); got != nil {
 		t.Error("没有数据库连接时不应构造检索器")
+	}
+}
+
+// 历史读取同理：没有库就该返回 nil，让 Runner 走无状态问答。
+func TestNewHistoryWithoutDB(t *testing.T) {
+	if got := newHistory(nil); got != nil {
+		t.Error("没有数据库连接时不应构造历史读取器")
 	}
 }
