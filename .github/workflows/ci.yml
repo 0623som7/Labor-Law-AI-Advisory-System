@@ -61,3 +61,35 @@ jobs:
 
       - name: coverage
         run: go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1
+
+  # 前端单测用 `node --test` 直接跑 .ts（靠 Node 的类型擦除），
+  # 所以 node-version 必须 24：22.x 以下不认 .ts 扩展名，会直接报官方不支持。
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # --frozen-lockfile：lock 与 package.json 不一致就失败，
+      # 免得 CI 悄悄装出与本地不同的依赖树。
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      - name: test
+        run: pnpm test
+
+      # build 里带 vue-tsc -b，类型错会在这里拦下来（项目没有 eslint，不新增）。
+      - name: build
+        run: pnpm build
