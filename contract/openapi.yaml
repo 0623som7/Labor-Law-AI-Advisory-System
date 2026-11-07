@@ -559,8 +559,11 @@ paths:
       operationId: createReview
       summary: 发起合同审查
       description: |
-        短合同同步返回完整结果（P95 < 15s）；超过同步阈值转异步，返回 `task_id`，
-        客户端拿 `/api/v1/tasks/{taskId}` 轮询。worker 池满时立即 42901，不静默排队。
+        当前实现恒为异步：无论 `async` 传何值，都返回 202 与 `task_id`，
+        客户端拿 `/api/v1/tasks/{taskId}` 轮询，结果再取 `/api/v1/reviews/{reviewId}`。
+        同步分支（`async=false` → 200）暂未实现：一次审查实测 50–110 秒，
+        HTTP 同步等这么久会被网关掐断，也会占满 worker 池。前端一律按 202 处理。
+        worker 池满时立即 42901，不静默排队。
       requestBody:
         required: true
         content:
@@ -579,9 +582,12 @@ paths:
                 async:
                   type: boolean
                   default: false
+                  description: |
+                    当前实现忽略此字段，恒返回 202。同步分支（async=false → 200）
+                    暂未实现，前端请按 202 轮询 /api/v1/tasks/{taskId}。
       responses:
         '200':
-          description: 同步完成，直接给审查结果
+          description: 同步完成，直接给审查结果（暂未返回，见 async 字段说明）
           content:
             application/json:
               schema:

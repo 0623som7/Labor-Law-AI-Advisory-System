@@ -29,6 +29,8 @@ type createReviewRequest struct {
 	RuleScope []string `json:"rule_scope"`
 	// Async 目前被忽略：链路只有异步一种跑法。保留字段是为了让前端
 	// 按契约传 async=false 时也不会 400——但响应始终是 202 Accepted。
+	// 契约已同步标注（openapi 的 async description 与 200 响应说明）：
+	// 一次审查实测 50–110 秒，同步等人会被网关掐断，这个分支不做。
 	Async bool `json:"async"`
 }
 
