@@ -47,12 +47,21 @@ func New(store Store, opts ...Option) *Retriever {
 // 否则装配时要多写一层只有一行转发的适配器。
 var _ Store = (port.StatuteStore)(nil)
 
-// Search 提取关键词、逐词检索、合并去重后按相关度排序。
+// Search 是不限法律来源的检索入口。
+func (r *Retriever) Search(ctx context.Context, input string, topK int) ([]port.StatuteHit, error) {
+	return r.SearchIn(ctx, input, "", topK)
+}
+
+// SearchIn 提取关键词、逐词检索、合并去重后按相关度排序；law 非空时只取该法律。
+//
+// law 必须一路透传到 SearchText 的 WHERE 子句，不能在应用层再筛一遍：
+// 先取 topK 再过滤，别的法律先占满配额，筛完往往只剩一两条，
+// 用户看到的是"劳动法里只有一条讲加班费"，而事实是十条都被《劳动法》之外的库挤掉了。
 //
 // 排序先看"命中了几个不同的关键词"，再看存储给的相关度分数：
 // 用户问"辞退有没有经济补偿"时，同时命中"解除"与"经济补偿"的条文
 // 几乎一定比只命中"解除"的条文更贴合，而 LIKE 的分数反映不出这种组合关系。
-func (r *Retriever) Search(ctx context.Context, input string, topK int) ([]port.StatuteHit, error) {
+func (r *Retriever) SearchIn(ctx context.Context, input, law string, topK int) ([]port.StatuteHit, error) {
 	if topK <= 0 {
 		topK = 3
 	}
@@ -73,7 +82,7 @@ func (r *Retriever) Search(ctx context.Context, input string, topK int) ([]port.
 	var lastErr error
 
 	for _, kw := range keywords {
-		hits, err := r.store.SearchText(ctx, kw.term, "", kw.topK(r.perQueryK))
+		hits, err := r.store.SearchText(ctx, kw.term, law, kw.topK(r.perQueryK))
 		if err != nil {
 			// 单个关键词失败不拖垮整次检索：多词本来就是冗余召回，
 			// 只要还有一个词查到了，就值得把结果给用户。

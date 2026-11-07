@@ -96,11 +96,17 @@ func run(migrateOnly bool) error {
 		logger.Warn("pdftotext 自检未通过，PDF 上传将无法解析", "err", err.Error())
 	}
 
+	// 检索器只构造一次：编排层（Runner）与 /statutes 接口必须用同一套口语归一规则，
+	// 各造一个的话改词表只会生效一半，而这类不一致在演示时看不出来。
+	searcher := newSearcher(inf.db)
 	opts := []api.Option{
 		api.WithCheckers(inf.checkers...),
-		api.WithRunner(newRunner(cfg, logger, newSearcher(inf.db))),
+		api.WithRunner(newRunner(cfg, logger, searcher)),
 		api.WithHub(stream.NewHub(stream.Options{}, 0, logger)),
 		api.WithExtractor(extractor),
+	}
+	if searcher != nil {
+		opts = append(opts, api.WithStatutes(searcher))
 	}
 	// 无存储模式（dev 连不上 MySQL）不注入 Store：让 /files/* 明确返回 501，
 	// 而不是在 handler 里对一个 nil 接口发请求。

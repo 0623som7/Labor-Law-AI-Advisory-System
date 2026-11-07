@@ -53,7 +53,20 @@ type API struct {
 	// cache 承载登录限流与 refresh 白名单。nil 表示无缓存：限流放行、续期拒绝。
 	cache authCache
 
+	// statutes 是法条检索器。与 store 分开注入：检索要过一层口语归一
+	// （internal/retrieval，"加班费"→"加班"/"延长工作时间"），
+	// 直接拿 store.SearchText 查整句会绕过归一，召回率掉到看起来像"库里没有"。
+	statutes statuteSearcher
+
 	engine *gin.Engine
+}
+
+// statuteSearcher 是 /statutes 需要的检索能力，*retrieval.Retriever 满足它。
+//
+// 声明窄接口而不是直接依赖具体类型：handler 只用得上"一句话进、条文出"，
+// 测试也就能给个假实现，不必为此拉起真实 DAL。
+type statuteSearcher interface {
+	SearchIn(ctx context.Context, input, law string, topK int) ([]port.StatuteHit, error)
 }
 
 // Option 是装配期的可选依赖。
@@ -100,6 +113,11 @@ func WithExtractor(e *file.Extractor) Option {
 // （账号服务未就绪）——注册与登录没有"降级实现"可言，编一个假用户比报错更危险。
 func WithUsers(u port.UserStore) Option {
 	return func(a *API) { a.users = u }
+}
+
+// WithStatutes 注入法条检索器。不注入时 /statutes 返回 501。
+func WithStatutes(s statuteSearcher) Option {
+	return func(a *API) { a.statutes = s }
 }
 
 // WithRedis 注入缓存客户端，用于登录限流与 refresh 白名单。

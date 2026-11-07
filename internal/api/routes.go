@@ -68,7 +68,7 @@ func (a *API) buildRouter() *gin.Engine {
 		authed.GET("/tasks/:taskId", a.notImplemented("任务进度"))
 		authed.POST("/tasks/:taskId/cancel", a.notImplemented("取消任务"))
 
-		authed.GET("/statutes", a.notImplemented("法条检索"))
+		authed.GET("/statutes", a.listStatutes)
 		authed.GET("/statutes/:statuteId", a.notImplemented("法条详情"))
 	}
 
