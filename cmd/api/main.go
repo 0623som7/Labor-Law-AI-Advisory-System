@@ -98,8 +98,7 @@ func run(migrateOnly bool) error {
 
 	opts := []api.Option{
 		api.WithCheckers(inf.checkers...),
-		// B 的 agent.Runner 交付前先用 stub：链路能跑通，替换只改这一行。
-		api.WithRunner(newStubRunner(logger)),
+		api.WithRunner(newRunner(cfg, logger, newSearcher(inf.db))),
 		api.WithHub(stream.NewHub(stream.Options{}, 0, logger)),
 		api.WithExtractor(extractor),
 	}

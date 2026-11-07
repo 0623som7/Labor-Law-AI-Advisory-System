@@ -100,7 +100,16 @@ func (s *DB) Message() port.MessageStore { return unimplementedMessage{} }
 func (s *DB) Review() port.ReviewStore { return unimplementedReview{} }
 
 // Statute 返回法条/判例/向量域。
-func (s *DB) Statute() port.StatuteStore { return unimplementedStatute{} }
+//
+// 法条已落地；判例与向量在该实现内部仍返回"尚未实现"，
+// 原因是缺权威判例来源与 embedding 模型选型，见 statutes.go 的类型注释。
+func (s *DB) Statute() port.StatuteStore {
+	q := s.q()
+	if q == nil {
+		return unimplementedStatute{}
+	}
+	return newStatutesOn(q)
+}
 
 // Task 返回任务域。
 func (s *DB) Task() port.TaskStore { return unimplementedTask{} }
