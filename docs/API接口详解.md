@@ -1,13 +1,13 @@
 # 你干了什么 · 这些接口是什么
 
-> 对应分支 `feat/m3-file`、提交 `0fd8bc8`（最初那批接口文档写于 2026-11-06 当天 00:38 → 14:21）
+> 对应提交 `d1902af`（初稿写于 2026-11-06，M4 账号体系与 M5 咨询编排落地后于 2026-11-07 对齐）
 > 前置：`docs/零基础导读.md`（怎么看这个仓库）、`docs/框架与业务流程.md`（怎么分层、数据怎么流）
 
 ---
 
 ## 一、你到目前为止干了什么
 
-数据说话（`git ls-files | wc -l` 等命令可复现）：**82 个受版本控制的文件、5716 行 Go、59 个测试函数、10 个提交，全部在今天一天内完成。**
+数据说话（`git ls-files | wc -l` 等命令可复现）：**153 个受版本控制的文件、17352 行 Go、245 个测试函数、62 个提交，2026-11-06 到 11-07 两天内完成。**
 
 | # | 干成的事 | 产出物 | 怎么证明它成了 |
 |---|---|---|---|
@@ -21,7 +21,7 @@
 | 8 | 部署材料齐了但没上过线 | `deploy/`：Dockerfile、compose、MySQL/Redis 调参、runbook | 文件存在，未实跑 |
 
 **一句话总结**：你现在拥有的是**门面（接口契约 + 路由）、地基（配置 + 数据库 + 迁移）、大脑（模型客户端）**，
-缺的是**把门面后面的房间修好**——25 个接口里已有 7 个真的在处理请求（`/healthz`、`/readyz`、`/chat/completions` 与 4 条 `/files`），其余 18 个统一返回：
+缺的是**把门面后面的房间修好**——25 条路由里已有 14 条真的在处理请求（`/healthz`、`/readyz`、auth 五条、`/chat/completions`、4 条 `/files`、2 条 `/statutes`），其余 11 个统一返回：
 
 ```json
 {"code": 50001, "message": "创建会话接口尚未实现", "trace_id": "..."}
@@ -83,7 +83,7 @@ DELETE /api/v1/sessions/{id}   删一个
 
 为什么分两个：MySQL 挂了应该**摘流量**，而不是让容器被反复重启（重启掩盖依赖故障）。所以存活看 healthz，就绪看 readyz。
 
-### 组 1 · 认证 auth（5 条，全 501）
+### 组 1 · 认证 auth（5 条，已全部实现 `99ca4c5`，加固 `e2d873a`）
 
 | 接口 | 干什么 | 关键点 |
 |---|---|---|
@@ -93,8 +93,8 @@ DELETE /api/v1/sessions/{id}   删一个
 | `POST /auth/logout` | 登出 | 把 refresh 从白名单删掉，access 到期自然失效 |
 | `GET /auth/me` | 当前用户 | 手机号已脱敏（`138****8000`），永不返回原文 |
 
-现在为什么没实现：需要 `store.UserStore`（`port/store.go:166` 还是草案，等 B 签字）+ JWT 签发。
-当前 `requireAuth` 走的是开发捷径：配置里 `AUTH_DEV_USER` 有值就把它当当前用户，没有就 401。
+实现要点：`store.UserStore` 手机号 HMAC 落库、bcrypt 口令、JWT 双令牌；refresh 走 Redis 白名单，续期用原子 `GETDEL` 换链（并发换双链会被 40101 拦掉）。
+`requireAuth` 现在认 `Authorization: Bearer <token>`；完全不带这个头时才回落到 `AUTH_DEV_USER`，令牌不合法不会静默降级。
 
 ### 组 2 · 会话 session（5 条，全 501）
 
@@ -108,7 +108,7 @@ DELETE /api/v1/sessions/{id}   删一个
 | `DELETE /sessions/{id}` | 删除 | **软删**（只置 `deleted_at`），消息保留，用于审计 |
 | `GET /sessions/{id}/messages` | 消息历史 | 按时间正序，默认 50 条 |
 
-### 组 3 · 咨询 chat（1 条，已接真 handler，**最重要的一条**；背后仍是 `stubRunner`，B 的 Agent 待接）
+### 组 3 · 咨询 chat（1 条，**最重要的一条**；背后是真实 `agent.Runner`：检索 → 提示词 → 流式 → 引用，`256a201`）
 
 | 接口 | 干什么 |
 |---|---|
@@ -168,12 +168,12 @@ data: {"seq":4,"message_id":"01J8Z0K3Q7","finish_reason":"stop","usage":{...}}
 | `GET /tasks/{id}` | 查进度 | 返回 `status`（pending/running/succeeded/failed/cancelled）+ `progress` + `stage`；进度写库有 ≥500ms 节流，读到的值最多落后半秒 |
 | `POST /tasks/{id}/cancel` | 取消 | 只有非终态能取消，否则 409 |
 
-### 组 7 · 法条 statutes（2 条，全 501）
+### 组 7 · 法条 statutes（2 条，已实现 `8d37755` / `d1902af`）
 
 | 接口 | 干什么 | 关键点 |
 |---|---|---|
-| `GET /statutes?q=&law=&top_k=` | 关键词检索法条 | 500 条规模用 MySQL 全文索引（ngram）+ LIKE，**不引向量库/ES** |
-| `GET /statutes/{id}` | 法条详情 | ID 形如 `LCL-38`（劳动合同法第 38 条） |
+| `GET /statutes?q=&law=&top_k=` | 关键词检索法条 | `q` 必填、≤100 字；`law` 精确过滤法律名称；`top_k` 1–20，默认 5。205 条规模用 LIKE + 口语归一多路召回（`internal/retrieval`），**不引向量库/ES** |
+| `GET /statutes/{id}` | 法条详情 | ID 形如 `LCL-38`（劳动合同法第 38 条）；不存在 → 404/40401 |
 
 ---
 
@@ -191,7 +191,7 @@ data: {"seq":4,"message_id":"01J8Z0K3Q7","finish_reason":"stop","usage":{...}}
 | 41501 | UnsupportedMedia | 不是 PDF（魔数不对） | 不能 |
 | 42201 | NoTextLayer | PDF 没有文字层（扫描件），置信度 < 0.6 | 可换 OCR 再试 |
 | 42901 | RateLimited | 限流（QPS）或 worker 池满 | 稍后重试 |
-| 50001 | Internal | 代码缺陷、未分类错误 | 不能（重试等于放大 bug） |
+| 50001 | Internal | 代码缺陷、未分类错误 | 可以（`port.CodeInternal.Retryable()` 返回 true） |
 | 50002 | RuleEngine | 单条规则异常 | 该条降级，其余继续 |
 | 50201 | Upstream | 模型供应商报错 | **可以，最多 2 次** |
 | 50301 | UpstreamTimeout | 上游超时 | 可以 |
@@ -260,12 +260,12 @@ curl -i -X PUT http://127.0.0.1:8080/api/v1/sessions
 
 | 顺序 | 接口 | 依赖什么 | 归属 |
 |---|---|---|---|
-| 1 | `POST /chat/completions` | ~~`internal/stream`~~（已完成 `bb7bdac`）+ `agent.Runner`（B） | ✅ handler 已有 `de00845`，等 B 的 Runner |
-| 2 | auth 五条 | `store.UserStore` + JWT + bcrypt | A |
+| 1 | `POST /chat/completions` | ~~`internal/stream`~~（已完成 `bb7bdac`）+ `agent.Runner` | ✅ `de00845` + 真 Runner `256a201` |
+| 2 | auth 五条 | `store.UserStore` + JWT + bcrypt | ✅ `99ca4c5`（加固 `e2d873a`） |
 | 3 | sessions + messages | `store.Session/Message` 实现 | A |
 | 4 | files 四条 | `internal/file` 解析 + 坐标 | ✅ 已完成 `b9c3c77` |
 | 5 | contracts/review + tasks | `internal/worker` + `agent.Runner`（review 场景） | A+B |
 | 6 | reviews 四条 | `store.Review` 实现 | A |
-| 7 | statutes 两条 | 法条数据入库（500 条）+ 全文检索 | B |
+| 7 | statutes 两条 | 205 条法条入库 + 检索归一 | ✅ `8d37755` / `d1902af` |
 
 验收标准写在 openapi 里：前端代码生成读同一份文件，所以**接口一旦定了，前端就能并行开工**——这就是"契约先行"的全部好处。
