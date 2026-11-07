@@ -131,8 +131,8 @@ x-error-codes:
 
 x-sse-events:
   - event: meta
-    data: '{message_id, session_id, model}'
-    meaning: 首帧，客户端据此建占位气泡
+    data: '{seq, message_id, session_id, model}'
+    meaning: 首帧，客户端据此建占位气泡并记住 session_id
   - event: delta
     data: '{seq, text}'
     meaning: 增量文本，客户端 append，绝不能丢
@@ -140,7 +140,7 @@ x-sse-events:
     data: '{seq, citation:{statute_id, law, article, text, url}}'
     meaning: 引用卡片，text 必须来自库
   - event: tool_call
-    data: '{seq, tool, status, detail}'
+    data: '{seq, tool:{tool, status, detail}}'
     meaning: 工具状态，背压时允许丢弃
   - event: done
     data: '{seq, message_id, finish_reason, usage}'

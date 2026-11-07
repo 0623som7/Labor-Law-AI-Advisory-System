@@ -1,0 +1,44 @@
+:root {
+  --ll-bg: #f6f7f9;
+  --ll-surface: #ffffff;
+  --ll-border: #e3e6eb;
+  --ll-text: #1f2329;
+  --ll-text-weak: #646a73;
+  --ll-primary: #2f6feb;
+  --ll-primary-weak: #eaf1fe;
+  --ll-user-bubble: #2f6feb;
+  --ll-radius: 10px;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family:
+    'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ll-text);
+  background: var(--ll-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* 消息正文用 pre-wrap：后端回的是纯文本加换行，不引 markdown 渲染，
+   所以这里只靠 CSS 保住段落结构。 */
+.ll-pre-wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
