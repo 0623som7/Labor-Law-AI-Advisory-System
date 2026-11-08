@@ -10,7 +10,7 @@
 // 没等到 done 就断（抛 ApiError"连接中断，请重试"）。
 // 三者在界面上长得不一样，否则用户分不清"答完了"和"断线了"。
 
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
@@ -21,6 +21,7 @@ import type { Session } from '@/api/types'
 import CitationCard from '@/components/CitationCard.vue'
 import ToolStatusBar from '@/components/ToolStatusBar.vue'
 import { useAuthStore } from '@/stores/auth'
+import { createStreamSession, type StreamSession } from '@/utils/stream-session'
 
 /** 页面上的一条消息。历史消息与流式消息共用这个形状，差别只在有没有引用。 */
 interface UiMessage {
@@ -55,7 +56,9 @@ const historyLoading = ref(false)
 const banner = ref('')
 
 const scroller = ref<HTMLElement | null>(null)
-let controller: AbortController | null = null
+// 当前这一轮流式回答。卸载、点停止、退出登录都要把它作废：
+// 否则组件已经没了，SSE 的 onDelta 还在往 assistant 气泡里写。
+let session: StreamSession | null = null
 let keySeed = 0
 
 const currentTitle = computed(() => {
@@ -174,7 +177,10 @@ async function send(): Promise<void> {
   await scrollToBottom()
 
   sending.value = true
-  controller = new AbortController()
+  const current = createStreamSession()
+  const controller = new AbortController()
+  current.bind(controller)
+  session = current
 
   try {
     const result = await streamChat(
@@ -183,24 +189,33 @@ async function send(): Promise<void> {
         ...(currentSessionId.value === '' ? {} : { session_id: currentSessionId.value }),
       },
       {
+        // 每个处理器第一行都判一次：页面卸载或用户点了停止之后，
+        // 还在路上的帧一律丢弃，不能再去改 messages / 会话列表。
         onMeta: (event) => {
+          if (current.closed()) return
           // 新会话的 ID 只从这里拿：服务端在建会话时生成，
           // 没有它下一轮就会又新建一个会话。
           currentSessionId.value = event.session_id
           if (startedNew) void refreshSessions()
         },
         onDelta: (event) => {
+          if (current.closed()) return
           assistant.thinking = false
           assistant.barFaded = true
           assistant.content += event.text
           void scrollToBottom()
         },
-        onCitation: (event) => addCitation(assistant, event.citation),
+        onCitation: (event) => {
+          if (current.closed()) return
+          addCitation(assistant, event.citation)
+        },
         onToolCall: (event) => {
+          if (current.closed()) return
           assistant.toolStatus = event.tool.status
           assistant.toolDetail = event.tool.detail
         },
         onDone: () => {
+          if (current.closed()) return
           assistant.thinking = false
         },
       },
@@ -216,6 +231,8 @@ async function send(): Promise<void> {
       void refreshSessions()
     }
   } catch (error) {
+    // 页面已经卸载时不用再动 DOM/状态；组件销毁后改响应式对象只会漏内存。
+    if (current.closed()) return
     assistant.thinking = false
     if (error instanceof ApiError && error.code === 40101) {
       // 拦截器已经把令牌清掉并跳登录页，这里不再往气泡上写错误。
@@ -225,15 +242,16 @@ async function send(): Promise<void> {
     if (assistant.content === '') assistant.content = '（没有收到回答）'
     assistant.barFaded = true
   } finally {
+    if (session === current) session = null
+    if (current.closed()) return
     assistant.thinking = false
     sending.value = false
-    controller = null
     await scrollToBottom()
   }
 }
 
 function stop(): void {
-  controller?.abort()
+  session?.close()
 }
 
 function onComposerKeydown(evt: Event | KeyboardEvent): void {
@@ -247,6 +265,8 @@ function onComposerKeydown(evt: Event | KeyboardEvent): void {
 }
 
 async function signOut(): Promise<void> {
+  // 先掐断在飞的流：令牌一清，下一帧就可能 40101 把用户又弹回登录页。
+  session?.close()
   await auth.logout()
   await router.replace({ name: 'login' })
 }
@@ -254,6 +274,13 @@ async function signOut(): Promise<void> {
 onMounted(async () => {
   await auth.loadMe()
   await refreshSessions()
+})
+
+onBeforeUnmount(() => {
+  // 用户切走页面/退出时，流必须跟着停：组件都没了，onDelta 还在改 messages，
+  // 除了漏内存没有别的结果。
+  session?.close()
+  session = null
 })
 </script>
 
@@ -302,7 +329,7 @@ onMounted(async () => {
 
       <div v-if="!collapsed" class="sidebar-foot">
         <span class="me">{{ auth.user?.nickname || auth.user?.phone_masked || '已登录' }}</span>
-        <button type="button" class="logout" @click="signOut">退出</button>
+        <button type="button" class="logout" :disabled="sending" @click="signOut">退出</button>
       </div>
     </aside>
 
