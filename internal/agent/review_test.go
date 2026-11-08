@@ -126,7 +126,7 @@ const extractReply = `{
   "deposit": true,
   "raw_clauses": [
     {"section": "第二条", "page": 1, "bbox": [72, 640, 520, 668], "text": "试用期为八个月，试用期内工资为每月 1000 元。"},
-    {"section": "第五条", "page": 1, "bbox": [72, 500, 520, 528], "text": "试用期内乙方需向甲方缴纳押金 2000 元。"},
+    {"section": "第五条", "page": 1, "bbox": [72, 500, 520, 528], "text": "试用期届满后再次入职的，另行约定试用期为六个月；入职时乙方需向甲方缴纳押金 2000 元。"},
     {"section": "第六条", "page": 1, "bbox": [72, 460, 520, 488], "text": "乙方自愿加班，甲方不另行支付加班费。"}
   ]
 }`
@@ -140,7 +140,7 @@ func pagesFixture() []port.ParsedPage {
 		Blocks: []port.TextBlock{
 			{ID: "b1", Page: 1, CharStart: 0, CharEnd: 20, BBox: [4]float64{72, 760, 520, 780}, Text: "劳动合同"},
 			{ID: "b2", Page: 1, CharStart: 21, CharEnd: 80, BBox: [4]float64{72, 640, 520, 668}, Text: "第二条 试用期为八个月，试用期内工资为每月 1000 元。"},
-			{ID: "b3", Page: 1, CharStart: 81, CharEnd: 140, BBox: [4]float64{72, 500, 520, 528}, Text: "第五条 试用期内乙方需向甲方缴纳押金 2000 元。"},
+			{ID: "b3", Page: 1, CharStart: 81, CharEnd: 140, BBox: [4]float64{72, 500, 520, 528}, Text: "第五条 试用期届满后再次入职的，另行约定试用期为六个月；入职时乙方需向甲方缴纳押金 2000 元。"},
 			{ID: "b4", Page: 1, CharStart: 141, CharEnd: 200, BBox: [4]float64{72, 460, 520, 488}, Text: "第六条 乙方自愿加班，甲方不另行支付加班费。"},
 		},
 	}}

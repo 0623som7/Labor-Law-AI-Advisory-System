@@ -11,6 +11,8 @@ package rules
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -226,16 +228,29 @@ func ruleProbationOnce() Rule {
 		Title:    "同一份合同多次约定试用期",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第十九条"}},
 		Check: func(c Contract) []Fragment {
-			hits := clausesMentioning(c, "试用期")
-			if len(hits) < 2 {
+			agreements := clausesAgreeingProbation(c)
+			// 去重口径：同一份合同里出现两个**不同长度**的试用期约定才算多次。
+			// 例："试用期 3 个月" 与 "试用期 6 个月" → 命中；
+			//     两段都写"试用期 8 个月"（一段是重申、一段限制权利）→ 不命中。
+			seen := make(map[string]bool, len(agreements))
+			lengths := make([]string, 0, len(agreements))
+			for _, a := range agreements {
+				if seen[a.months] {
+					continue
+				}
+				seen[a.months] = true
+				lengths = append(lengths, a.months)
+			}
+			if len(lengths) < 2 {
 				return nil
 			}
-			evidence := fmt.Sprintf("合同中有 %d 处条款分别约定试用期：%s", len(hits), sectionsOf(hits))
-			return []Fragment{newFragmentAt(hits[0],
+			evidence := fmt.Sprintf("合同中有 %d 处互不相同的试用期约定：%s 个月",
+				len(lengths), strings.Join(lengths, " 个月、"))
+			return []Fragment{newFragmentAt(agreements[0].clause,
 				evidence,
 				port.Suggestion{
 					Type:     "rewrite",
-					Original: strings.TrimSpace(hits[0].Text),
+					Original: strings.TrimSpace(agreements[0].clause.Text),
 					Revised:  "本合同仅约定一次试用期，试用期自用工之日起计算。",
 					Reason:   "劳动合同法第十九条规定，同一用人单位与同一劳动者只能约定一次试用期；续订劳动合同不得再次约定试用期。",
 				})}
@@ -550,17 +565,104 @@ func newFragmentAt(at Clause, evidence string, sug port.Suggestion) Fragment {
 	}
 }
 
-// sectionsOf 把命中的条款位置拼成一句话，用于证据描述。
-func sectionsOf(clauses []Clause) string {
-	parts := make([]string, 0, len(clauses))
-	for _, cl := range clauses {
-		if cl.Section != "" {
-			parts = append(parts, cl.Section)
+// probationAgreementRe 只匹配"明确约定了试用期长度"的写法，例如：
+//
+//	试用期为三个月 / 试用期：3 个月 / 试用期 八个月 / 试用期 1.5 个月
+//
+// 不匹配"试用期内""试用期工资""试用期届满""试用期自 X 年 X 月 X 日起"这类
+// 只提到、不约定长度的表述——旧实现只要条款里出现"试用期"三个字就计一次，
+// 真实合同里"试用期工资""试用期内……"几乎必然出现两处以上，导致条条误报。
+var probationAgreementRe = regexp.MustCompile(`试用期(?:为|是|[:：])?\s*([一二三四五六七八九十两]+|\d+(?:\.\d+)?)\s*个?月`)
+
+// probationAgreement 是一次"约定了试用期长度"的记录。
+type probationAgreement struct {
+	clause Clause
+	months string // 规范化后的月数：八个月 → "8"，3.5 个月 → "3.5"
+}
+
+// clausesAgreeingProbation 返回明确约定了试用期长度的条款，按出现顺序。
+//
+// 每段只取第一个匹配：一段里把同一个长度写两次（"试用期 3 个月……试用期 3 个月满后"）
+// 仍然是一次约定，不能算成两次。
+func clausesAgreeingProbation(c Contract) []probationAgreement {
+	var out []probationAgreement
+	for _, cl := range c.Clauses {
+		m := probationAgreementRe.FindStringSubmatch(cl.Text)
+		if m == nil {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("第 %d 页", cl.Page+1))
+		months, ok := normalizeProbationMonths(m[1])
+		if !ok {
+			continue
+		}
+		out = append(out, probationAgreement{clause: cl, months: months})
 	}
-	return strings.Join(parts, "、")
+	return out
+}
+
+// normalizeProbationMonths 把正则捕获到的月数统一成数字字符串，用于去重比较。
+func normalizeProbationMonths(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	if v, err := strconv.ParseFloat(raw, 64); err == nil {
+		return formatMonths(v), true
+	}
+	v, ok := chineseMonths(raw)
+	if !ok {
+		return "", false
+	}
+	return formatMonths(v), true
+}
+
+// chineseMonths 解析"八""两""十二""二十"这类中文月数，只覆盖 1–99 的整数。
+//
+// 不认识的写法（"捌""廿""壹拾贰"）一律返回 false，该条款按"未明确约定"处理。
+// 取向是宁可漏报也不误报：认不出长度就当没约定，比把"试用期届满"当成一次约定安全。
+func chineseMonths(s string) (float64, bool) {
+	digits := map[rune]float64{'一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5,
+		'六': 6, '七': 7, '八': 8, '九': 9}
+	rs := []rune(s)
+	switch len(rs) {
+	case 0:
+		return 0, false
+	case 1:
+		if rs[0] == '十' {
+			return 10, true
+		}
+		v, ok := digits[rs[0]]
+		return v, ok
+	}
+	idx := strings.IndexRune(s, '十')
+	if idx < 0 {
+		return 0, false // "一二"这类连写不支持
+	}
+	tens := 1.0
+	if left := s[:idx]; left != "" {
+		lr := []rune(left)
+		if len(lr) != 1 {
+			return 0, false
+		}
+		v, ok := digits[lr[0]]
+		if !ok {
+			return 0, false
+		}
+		tens = v
+	}
+	ones := 0.0
+	if right := s[idx+len("十"):]; right != "" {
+		rr := []rune(right)
+		if len(rr) != 1 {
+			return 0, false
+		}
+		v, ok := digits[rr[0]]
+		if !ok {
+			return 0, false
+		}
+		ones = v
+	}
+	return tens*10 + ones, true
 }
 
 // formatMoney 去掉整数金额的小数尾巴：1980.00 显示成 1980，1980.50 保留两位。

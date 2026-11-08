@@ -138,16 +138,94 @@ func TestProbationSalary(t *testing.T) {
 
 func TestProbationOnce(t *testing.T) {
 	r := findRule(t, "R-PROBATION-ONCE")
-	twice := Contract{Clauses: []Clause{
-		{Section: "第二条", Text: "试用期为三个月。"},
-		{Section: "第八条", Text: "再次入职时试用期为一个月。"},
-	}}
-	frags := mustHit(t, r, twice, 1)
-	if !strings.Contains(frags[0].Evidence, "第二条") || !strings.Contains(frags[0].Evidence, "第八条") {
-		t.Fatalf("证据应列出两处条款：%s", frags[0].Evidence)
+
+	cases := []struct {
+		name    string
+		clauses []Clause
+		want    int
+	}{
+		{
+			name:    "只约定一次",
+			clauses: []Clause{{Section: "第二条", Text: "双方约定试用期为八个月。"}},
+			want:    0,
+		},
+		{
+			// 线上误报原型：两段都写"试用期"，但长度只有一个，"试用期内""试用期工资"
+			// 只是对同一次试用期的说明，不是第二次约定。
+			name: "提三次同一长度",
+			clauses: []Clause{
+				{Section: "第二条", Text: "双方约定试用期为八个月，自 2026 年 1 月 1 日起至 2026 年 8 月 31 日止。"},
+				{Section: "第二条", Text: "试用期内，甲方有权根据乙方的工作表现决定是否继续履行本合同。"},
+				{Section: "第三条", Text: "试用期工资为每月 5000 元。"},
+			},
+			want: 0,
+		},
+		{
+			name: "两个不同长度",
+			clauses: []Clause{
+				{Section: "第二条", Text: "试用期为三个月。"},
+				{Section: "第五条", Text: "再次入职时试用期为 6 个月。"},
+			},
+			want: 1,
+		},
+		{
+			// "三个月" 与 "3 个月" 是同一个长度，不能因为写法不同就当成两次约定。
+			name: "中文数字与阿拉伯数字同值",
+			clauses: []Clause{
+				{Section: "第二条", Text: "试用期为三个月。"},
+				{Section: "第八条", Text: "试用期 3 个月届满前七日，甲方应书面告知考核结果。"},
+			},
+			want: 0,
+		},
+		{
+			name: "只提不约定",
+			clauses: []Clause{
+				{Section: "第二条", Text: "试用期内甲方有权解除本合同。"},
+				{Section: "第三条", Text: "试用期届满后转正。"},
+			},
+			want: 0,
+		},
+		{
+			name:    "空条款",
+			clauses: nil,
+			want:    0,
+		},
 	}
-	once := Contract{Clauses: []Clause{{Section: "第二条", Text: "试用期为三个月，试用期内工资按 80% 发放。"}}}
-	mustHit(t, r, once, 0)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frags := mustHit(t, r, Contract{ProbationMonths: 8, Clauses: tc.clauses}, tc.want)
+			if tc.want == 0 {
+				return
+			}
+			// 用户看不懂"第二条、第五条"，证据里只列不同长度，不列位置。
+			if !strings.Contains(frags[0].Evidence, "3 个月") || !strings.Contains(frags[0].Evidence, "6 个月") {
+				t.Fatalf("证据应列出不同长度：%s", frags[0].Evidence)
+			}
+			if strings.Contains(frags[0].Evidence, "第二条") {
+				t.Fatalf("证据不应出现条款位置：%s", frags[0].Evidence)
+			}
+			if frags[0].Section != "第二条" {
+				t.Fatalf("定位应取第一处约定，实际 %s", frags[0].Section)
+			}
+		})
+	}
+}
+
+// TestProbationOnceOnRealContract 用线上暴露误报的真实合同原文做回归。
+// 文本照抄自实际合同第二条，不要改写：改了就不再是回归用例。
+func TestProbationOnceOnRealContract(t *testing.T) {
+	r := findRule(t, "R-PROBATION-ONCE")
+	c := Contract{
+		TermStart:       "2026-01-01",
+		TermEnd:         "2028-12-31",
+		ProbationMonths: 8,
+		Clauses: []Clause{
+			{Section: "第二条", Page: 0, Text: "双方约定试用期为八个月，自 2026 年 1 月 1 日起至 2026 年 8 月 31 日止。\n试用期包含在合同期限内。"},
+			{Section: "第二条", Page: 0, Text: "试用期内，甲方有权根据乙方的工作表现决定是否继续履行本合同；乙方在试用期内提前三日通知甲方，可以解除本合同。"},
+		},
+	}
+	mustHit(t, r, c, 0)
 }
 
 func TestDeposit(t *testing.T) {
