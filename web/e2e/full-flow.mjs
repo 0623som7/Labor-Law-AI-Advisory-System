@@ -462,7 +462,10 @@ async function main() {
         citations: document.querySelectorAll('.citation-card').length,
       }))()
     `)
-    log('4 历史', `点开会话=${reopened} 气泡=${history.bubbles} 引用卡片=${history.citations}（历史消息应为 0）`)
+    log(
+      '4 历史',
+      `点开会话=${reopened} 气泡=${history.bubbles} 引用卡片=${history.citations}（引用来自 messages.citations，应为 3）`,
+    )
 
     // ── 5. 令牌被改坏 → 跳登录页，不白屏 ─────────────────────────
     await cdp.eval(`localStorage.setItem('laborlaw.access_token', 'broken-token'); true`)

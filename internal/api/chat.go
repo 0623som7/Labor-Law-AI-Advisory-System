@@ -201,10 +201,16 @@ func (a *API) chatCompletions(c *gin.Context) {
 	}
 
 	sawDone := false
+	// port.Result 里没有引用，只能在推流时就地收集：
+	// citation 帧发出去之后就没有第二次机会拿到这几条法条了，而刷新页面要靠它重建卡片。
+	var citations []port.Citation
 	emit := func(ev port.Event) error {
 		if ev.Type == port.AgentEventDone {
 			// 记下来避免下面再补一个 done：两个 done 会让前端重复结束。
 			sawDone = true
+		}
+		if ev.Type == port.AgentEventCitation && ev.Citation != nil {
+			citations = append(citations, *ev.Citation)
 		}
 		if _, perr := a.hub.Publish(messageID, ev); perr != nil {
 			return perr
@@ -235,7 +241,7 @@ func (a *API) chatCompletions(c *gin.Context) {
 	// 落库放在最后：它不影响用户看到答案的时机（done 已经发出），
 	// 而放在 Run 之前会让本轮提问被 loadHistory 读成"上一轮"，
 	// 模型就会看到两条一模一样的用户消息。
-	a.persistTurn(ctx, UserID(c), sessionID, messageID, req.Input, result)
+	a.persistTurn(ctx, UserID(c), sessionID, messageID, req.Input, result, citations)
 }
 
 // resolveSession 解析本轮要挂载的会话。
@@ -288,7 +294,7 @@ func sessionTitleFromInput(input string) string {
 // 三条消息必须在一个事务里：只写进 user 而不写 assistant 会留下一条
 // 永远没有回答的提问，用户刷新页面就会看到一个卡住的对话。
 // 落库失败只记 Warn 不报错：答案是用户真正要的东西，写库失败不该把它吞掉。
-func (a *API) persistTurn(parent context.Context, userID, sessionID, messageID, input string, result port.Result) {
+func (a *API) persistTurn(parent context.Context, userID, sessionID, messageID, input string, result port.Result, citations []port.Citation) {
 	if a.store == nil || sessionID == "" {
 		return
 	}
@@ -318,6 +324,7 @@ func (a *API) persistTurn(parent context.Context, userID, sessionID, messageID, 
 			Content:          answer,
 			PromptTokens:     result.Usage.PromptTokens,
 			CompletionTokens: result.Usage.CompletionTokens,
+			Citations:        citations,
 		}); err != nil {
 			return err
 		}

@@ -16,7 +16,8 @@ import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
 import { streamChat } from '@/api/chat'
 import * as sessionApi from '@/api/session'
-import type { Citation, ToolStatus } from '@/api/types'
+import type { ChatMessage, Citation, ToolStatus } from '@/api/types'
+import { historyBubbles } from '@/utils/chat-history'
 import type { Session } from '@/api/types'
 import CitationCard from '@/components/CitationCard.vue'
 import ToolStatusBar from '@/components/ToolStatusBar.vue'
@@ -76,6 +77,21 @@ function nextKey(prefix: string): string {
   return `${prefix}-${keySeed}`
 }
 
+/**
+ * toUiMessages 把历史消息映射成气泡。
+ *
+ * 映射本身在 utils/chat-history.ts 里（纯函数，可单测）；这里只负责补上
+ * 界面专属字段。引用来自库（messages.citations），缺失时是空数组——
+ * 不补默认法条，那是编造。
+ */
+function toUiMessages(items: readonly ChatMessage[]): UiMessage[] {
+  return historyBubbles(items).map((b) => {
+    const msg = newMessage(b.role, b.content, true)
+    msg.citations = b.citations
+    return msg
+  })
+}
+
 function newMessage(role: 'user' | 'assistant', content: string, fromHistory = false): UiMessage {
   return {
     key: nextKey(role),
@@ -117,8 +133,7 @@ async function openSession(session: Session): Promise<void> {
   banner.value = ''
   try {
     const items = await sessionApi.listMessages(session.id)
-    // 历史消息不带 citations：库里没有存引用，硬补就是编造。
-    messages.value = items.map((m) => newMessage(m.role, m.content, true))
+    messages.value = toUiMessages(items)
     await scrollToBottom()
   } catch (error) {
     banner.value = error instanceof Error ? error.message : '历史消息加载失败'

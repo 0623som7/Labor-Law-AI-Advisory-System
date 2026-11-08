@@ -31,14 +31,22 @@ func decodeEnvelope(t *testing.T, body []byte) Envelope {
 
 // fakeRunner 是测试用的 port.Runner，行为可控且不依赖网络。
 type fakeRunner struct {
-	chunks   []string
-	runErr   error
-	sendDone bool
-	got      port.Request
+	chunks    []string
+	citations []port.Citation
+	runErr    error
+	sendDone  bool
+	got       port.Request
 }
 
 func (f *fakeRunner) Run(ctx context.Context, req port.Request, emit func(port.Event) error) (port.Result, error) {
 	f.got = req
+
+	for _, c := range f.citations {
+		cite := c
+		if err := emit(port.Event{Type: port.AgentEventCitation, Citation: &cite}); err != nil {
+			return port.Result{}, err
+		}
+	}
 
 	var built strings.Builder
 	for _, chunk := range f.chunks {

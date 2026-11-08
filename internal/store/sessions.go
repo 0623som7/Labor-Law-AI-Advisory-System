@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -25,8 +26,8 @@ func isDuplicate(err error) bool {
 // sessionColumns 是 sessions 表的读取列序，与 scanSession 一一对应。
 const sessionColumns = `id, user_id, title, scene, created_at, updated_at`
 
-// messageColumns 是 messages 表的读取列序，与 scanMessage 一一对应。
-const messageColumns = `id, session_id, role, content, prompt_tokens, completion_tokens, trace_id, created_at`
+// messageColumns 是 messages 表的读取列序，与扫描顺序一一对应。
+const messageColumns = `id, session_id, role, content, prompt_tokens, completion_tokens, trace_id, citations, created_at`
 
 // 会话列表的分页默认值与上限。
 //
@@ -207,11 +208,21 @@ func (m *Messages) Append(ctx context.Context, msg *port.ChatMessage) error {
 	if msg.ID == "" {
 		msg.ID = id.New()
 	}
+	// 空引用存 NULL 而不是 "[]"：NULL 才是"这条消息没有引用"的语义，
+	// 也让 SUM(citations IS NULL) 能直接统计出来。
+	var citations any
+	if len(msg.Citations) > 0 {
+		raw, err := json.Marshal(msg.Citations)
+		if err != nil {
+			return port.Wrap(port.CodeInternal, err, "序列化引用法条失败")
+		}
+		citations = string(raw)
+	}
 	_, err := m.db.ExecContext(ctx, `INSERT INTO messages
-		(id, session_id, role, content, prompt_tokens, completion_tokens, trace_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		(id, session_id, role, content, prompt_tokens, completion_tokens, trace_id, citations)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		msg.ID, msg.SessionID, string(msg.Role), msg.Content,
-		msg.PromptTokens, msg.CompletionTokens, msg.TraceID)
+		msg.PromptTokens, msg.CompletionTokens, msg.TraceID, citations)
 	if err != nil {
 		if isDuplicate(err) {
 			return port.Wrap(port.CodeConflict, err, "消息已存在")
@@ -243,14 +254,23 @@ func (m *Messages) ListBySession(ctx context.Context, sessionID string, limit in
 		var (
 			msg       port.ChatMessage
 			role      string
+			citations sql.NullString
 			createdAt time.Time
 		)
 		if err := rows.Scan(&msg.ID, &msg.SessionID, &role, &msg.Content,
-			&msg.PromptTokens, &msg.CompletionTokens, &msg.TraceID, &createdAt); err != nil {
+			&msg.PromptTokens, &msg.CompletionTokens, &msg.TraceID, &citations, &createdAt); err != nil {
 			return nil, port.Wrap(port.CodeInternal, err, "读取消息行失败")
 		}
 		msg.Role = port.Role(role)
 		msg.CreatedAt = createdAt
+		// 解析失败不整体报错：一条脏引用不该让整页历史打不开，
+		// 前端拿不到卡片比看不到对话轻得多。
+		if citations.Valid && citations.String != "" {
+			var parsed []port.Citation
+			if err := json.Unmarshal([]byte(citations.String), &parsed); err == nil {
+				msg.Citations = parsed
+			}
+		}
 		out = append(out, msg)
 	}
 	if err := rows.Err(); err != nil {

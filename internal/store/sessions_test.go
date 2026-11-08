@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -283,5 +284,68 @@ func TestMessageListEmptyNotNil(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("空结果必须是长度为 0 的切片，不能是 nil")
+	}
+}
+
+// TestMessageCitationsRoundTrip 守住"引用法条能存进去、能读回来"。
+//
+// 缺陷形态：messages 表里只有正文，前端刷新后只能承认"库里没存引用"，
+// 当前轮那 3 张法条卡片一刷新就消失。
+func TestMessageCitationsRoundTrip(t *testing.T) {
+	db := testDB(t)
+	s := newSession(id.New())
+	cleanupSessions(t, db, s.ID)
+
+	ctx := context.Background()
+	if err := NewSessions(db).Create(ctx, s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	citations := []port.Citation{
+		{StatuteID: "LCL-38", Law: "中华人民共和国劳动合同法", Article: "第三十八条", Text: "用人单位有下列情形之一的，劳动者可以解除劳动合同。", URL: "https://flk.npc.gov.cn/"},
+		{StatuteID: "LL-91", Law: "中华人民共和国劳动法", Article: "第九十一条", Text: "用人单位有下列侵害劳动者合法权益情形之一的，由劳动行政部门责令支付劳动者的工资报酬、经济补偿，并可以责令支付赔偿金。", URL: ""},
+	}
+	m := NewMessages(db)
+	if err := m.Append(ctx, &port.ChatMessage{
+		SessionID:    s.ID,
+		Role:         port.RoleAssistant,
+		Content:      "可以解除并要求经济补偿。",
+		PromptTokens: 120,
+		Citations:    citations,
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	// 再写一条没有引用的 user 消息：它读回来必须是 nil，而不是空切片里的两条空引用。
+	if err := m.Append(ctx, &port.ChatMessage{SessionID: s.ID, Role: port.RoleUser, Content: "那我能要补偿吗"}); err != nil {
+		t.Fatalf("Append user: %v", err)
+	}
+
+	got, err := m.ListBySession(ctx, s.ID, 10)
+	if err != nil {
+		t.Fatalf("ListBySession: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("应返回 2 条，实际 %d", len(got))
+	}
+	// 按 role 定位而不是按下标：两条消息可能落在同一毫秒，正序只保证 id 递增。
+	var assistant, user *port.ChatMessage
+	for i := range got {
+		if got[i].Role == port.RoleAssistant {
+			assistant = &got[i]
+		} else {
+			user = &got[i]
+		}
+	}
+	if assistant == nil || user == nil {
+		t.Fatalf("role 不符合预期: %+v", got)
+	}
+	if len(user.Citations) != 0 {
+		t.Fatalf("user 消息不该有引用，实际 %+v", user.Citations)
+	}
+	if !reflect.DeepEqual(assistant.Citations, citations) {
+		t.Fatalf("引用往返不一致:\n got %+v\nwant %+v", assistant.Citations, citations)
+	}
+	if assistant.PromptTokens != 120 {
+		t.Fatalf("token 计量丢了: %+v", assistant)
 	}
 }

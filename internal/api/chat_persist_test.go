@@ -183,3 +183,39 @@ func TestChatErrorPersistsUserQuestion(t *testing.T) {
 		t.Fatalf("Touch 打到 %q, want %q", f.sessions.touched, got.SessionID)
 	}
 }
+
+// TestChatPersistsCitations 守住"引用法条随 assistant 消息一起落库"。
+//
+// 缺陷形态：citation 帧只活在 SSE 流里，库里只存正文。
+// 于是当前轮有 3 张法条卡片，一刷新就全没了——答辩演示"关掉页面再打开"时无法解释。
+func TestChatPersistsCitations(t *testing.T) {
+	citations := []port.Citation{
+		{StatuteID: "LCL-38", Law: "中华人民共和国劳动合同法", Article: "第三十八条", Text: "用人单位有下列情形之一的，劳动者可以解除劳动合同。", URL: "https://flk.npc.gov.cn/"},
+		{StatuteID: "LCL-46", Law: "中华人民共和国劳动合同法", Article: "第四十六条", Text: "下列情形之一的，用人单位应当向劳动者支付经济补偿。", URL: ""},
+	}
+	f := newChatFixture(t, &fakeRunner{chunks: []string{"可以解除。"}, citations: citations})
+
+	rec := postChat(t, f.h, `{"input":"公司不给我交社保，我能直接走吗"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if len(f.messages.appended) != 2 {
+		t.Fatalf("落库消息数 = %d, want 2", len(f.messages.appended))
+	}
+	assistant := f.messages.appended[1]
+	if assistant.Role != port.RoleAssistant {
+		t.Fatalf("第二条应为 assistant，实际 %+v", assistant)
+	}
+	if len(assistant.Citations) != len(citations) {
+		t.Fatalf("引用了 %d 条，want %d（%+v）", len(assistant.Citations), len(citations), assistant.Citations)
+	}
+	for i := range citations {
+		if assistant.Citations[i] != citations[i] {
+			t.Fatalf("第 %d 条引用 = %+v, want %+v", i, assistant.Citations[i], citations[i])
+		}
+	}
+	// user 消息不该被塞引用：卡片只属于回答。
+	if len(f.messages.appended[0].Citations) != 0 {
+		t.Fatalf("user 消息带了引用: %+v", f.messages.appended[0].Citations)
+	}
+}

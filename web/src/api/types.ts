@@ -9,6 +9,9 @@
 
 export type { Citation, SSEEvent, ToolStatus } from '@/utils/sse'
 
+// 再导出的同时也要在本文件里可见：ChatMessage.citations 用到它。
+import type { Citation } from '@/utils/sse'
+
 /** 所有接口的统一外层包络。code === 0 才算成功。 */
 export interface Envelope<T> {
   code: number
@@ -55,6 +58,8 @@ export interface ChatMessage {
   session_id: string
   role: MessageRole
   content: string
+  /** assistant 消息引用的法条；user 消息没有该字段。刷新历史后据此重建卡片。 */
+  citations?: Citation[]
   created_at: string
 }
 

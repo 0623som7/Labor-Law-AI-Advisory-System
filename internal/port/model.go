@@ -40,6 +40,12 @@ type ChatMessage struct {
 	CompletionTokens int
 	// TraceID 关联请求链路，便于拿用户投诉的时间点反查。
 	TraceID string
+	// Citations 是该条 assistant 消息引用的法条，用于刷新后重建引用卡片。
+	// user 消息恒为空。
+	//
+	// json:"-" 是刻意的：ChatMessage 有别的直接序列化路径，不希望这个字段
+	// 在那些地方悄悄出现，对外形状由 api 层的 DTO 决定。
+	Citations []Citation `json:"-"`
 	// CreatedAt 是写入时间。
 	CreatedAt time.Time
 }

@@ -24,11 +24,44 @@ type sessionDTO struct {
 // 不输出 prompt_tokens / trace_id：那是计量与排障字段，属于内部数据，
 // 出现在响应里等于把成本结构和链路 ID 交给前端。
 type chatMessageDTO struct {
-	ID        string    `json:"id"`
-	SessionID string    `json:"session_id"`
-	Role      string    `json:"role"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	// Citations 是这条 assistant 消息引用的法条。omitempty：user 消息没有引用，
+	// 输出 "citations": null 会让前端多一次判空。
+	Citations []citationDTO `json:"citations,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+}
+
+// citationDTO 对应 schema Citation，字段名与 SSE citation 帧的 wireCitation 保持一致。
+//
+// 两处必须同名：前端复用同一个 Citation 类型渲染卡片，历史与实时两种来源
+// 一旦字段名不同，就得在前端写两套映射，迟早漏一处。
+type citationDTO struct {
+	StatuteID string `json:"statute_id"`
+	Law       string `json:"law"`
+	Article   string `json:"article"`
+	Text      string `json:"text"`
+	URL       string `json:"url"`
+}
+
+// toCitationDTOs 把引用映射成契约形状；空切片返回 nil，配合 omitempty 省掉该字段。
+func toCitationDTOs(items []port.Citation) []citationDTO {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]citationDTO, 0, len(items))
+	for _, c := range items {
+		out = append(out, citationDTO{
+			StatuteID: c.StatuteID,
+			Law:       c.Law,
+			Article:   c.Article,
+			Text:      c.Text,
+			URL:       c.URL,
+		})
+	}
+	return out
 }
 
 // toSessionDTO 把会话映射成契约形状。
@@ -66,6 +99,7 @@ func toChatMessageDTOs(items []port.ChatMessage) []chatMessageDTO {
 			SessionID: m.SessionID,
 			Role:      string(m.Role),
 			Content:   m.Content,
+			Citations: toCitationDTOs(m.Citations),
 			CreatedAt: m.CreatedAt,
 		})
 	}

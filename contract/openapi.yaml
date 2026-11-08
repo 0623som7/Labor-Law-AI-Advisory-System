@@ -985,6 +985,25 @@ components:
           type: string
           format: date-time
 
+    Citation:
+      type: object
+      description: 引用卡片。text 必须来自法条库，不允许模型现场生成。
+      properties:
+        statute_id:
+          type: string
+          example: LCL-38
+        law:
+          type: string
+          example: 中华人民共和国劳动合同法
+        article:
+          type: string
+          example: 第三十八条
+        text:
+          type: string
+        url:
+          type: string
+          description: 原文链接，空串表示没有可点的官方来源
+
     ChatMessage:
       type: object
       properties:
@@ -997,6 +1016,11 @@ components:
           enum: [user, assistant]
         content:
           type: string
+        citations:
+          type: array
+          description: 该条 assistant 消息引用的法条；刷新历史后据此重建卡片。user 消息不带该字段。
+          items:
+            $ref: '#/components/schemas/Citation'
         created_at:
           type: string
           format: date-time
