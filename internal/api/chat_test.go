@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"laborlaw/internal/auth"
 	"laborlaw/internal/port"
 	"laborlaw/internal/stream"
 )
@@ -249,6 +250,125 @@ func TestChatAcceptsLastEventID(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "event: error") {
 		t.Fatalf("非法 Last-Event-ID 不该产生错误帧:\n%s", rec.Body.String())
+	}
+}
+
+// chatRateLimitHandler 组装一个挂了缓存的对话 handler。
+// cache 传 nil 时走"未装配 Redis"的降级形态。
+func chatRateLimitHandler(t *testing.T, r port.Runner, cache authCache) http.Handler {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	opts := []Option{
+		WithRunner(r),
+		WithHub(stream.NewHub(stream.Options{HeartbeatInterval: time.Hour}, time.Minute, discardLogger())),
+	}
+	if cache != nil {
+		opts = append(opts, func(a *API) { a.cache = cache })
+	}
+	// LoginRateLimit 传 0：本组测试只关心对话配额，登录限流保持关闭。
+	return New(authTestConfig("dev-user-0001", 0), discardLogger(), opts...).Handler()
+}
+
+// value 读计数器的原值，用来确认计数真的记在了预期的键上。
+func (f *fakeCache) value(key string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.kv[key]
+}
+
+// accessTokenFor 用测试密钥签一个 access 令牌，用来在同一个 handler 上扮演不同用户。
+func accessTokenFor(t *testing.T, userID string) string {
+	t.Helper()
+	tok, err := auth.Sign(testSecret, "laborlaw-test",
+		auth.Claims{Sub: userID, Typ: auth.TypAccess, Jti: "jti-" + userID}, time.Hour)
+	if err != nil {
+		t.Fatalf("签令牌失败: %v", err)
+	}
+	return tok
+}
+
+func TestChatRateLimitBlocksAfterQuota(t *testing.T) {
+	cache := newFakeCache()
+	h := chatRateLimitHandler(t, &fakeRunner{chunks: []string{"好"}}, cache)
+	body := `{"input":"加班费怎么算"}`
+
+	for i := 1; i <= chatRateLimit; i++ {
+		rec := postChat(t, h, body, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("第 %d 次 status = %d, want 200（body=%s）", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	rec := postChat(t, h, body, nil)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("第 %d 次 status = %d, want 429（body=%s）", chatRateLimit+1, rec.Code, rec.Body.String())
+	}
+	env := decodeEnvelope(t, rec.Body.Bytes())
+	if env.Code != int(port.CodeRateLimited) {
+		t.Fatalf("code = %d, want %d", env.Code, port.CodeRateLimited)
+	}
+	if env.Message != "提问过于频繁，请稍后再试" {
+		t.Fatalf("message = %q，与约定文案不一致", env.Message)
+	}
+	// 键里带的必须是用户 ID，按 IP 或全局计数都会误伤同一个出口后面的其他人。
+	if got := cache.value(chatRateKeyPrefix + "dev-user-0001"); got != strconv.Itoa(chatRateLimit+1) {
+		t.Fatalf("计数键值 = %q, want %d", got, chatRateLimit+1)
+	}
+}
+
+func TestChatRateLimitIsolatesUsers(t *testing.T) {
+	cache := newFakeCache()
+	h := chatRateLimitHandler(t, &fakeRunner{chunks: []string{"好"}}, cache)
+	body := `{"input":"被辞退了有补偿吗"}`
+
+	alice := map[string]string{"Authorization": "Bearer " + accessTokenFor(t, "u-alice")}
+	bob := map[string]string{"Authorization": "Bearer " + accessTokenFor(t, "u-bob")}
+
+	for i := 1; i <= chatRateLimit; i++ {
+		if rec := postChat(t, h, body, alice); rec.Code != http.StatusOK {
+			t.Fatalf("alice 第 %d 次 status = %d, want 200（body=%s）", i, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := postChat(t, h, body, alice); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("alice 超限后 status = %d, want 429", rec.Code)
+	}
+
+	// 关键断言：同一时刻、同一进程、同一个缓存，另一个人不受影响。
+	if rec := postChat(t, h, body, bob); rec.Code != http.StatusOK {
+		t.Fatalf("bob status = %d, want 200（被 alice 的配额牵连了）", rec.Code)
+	}
+	if cache.value(chatRateKeyPrefix+"u-bob") != "1" {
+		t.Fatalf("bob 的计数键不存在或不是 1：%q", cache.value(chatRateKeyPrefix+"u-bob"))
+	}
+}
+
+func TestChatRateLimitSkipsWithoutCache(t *testing.T) {
+	// 没装配缓存时不限流：这是合法的降级形态，不能因为少了 Redis 就断掉对话。
+	h := chatRateLimitHandler(t, &fakeRunner{chunks: []string{"好"}}, nil)
+	body := `{"input":"社保没交能直接走吗"}`
+
+	for i := 1; i <= chatRateLimit+3; i++ {
+		if rec := postChat(t, h, body, nil); rec.Code != http.StatusOK {
+			t.Fatalf("第 %d 次 status = %d, want 200（body=%s）", i, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestChatRateLimitAllowsWhenCacheDown(t *testing.T) {
+	// 缓存故障一律放行：限流是减速带，不该变成一次自己发起的故障。
+	cache := newFakeCache()
+	cache.down = true
+	h := chatRateLimitHandler(t, &fakeRunner{chunks: []string{"好"}}, cache)
+	body := `{"input":"试用期最长多久"}`
+
+	for i := 1; i <= chatRateLimit+3; i++ {
+		rec := postChat(t, h, body, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("第 %d 次 status = %d, want 200（缓存故障不该挡住对话）", i, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "event: error") {
+			t.Fatalf("第 %d 次出现了错误帧:\n%s", i, rec.Body.String())
+		}
 	}
 }
 

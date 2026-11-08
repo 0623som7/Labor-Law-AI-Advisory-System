@@ -36,7 +36,61 @@ const (
 	// 不能复用请求 ctx：客户端在最后一帧之后立刻断开是常态，
 	// 而此时答案已经生成，理应留下来，不该跟着 ctx 一起被取消。
 	chatPersistTimeout = 5 * time.Second
+
+	// chatRateLimit 是单用户在 chatRateWindow 内允许的提问次数。
+	//
+	// 20 次/10 分钟：正常问法一两分钟一轮，连追问带补充也撞不到；
+	// 而拿着脚本狂刷的人几十秒就能顶穿。取这个数量级是为了让"真人无感、
+	// 压测有感"，不是在精算成本。
+	chatRateLimit = 20
+
+	// chatRateWindow 是固定窗口的长度。
+	//
+	// 用固定窗口而不是滑动窗口：滑动窗口要么存时间戳列表（O(n) 内存且要
+	// 每次清理），要么上 Redis Lua 做 ZSET 分片计数——为一条防刷规则多维护
+	// 一段脚本和它的测试不划算。固定窗口的代价是窗口边界上最多放过 2 倍流量
+	// （第 10 分钟末尾刷 20 次、第 11 分钟开头再刷 20 次），对话框场景可以接受。
+	chatRateWindow = 10 * time.Minute
+
+	// chatRateKeyPrefix 是对话计数的键前缀，与登录限流的 auth:login: 分开。
+	// 两处限流的窗口与语义都不同，混用同一个键会让登录失败计数去挤占提问配额。
+	chatRateKeyPrefix = "chat:rl:"
 )
+
+// chatRateLimited 判断该用户是否已刷爆对话配额。
+//
+// 三个设计点，改之前先看：
+//  1. 必须在 Attach 之前调用。响应头一写出，状态码就只能是 200，
+//     "提问过于频繁"就只能变成流内 error 帧，前端拿不到 429 也就没法提示
+//     "稍后再试"，只能显示一段奇怪的失败回答。
+//  2. 缓存故障一律放行。限流是减速带，不是可用性前置条件：
+//     Redis 抖动时把所有人挡在门外，等于用限流造成一次自己发起的故障。
+//  3. 不清零。对话是纯消耗，不像登录成功可以把失败计数清掉——
+//     这里没有"做对一次就抵消之前的消耗"这回事，20 次用完就得等窗口过去。
+func (a *API) chatRateLimited(ctx context.Context, c *gin.Context) bool {
+	if a.cache == nil {
+		// 没装配 Redis 是合法的降级形态（单机调试、无缓存部署），此时不限流。
+		return false
+	}
+
+	key := chatRateKeyPrefix + UserID(c)
+	n, err := a.cache.incr(ctx, key)
+	if err != nil {
+		loggerFrom(c).Warn("对话限流不可用，本次放行", "trace_id", TraceID(c), "err", err.Error())
+		return false
+	}
+	if n == 1 {
+		if err := a.cache.expire(ctx, key, chatRateWindow); err != nil {
+			// 计数键没有过期时间会变成永久封禁，用户再也问不了话。
+			// 删键重来比锁死账号好：宁可这一轮不计数，也不能让人永远 429。
+			loggerFrom(c).Warn("对话限流窗口设置失败，重置计数",
+				"trace_id", TraceID(c), "err", err.Error())
+			_ = a.cache.del(ctx, key)
+			return false
+		}
+	}
+	return n > int64(chatRateLimit)
+}
 
 // chatRequest 是 /chat/completions 的请求体。
 type chatRequest struct {
@@ -63,6 +117,13 @@ func (a *API) chatCompletions(c *gin.Context) {
 	}
 	if UserID(c) == "" {
 		FailCode(c, port.CodeUnauthorized, "请先登录")
+		return
+	}
+
+	// 限流必须落在读 body 之前：先花时间解一个 4KB 的 JSON 再回一句"你太频繁"，
+	// 等于把限流想省下的成本又付了一遍。这也是它能挡在 Attach 之前的前提。
+	if a.chatRateLimited(c.Request.Context(), c) {
+		FailCode(c, port.CodeRateLimited, "提问过于频繁，请稍后再试")
 		return
 	}
 
