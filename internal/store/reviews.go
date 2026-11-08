@@ -59,8 +59,12 @@ func (r *Reviews) Create(ctx context.Context, rv *port.Review) error {
 		rv.ClausePassRate, rv.Counts.High, rv.Counts.Medium, rv.Counts.Low, rv.TaskID,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "Duplicate entry") {
-			return port.Wrap(port.CodeConflict, err, "审查记录已存在")
+		// 1062 在这里有两种来源：主键重复（几乎不会发生，ULID）与
+		// uk_reviews_active_file（同一份合同已有一条 pending/running）。
+		// 后者是并发审查的唯一拦截点——api 层的 GetByFile 与 Create 不在同一事务里，
+		// 只能靠唯一键兜底。文案要让前端能直接用。
+		if isDuplicate(err) {
+			return port.Wrap(port.CodeConflict, err, "该合同正在审查中，请等待结果")
 		}
 		return port.Wrap(port.CodeInternal, err, "写入审查记录失败")
 	}

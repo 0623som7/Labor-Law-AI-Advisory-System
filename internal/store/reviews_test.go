@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,6 +120,11 @@ func TestReviewsGetByFileNewest(t *testing.T) {
 	ctx := context.Background()
 	if err := s.Create(ctx, first); err != nil {
 		t.Fatalf("Create first: %v", err)
+	}
+	// 0003 之后同一份合同同时只能有一条 pending/running，所以先把第一条收尾，
+	// 再建"更近的一次审查"——这正是真实的重复审查路径（规则更新后重跑）。
+	if err := s.Update(ctx, &port.Review{ID: first.ID, Status: port.TaskFailed, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("收尾第一条: %v", err)
 	}
 	// created_at 精度是毫秒，连插两条可能撞同一毫秒；显式错开，避免用 id 兜底排序掩盖真实顺序。
 	time.Sleep(5 * time.Millisecond)
@@ -319,4 +325,70 @@ func TestReviewsListByUserPaging(t *testing.T) {
 	if empty == nil {
 		t.Fatal("空结果应当是空切片，不是 nil")
 	}
+}
+
+// TestReviewsCreateRejectsConcurrentActive 守住 0003 迁移的部分唯一约束：
+// 同一 (user, file) 最多一条 pending/running，落终态后释放。
+//
+// 这条约束是并发审查的唯一拦截点——api 层的 GetByFile 查重与 Create 不在同一
+// 事务里（中间还夹着建 task、入池），双击按钮时两个请求都能查到"没有记录"。
+func TestReviewsCreateRejectsConcurrentActive(t *testing.T) {
+	db := testDB(t)
+	s := NewReviews(db)
+	ctx := context.Background()
+
+	userID := id.New()
+	first := newReview(userID)
+	second := newReview(userID)
+	second.FileID = first.FileID // 同一份合同
+	cleanupReviews(t, db, first.ID, second.ID)
+
+	if err := s.Create(ctx, first); err != nil {
+		t.Fatalf("首次 Create: %v", err)
+	}
+	err := s.Create(ctx, second)
+	if err == nil {
+		t.Fatal("同一合同已有 pending 审查时，第二条必须被唯一键拦住")
+	}
+	if code := port.CodeOf(err); code != port.CodeConflict {
+		t.Fatalf("错误码 = %v, want 40901", code)
+	}
+	if msg := port.AsAppError(err).Message; !strings.Contains(msg, "正在审查中") {
+		t.Fatalf("文案 = %q, 应提示正在审查中", msg)
+	}
+
+	// 第一条落终态：active 生成列变 NULL，唯一约束自动释放，
+	// 历史多条审查是允许的（规则更新后重跑）。
+	if err := s.Update(ctx, &port.Review{
+		ID:        first.ID,
+		Status:    port.TaskSucceeded,
+		RiskLevel: port.SeverityHigh,
+		Score:     80,
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("把第一条改成 succeeded: %v", err)
+	}
+	if err := s.Create(ctx, second); err != nil {
+		t.Fatalf("终态之后应允许为同一合同新建审查: %v", err)
+	}
+}
+
+// TestReviewsActiveUniqueAllowsHistory 守住"历史多条"这一半：
+// 多条 succeeded/failed 并存时唯一键不能挡路。
+func TestReviewsActiveUniqueAllowsHistory(t *testing.T) {
+	db := testDB(t)
+	s := NewReviews(db)
+	ctx := context.Background()
+
+	userID := id.New()
+	fileID := id.New()
+	var ids []string
+	for _, status := range []port.TaskStatus{port.TaskSucceeded, port.TaskFailed, port.TaskCancelled} {
+		rv := &port.Review{ID: id.New(), FileID: fileID, UserID: userID, Status: status, TaskID: id.New()}
+		ids = append(ids, rv.ID)
+		if err := s.Create(ctx, rv); err != nil {
+			t.Fatalf("历史记录 %s 应能插入: %v", status, err)
+		}
+	}
+	cleanupReviews(t, db, ids...)
 }

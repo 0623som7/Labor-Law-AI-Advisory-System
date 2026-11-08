@@ -53,10 +53,14 @@ type fakeReviewStore struct {
 	createErr    error
 	getErr       error
 	getByFileErr error
-	listErr      error
-	findErr      error
-	saved        int
-	updated      []port.Review
+	// getByFileMissOnce 只让第一次 GetByFile 返回它，用来模拟并发场景：
+	// 本请求查重时另一方还没落库，落库时才撞上唯一键。
+	getByFileMissOnce error
+	getByFileCalls    int
+	listErr           error
+	findErr           error
+	saved             int
+	updated           []port.Review
 }
 
 func newFakeReviewStore() *fakeReviewStore {
@@ -95,6 +99,13 @@ func (f *fakeReviewStore) Get(_ context.Context, userID, id string) (*port.Revie
 func (f *fakeReviewStore) GetByFile(_ context.Context, userID, fileID string) (*port.Review, error) {
 	if f.getByFileErr != nil {
 		return nil, f.getByFileErr
+	}
+	f.mu.Lock()
+	f.getByFileCalls++
+	first := f.getByFileCalls == 1
+	f.mu.Unlock()
+	if first && f.getByFileMissOnce != nil {
+		return nil, f.getByFileMissOnce
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -748,5 +759,39 @@ func TestReviewHandlerCanceledContextMarksFailed(t *testing.T) {
 	}
 	if !strings.Contains(task.Error, "中断") {
 		t.Fatalf("任务错误文案 = %q，期望说明已中断", task.Error)
+	}
+}
+
+// TestCreateReviewFallsBackOnUniqueConflict 覆盖并发审查：
+//
+// 两个请求同时过了 GetByFile 查重（第一个请求查重时另一方还没落库），后插入者
+// 撞上 uk_reviews_active_file。这时不能把 40901 抛给用户——他双击了一下按钮而已，
+// 应该拿到已经存在的那条 review 与 task，继续轮询。
+func TestCreateReviewFallsBackOnUniqueConflict(t *testing.T) {
+	f := newReviewFixture(t)
+	ctx := context.Background()
+
+	// 另一方已经建好了：一条 running 的审查 + 它的任务。
+	_ = f.store.tasks.Create(ctx, &port.Task{ID: "T-RACE", Type: "review.run", Status: port.TaskRunning})
+	_ = f.store.reviews.Create(ctx, &port.Review{
+		ID: "R-RACE", FileID: "F-1", UserID: "dev-user-0001",
+		Status: port.TaskRunning, TaskID: "T-RACE",
+	})
+
+	// 本请求查重时看不到（模拟并发窗口），落库时才冲突。
+	f.store.reviews.getByFileMissOnce = port.New(port.CodeNotFound, "审查记录不存在")
+	f.store.reviews.createErr = port.Wrap(port.CodeConflict, nil, "该合同正在审查中，请等待结果")
+
+	rec, env := postJSON(t, f.api, "/api/v1/contracts/review", `{"file_id":"F-1"}`)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("状态码 = %d，期望 202（应回退到已有记录）", rec.Code)
+	}
+	data := dataMap(t, env)
+	if data["review_id"] != "R-RACE" || data["task_id"] != "T-RACE" {
+		t.Fatalf("没有回退到已存在的审查: %v", data)
+	}
+	if len(f.submit.tasks) != 0 {
+		t.Fatalf("冲突时不该入池，实际入池 %d 个", len(f.submit.tasks))
 	}
 }

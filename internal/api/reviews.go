@@ -164,8 +164,23 @@ func (a *API) createReview(c *gin.Context) {
 		return
 	}
 	if err := a.store.Review().Create(ctx, review); err != nil {
+		// 并发重复：两个请求同时过了上面的 GetByFile 查重（查重与建记录不在同一事务里，
+		// 中间还夹着建 task），数据库的 uk_reviews_active_file 拦住后插入者。
+		// 这里换回已存在的那条，让前端继续轮询它的 task_id——用户看到的是"已经开始了"，
+		// 而不是 40901。做法与 files.go 处理 sha256 重复一致。
+		if port.CodeOf(err) == port.CodeConflict {
+			_ = a.store.Task().Finish(context.WithoutCancel(ctx), task.ID, port.TaskFailed, "并发审查：记录已存在")
+			if existing, gerr := a.store.Review().GetByFile(ctx, userID, fileID); gerr == nil {
+				Accepted(c, reviewAcceptedDTO{
+					TaskID:   existing.TaskID,
+					ReviewID: existing.ID,
+					Status:   string(existing.Status),
+				})
+				return
+			}
+		}
 		// 任务已落库但审查没建成：把任务标记失败，不留一条会被人捡起来的孤儿。
-		_ = a.store.Task().Finish(ctx, task.ID, port.TaskFailed, "创建审查记录失败")
+		_ = a.store.Task().Finish(context.WithoutCancel(ctx), task.ID, port.TaskFailed, "创建审查记录失败")
 		Fail(c, err)
 		return
 	}
