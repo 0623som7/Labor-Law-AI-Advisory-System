@@ -18,6 +18,7 @@ import { streamChat } from '@/api/chat'
 import * as sessionApi from '@/api/session'
 import type { ChatMessage, Citation, ToolStatus } from '@/api/types'
 import { historyBubbles } from '@/utils/chat-history'
+import { formatRelative } from '@/utils/format-relative'
 import type { Session } from '@/api/types'
 import CitationCard from '@/components/CitationCard.vue'
 import ToolStatusBar from '@/components/ToolStatusBar.vue'
@@ -332,7 +333,8 @@ onBeforeUnmount(() => {
             :class="{ active: s.id === currentSessionId }"
           >
             <button type="button" class="session-title" :disabled="sending" @click="openSession(s)">
-              {{ s.title }}
+              <span class="session-name">{{ s.title }}</span>
+              <span class="session-time">{{ formatRelative(s.updated_at) }}</span>
             </button>
             <button
               type="button"
@@ -516,16 +518,30 @@ onBeforeUnmount(() => {
 
 .session-title {
   flex: 1;
+  min-width: 0;
   padding: 6px;
   overflow: hidden;
   font-size: 13px;
   color: var(--ll-text);
   text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   cursor: pointer;
   background: transparent;
   border: 0;
+  /* 标题一行、时间一行：只有标题时看不出会话是昨天还是上周的，顺序像是随机的。 */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-time {
+  font-size: 12px;
+  color: #909399;
 }
 
 .session-del {
