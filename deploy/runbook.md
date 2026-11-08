@@ -152,10 +152,22 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
   -out deploy/nginx/certs/server.crt
 chmod 600 deploy/nginx/certs/server.key
 
-# 3.6 起 TLS 层（api 的端口已改成 127.0.0.1:8080，公网只看得到 8443）
-docker compose -f deploy/docker-compose.yml --env-file .env up -d nginx
+# 3.6 上传前端构建产物
+#      前端 dist 不进仓库（web/.gitignore），必须在有 Node 的机器上 build 后传上去。
+#      compose 把 web/dist 只读挂载到 /usr/share/nginx/html；
+#      目录不存在时 Docker 会自动建一个空目录，页面返回 403 而不报错，所以传完必须实测根路径。
+#      —— 在开发机执行 ——
+cd web && pnpm install --frozen-lockfile && pnpm build && cd ..
+scp -r web/dist ubuntu@<公网IP>:/opt/laborlaw/web/
+#      —— 在服务器执行 ——
+ls web/dist/index.html web/dist/assets/*.js     # 两个都在才算传成功
 
-# 3.7 存储目录属主（Linux 上必做，Windows 本机不用）
+# 3.7 起 TLS 层 + 前端站点（api 的端口已改成 127.0.0.1:8080，公网只看得到 8443）
+docker compose -f deploy/docker-compose.yml --env-file .env up -d nginx
+curl -sk -o /dev/null -w 'root=%{http_code}\n' https://127.0.0.1:8443/          # 必须 200 且是 HTML
+curl -sk -o /dev/null -w 'api=%{http_code}\n'  https://127.0.0.1:8443/healthz   # 必须 200 且是 JSON
+
+# 3.8 存储目录属主（Linux 上必做，Windows 本机不用）
 #      compose 用 ../storage:/app/storage 把宿主目录盖在镜像的 /app/storage 上，
 #      Dockerfile 里那句 chown app:app /app 对 bind mount 不生效。
 #      宿主目录默认属主是 root，容器内进程是 uid 10001，写不进去 → 上传接口 500
