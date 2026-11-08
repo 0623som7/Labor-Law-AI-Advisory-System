@@ -341,15 +341,14 @@ func (a *API) listFindings(c *gin.Context) {
 // 与 /statutes 的 top_k 保持一致的处理口径：非法参数一律 40001，
 // 不做"悄悄退回默认值"——前端传错时应当立刻看到，而不是困惑于"为什么只返回 20 条"。
 func parsePageParams(c *gin.Context) (limit, offset int, ok bool) {
-	limit, offset = 20, 0
-	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-		v, err := strconv.Atoi(raw)
-		if err != nil || v <= 0 || v > 100 {
-			FailCode(c, port.CodeInvalidArgument, "limit 必须是 1 到 100 的整数")
-			return 0, 0, false
-		}
-		limit = v
+	// limit 交给 parseLimitParam 解析：两套手写的解析迟早会在边界上分叉
+	// （一处 <=0 报错、一处悄悄退回默认），而前端只会看到"有时 400、有时正常"。
+	// 默认值与上限刻意保持原样（20 / 100），行为不变。
+	limit, ok = parseLimitParam(c, 20, 100)
+	if !ok {
+		return 0, 0, false
 	}
+	offset = 0
 	if raw := strings.TrimSpace(c.Query("offset")); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil || v < 0 {
