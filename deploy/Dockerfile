@@ -12,8 +12,13 @@ COPY . .
 
 # CGO_ENABLED=0：产出静态二进制，运行时不需要 libc，也不需要 gcc。
 # -trimpath 去掉本机绝对路径，-s -w 去掉符号表（镜像小一半）。
+#
+# 两条命令必须在同一层：statuteseed 和 api 用同一份依赖缓存与同一份源码，
+# 拆成两层等于把 go build 的模块解析再来一遍，构建时间翻倍。
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+    go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/statuteseed ./cmd/statuteseed
 
 FROM alpine:3.20
 
@@ -24,6 +29,12 @@ RUN apk add --no-cache ca-certificates tzdata poppler-utils \
 
 WORKDIR /app
 COPY --from=build /out/api /app/api
+
+# 法条种子也进镜像：容器化之后没有别的途径把 205 条法条灌进库，
+# 云上会是一张空表，检索空库时模型只能答"没有检索到法条"，citation 链路等于没有。
+# 46KB 的 JSON + 两份原文 HTML，代价可以忽略。
+COPY --from=build /out/statuteseed /app/statuteseed
+COPY deploy/seed /app/seed
 
 # 合同落盘目录必须存在且属于运行用户，否则上传接口在运行期才报权限错。
 RUN mkdir -p /app/storage && chown -R app:app /app
