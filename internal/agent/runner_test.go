@@ -182,6 +182,30 @@ func TestConsultStreamsDeltas(t *testing.T) {
 	}
 }
 
+// TestQASceneUsesConsultFlow 钉住 qa 是 consult 的别名。
+//
+// 场景名必须原样透传：模型路由与用量报表都按 scene 分组，若在 Runner 里
+// 改写成 consult，qa 的调用会从自己的统计里消失。
+func TestQASceneUsesConsultFlow(t *testing.T) {
+	client := &recordingClient{chunks: []string{"最长六个月。"}}
+	r := New(client)
+	var c collector
+
+	res, err := r.Run(context.Background(), port.Request{Scene: SceneQA, Input: "试用期最长多久"}, c.emit)
+	if err != nil {
+		t.Fatalf("qa 场景不应报错: %v", err)
+	}
+	if res.Content != "最长六个月。" {
+		t.Errorf("Content = %q", res.Content)
+	}
+	if client.got.Scene != SceneQA {
+		t.Errorf("传给模型的场景 = %q, want %q（不得改写成 consult）", client.got.Scene, SceneQA)
+	}
+	if client.calls != 1 {
+		t.Errorf("模型调用次数 = %d, want 1", client.calls)
+	}
+}
+
 func TestConsultRejectsInvalidRequests(t *testing.T) {
 	cases := []struct {
 		name string
