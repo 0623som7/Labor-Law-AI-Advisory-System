@@ -86,3 +86,15 @@ export function getReview(reviewId: string): Promise<Review> {
 export function listFindings(reviewId: string): Promise<Finding[]> {
   return get<Finding[]>(`/reviews/${encodeURIComponent(reviewId)}/findings`)
 }
+
+/**
+ * GET /reviews?file_id=…，取这份合同最近一次审查。
+ *
+ * 存在的意义：review_id 之前只存在浏览器里（localStorage），换设备、清缓存、
+ * 用 API 触发过一次审查，进页面就什么都没了。后端按文件查的能力一直有，
+ * 这里只是把它接出来。没有审查记录时后端回空列表，不是 404。
+ */
+export async function findReviewByFile(fileId: string): Promise<Review | null> {
+  const items = await get<Review[]>(`/reviews?file_id=${encodeURIComponent(fileId)}`)
+  return items.length > 0 ? items[0] : null
+}

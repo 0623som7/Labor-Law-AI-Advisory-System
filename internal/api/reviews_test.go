@@ -57,6 +57,7 @@ type fakeReviewStore struct {
 	// 本请求查重时另一方还没落库，落库时才撞上唯一键。
 	getByFileMissOnce error
 	getByFileCalls    int
+	listByUserCalls   int
 	listErr           error
 	findErr           error
 	saved             int
@@ -155,6 +156,7 @@ func (f *fakeReviewStore) ListByUser(_ context.Context, userID string, limit, of
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.listByUserCalls++
 	out := []port.Review{}
 	for i := len(f.reviews) - 1; i >= 0; i-- {
 		if f.reviews[i].UserID == userID {
@@ -554,6 +556,82 @@ func TestListReviewsPagination(t *testing.T) {
 	rec, env = doRequest(t, f.api, http.MethodGet, "/api/v1/reviews?limit=0", nil)
 	if rec.Code != http.StatusBadRequest || env.Code != int(port.CodeInvalidArgument) {
 		t.Fatalf("limit=0 得到 %d/%d，期望 400/40001", rec.Code, env.Code)
+	}
+}
+
+// file_id 命中：列表只回那一条。前端进 /review/{fileId} 就靠这个恢复结果，
+// 否则用户每次回来都得再等一次审查（复用逻辑会 2 秒返回旧结果，但界面先空一次）。
+func TestListReviewsFiltersByFile(t *testing.T) {
+	f := newReviewFixture(t)
+	ctx := context.Background()
+	_ = f.store.reviews.Create(ctx, &port.Review{
+		ID: "R-OTHER", FileID: "F-OTHER", UserID: "dev-user-0001", Status: port.TaskSucceeded,
+	})
+	_ = f.store.reviews.Create(ctx, &port.Review{
+		ID: "R-WANTED", FileID: "F-1", UserID: "dev-user-0001", Status: port.TaskSucceeded, Score: 65,
+	})
+
+	rec, env := doRequest(t, f.api, http.MethodGet, "/api/v1/reviews?file_id=F-1", nil)
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("状态码/业务码 = %d/%d，期望 200/0", rec.Code, env.Code)
+	}
+	list, ok := env.Data.([]any)
+	if !ok {
+		t.Fatalf("data 不是数组：%#v", env.Data)
+	}
+	if len(list) != 1 {
+		t.Fatalf("data 长度 = %d，期望 1", len(list))
+	}
+	item, _ := list[0].(map[string]any)
+	if item["id"] != "R-WANTED" {
+		t.Fatalf("data[0].id = %v，期望 R-WANTED", item["id"])
+	}
+}
+
+// 该文件没审过：列表语义下"没有"就是空列表，不是 404。
+// 回 40401 会把前端的"空态 + 开始审查"变成错误提示。
+func TestListReviewsFileNotFoundReturnsEmptyList(t *testing.T) {
+	f := newReviewFixture(t)
+
+	rec, env := doRequest(t, f.api, http.MethodGet, "/api/v1/reviews?file_id=NOPE-1", nil)
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("状态码/业务码 = %d/%d，期望 200/0（不是 40401）", rec.Code, env.Code)
+	}
+	list, ok := env.Data.([]any)
+	if !ok {
+		t.Fatalf("data 不是数组：%#v（空列表也要是 []，不能是 null）", env.Data)
+	}
+	if len(list) != 0 {
+		t.Fatalf("data 长度 = %d，期望 0", len(list))
+	}
+}
+
+// 不带 file_id 时行为必须一字不变：仍走 ListByUser 分页。
+func TestListReviewsWithoutFileUsesListByUser(t *testing.T) {
+	f := newReviewFixture(t)
+	ctx := context.Background()
+	_ = f.store.reviews.Create(ctx, &port.Review{
+		ID: "R-1", FileID: "F-1", UserID: "dev-user-0001", Status: port.TaskSucceeded,
+	})
+
+	if rec, env := doRequest(t, f.api, http.MethodGet, "/api/v1/reviews", nil); rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("状态码/业务码 = %d/%d", rec.Code, env.Code)
+	}
+	f.store.reviews.mu.Lock()
+	listed, byFile := f.store.reviews.listByUserCalls, f.store.reviews.getByFileCalls
+	f.store.reviews.mu.Unlock()
+	if listed != 1 || byFile != 0 {
+		t.Fatalf("ListByUser/GetByFile 调用次数 = %d/%d，期望 1/0", listed, byFile)
+	}
+
+	if rec, env := doRequest(t, f.api, http.MethodGet, "/api/v1/reviews?file_id=F-1", nil); rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("带 file_id 时状态码/业务码 = %d/%d", rec.Code, env.Code)
+	}
+	f.store.reviews.mu.Lock()
+	listed, byFile = f.store.reviews.listByUserCalls, f.store.reviews.getByFileCalls
+	f.store.reviews.mu.Unlock()
+	if listed != 1 || byFile != 1 {
+		t.Fatalf("带 file_id 后 ListByUser/GetByFile 调用次数 = %d/%d，期望 1/1（不该再走分页）", listed, byFile)
 	}
 }
 

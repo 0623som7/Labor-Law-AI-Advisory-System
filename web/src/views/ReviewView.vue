@@ -14,6 +14,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 import { ApiError } from '@/api/client'
 import {
+  findReviewByFile,
   getFile,
   getFileBytes,
   getPages,
@@ -25,6 +26,7 @@ import {
 } from '@/api/files'
 import type { Finding, ParsedDoc, Review } from '@/api/types'
 import { SEVERITY_LABEL, findingsOnPage, legalBasisTitle, sortBySeverity, summarizeFindings } from '@/utils/findings'
+import { shouldOfferStart } from '@/utils/review-restore'
 import {
   findingPage,
   inflateRect,
@@ -74,9 +76,15 @@ let reviewId: string | null = null
 
 const summary = computed(() => summarizeFindings(findings.value))
 const sorted = computed(() => sortBySeverity(findings.value))
-const canStart = computed(() => !scanned.value && !loadError.value && !running.value)
-
-const storageKey = computed(() => `laborlaw.review.${fileId.value}`)
+// 有结果就不再给「开始审查」：后端会复用旧结果，用户点了只是白等两秒。
+const showStart = computed(() =>
+  shouldOfferStart({
+    restored: review.value,
+    running: running.value,
+    scanned: scanned.value,
+    loadError: loadError.value,
+  }),
+)
 
 function message(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback
@@ -169,7 +177,11 @@ function stopTicking(): void {
   }
 }
 
-async function loadFindings(id: string): Promise<void> {
+/**
+ * 把一份审查结果画到界面上。恢复已有结果和跑完新审查都走这里，
+ * 免得两处各写一份"拉 findings + 排序"，迟早只改一处。
+ */
+async function showResults(id: string): Promise<void> {
   review.value = await getReview(id)
   findings.value = sortBySeverity(await listFindings(id))
 }
@@ -181,7 +193,7 @@ async function pollTask(taskId: string): Promise<void> {
     if (disposed) return
     stage.value = task.stage || ''
     if (task.status === 'succeeded') {
-      if (reviewId) await loadFindings(reviewId)
+      if (reviewId) await showResults(reviewId)
       running.value = false
       stopTicking()
       return
@@ -220,12 +232,11 @@ async function startReview(): Promise<void> {
   try {
     const started = await requestReview(fileId.value)
     reviewId = started.reviewId
-    window.localStorage.setItem(storageKey.value, reviewId)
     if (started.kind === 'accepted') {
       await pollTask(started.taskId)
     } else {
       // 后端把上次的结果直接给了回来（同一份文件重复审查），不再排任务。
-      await loadFindings(reviewId)
+      await showResults(reviewId)
       running.value = false
       stopTicking()
     }
@@ -244,37 +255,38 @@ async function startReview(): Promise<void> {
   }
 }
 
-/** 刷新页面后把上一次的审查结果拉回来，不重新跑一遍 LLM。 */
-async function resumeReview(): Promise<void> {
-  const saved = window.localStorage.getItem(storageKey.value)
-  if (!saved) return
-  reviewId = saved
+/**
+ * 进页面时把这份合同已有的审查结果拉回来。
+ *
+ * 之前 reviewId 只存在 localStorage 里，换设备、清缓存、或者审查是别人用 API
+ * 触发的，进页面就等于没审过。后端一直有"按文件查最近一次审查"的能力
+ * （ReviewStore.GetByFile），这轮把它接到 HTTP 上（GET /reviews?file_id=…）。
+ */
+async function restoreExisting(): Promise<void> {
   try {
-    const r = await getReview(saved)
-    review.value = r
-    if (r.status === 'succeeded') {
-      findings.value = sortBySeverity(await listFindings(saved))
+    const existing = await findReviewByFile(fileId.value)
+    if (!existing) return
+    reviewId = existing.id
+    if (existing.status === 'succeeded') {
+      await showResults(existing.id)
       return
     }
-    if (r.status === 'failed' || r.status === 'cancelled') {
-      reviewError.value = '上一次审查没有完成，可以重新开始'
-      return
-    }
-    if (r.status === 'pending' || r.status === 'running') {
-      if (!r.task_id) return
+    // 还在跑：接着等它的任务，别让用户看到"没结果"。
+    if ((existing.status === 'pending' || existing.status === 'running') && existing.task_id) {
       running.value = true
       stage.value = '继续等待上次的审查结果'
       startTicking()
-      await pollTask(r.task_id)
-    }
-  } catch (err) {
-    // 结果没了（比如库里清过）就把本地指针丢掉，让用户能重新开始。
-    if (err instanceof ApiError && err.code === 40401) {
-      window.localStorage.removeItem(storageKey.value)
-      reviewId = null
+      await pollTask(existing.task_id)
       return
     }
-    reviewError.value = message(err, '读取上次审查结果失败')
+    review.value = existing
+    if (existing.status === 'failed' || existing.status === 'cancelled') {
+      reviewError.value = '上一次审查没有完成，可以重新开始'
+      // 失败的那次不算"有结果"，按钮要还回去。
+      review.value = null
+    }
+  } catch (err) {
+    reviewError.value = message(err, '读取已审查结果失败')
   }
 }
 
@@ -316,7 +328,7 @@ async function load(): Promise<void> {
     loading.value = false
     await nextTick()
     await renderPdf()
-    await resumeReview()
+    await restoreExisting()
   } else {
     loading.value = false
   }
@@ -403,7 +415,7 @@ void load()
             <span class="sum sum--medium">中风险 {{ summary.medium }}</span>
             <span class="sum sum--low">低风险 {{ summary.low }}</span>
           </div>
-          <el-button type="primary" :disabled="!canStart" :loading="running" @click="startReview">
+          <el-button v-if="showStart" type="primary" :loading="running" @click="startReview">
             开始审查
           </el-button>
         </div>
