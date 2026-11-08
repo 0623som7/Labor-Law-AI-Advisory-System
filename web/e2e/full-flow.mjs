@@ -464,8 +464,13 @@ async function main() {
     `)
     log(
       '4 历史',
-      `点开会话=${reopened} 气泡=${history.bubbles} 引用卡片=${history.citations}（引用来自 messages.citations，应为 3）`,
+      `点开会话=${reopened} 气泡=${history.bubbles} 引用卡片=${history.citations}（引用来自 messages.citations；每轮 3 张，两轮共 6 张）`,
     )
+    // 回归闸门：引用卡片一刷新就消失，是"看起来正常但内容不完整"的典型形态，
+    // 只打日志不判断的话，图表看着没问题、缺陷已经回来了。
+    if (history.citations < 1) {
+      throw new Error(`刷新后引用卡片没了：气泡 ${history.bubbles} 个、卡片 ${history.citations} 张`)
+    }
 
     // ── 5. 令牌被改坏 → 跳登录页，不白屏 ─────────────────────────
     await cdp.eval(`localStorage.setItem('laborlaw.access_token', 'broken-token'); true`)
