@@ -105,8 +105,10 @@ services:
         reservations:
           memory: 128M
 
-  # TLS 终止层：公网 8443 -> api:8080。证书在宿主机的 deploy/nginx/certs/ 下，
-  # 按 runbook §3.5 生成；不进仓库（见 deploy/nginx/certs/.gitignore）。
+  # TLS 终止层 + 前端静态站点：公网 8443 -> 本地 dist，/api/ -> api:8080。
+  # 证书在宿主机的 deploy/nginx/certs/ 下，按 runbook §3.5 生成；不进仓库。
+  # 前端 dist 同样不进仓库（web/.gitignore），按 runbook §3.6 上传后挂载——
+  # 目录不存在时 docker 会创建一个空目录，页面会 403 而不是报错，部署后必须实测根路径。
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
@@ -116,6 +118,7 @@ services:
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
+      - ../web/dist:/usr/share/nginx/html:ro
     healthcheck:
       # 自签证书对容器内的 wget 不友好：--no-check-certificate 跳过校验，
       # 只看端口是否在应答（证书本身在 runbook §3.5 用 openssl 验）。
