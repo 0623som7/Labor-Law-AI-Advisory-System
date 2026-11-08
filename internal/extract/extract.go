@@ -49,6 +49,13 @@ type Document struct {
 
 	// Missing 列出模型没有给出的字段（JSON 名），规则层据此避免误判。
 	Missing []string `json:"missing"`
+	// Truncated 表示原文超过 maxInputRunes 被截断，审查结论只覆盖前 TruncatedAt 字。
+	//
+	// 必须透出来：截断是"看起来正常但结论不完整"，比直接报错更危险——
+	// 20 页合同只分析了前 8 页，后面的风险条款一条都报不出来，界面上却毫无提示。
+	Truncated bool `json:"truncated"`
+	// TruncatedAt 是实际参与抽取的字符数（rune）；未截断时等于原文长度。
+	TruncatedAt int `json:"truncated_at"`
 	// Confidence 是命中字段数 / 14，用于前端提示"识别可能不完整"。
 	Confidence float64 `json:"confidence"`
 }
@@ -87,6 +94,9 @@ func (e *Extractor) Extract(ctx context.Context, text string) (*Document, error)
 	if text == "" {
 		return nil, port.New(port.CodeInvalidArgument, "合同正文为空，无法抽取要素")
 	}
+	// 先记全文长度再截：rune 计数口径与 truncateRunes 一致，
+	// 否则中文合同上两个数字会差三倍。
+	totalRunes := len([]rune(text))
 	text = truncateRunes(text, maxInputRunes)
 
 	resp, err := e.client.Chat(ctx, port.ChatRequest{
@@ -102,7 +112,15 @@ func (e *Extractor) Extract(ctx context.Context, text string) (*Document, error)
 		return nil, wrapUpstream(err)
 	}
 
-	return Parse(resp.Content)
+	doc, err := Parse(resp.Content)
+	if err != nil {
+		return nil, err
+	}
+	// 截断标记挂在结果上而不是日志里：调用方要据此告诉用户"只看了前 N 字"，
+	// 只写日志等于把它埋进运维视野。
+	doc.TruncatedAt = len([]rune(text))
+	doc.Truncated = totalRunes > maxInputRunes
+	return doc, nil
 }
 
 // Parse 把模型正文解析成 Document，独立导出以便用固定样例测解析规则。

@@ -146,7 +146,19 @@ func runReview(ctx context.Context, deps ReviewDeps, payload json.RawMessage, pr
 		return err
 	}
 	doc.Clauses = locateClauses(doc.Clauses, blocks)
-	notify(progress, 30, stageExtracted)
+	// 截断必须让用户看见：只写日志等于把它埋进运维视野，而用户拿到的是一份
+	// "看起来正常、其实只分析了前 8 页"的结论——比直接报错更危险。
+	// 通道选 stage：任务进度本来就展示在审查页上，不需要为此改契约和表结构
+	// （contract_extracts 目前没有任何写入方，Review 的 DTO 里也没有抽取载荷）。
+	if doc.Truncated {
+		if deps.Logger != nil {
+			deps.Logger.Warn("合同正文超长，只抽取了前面一部分",
+				"review_id", p.ReviewID, "truncated_at", doc.TruncatedAt)
+		}
+		notify(progress, 30, "合同正文过长，只分析了前 "+strconv.Itoa(doc.TruncatedAt)+" 字")
+	} else {
+		notify(progress, 30, stageExtracted)
+	}
 
 	notify(progress, 50, stageRules)
 	hits := runRules(doc.Contract, deps.Rules, p.RuleScope, deps.Logger)

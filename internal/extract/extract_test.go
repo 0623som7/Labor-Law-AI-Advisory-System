@@ -288,3 +288,42 @@ func TestParseConfidenceCap(t *testing.T) {
 		t.Fatalf("抽取结果无法序列化：%v", err)
 	}
 }
+
+// TestExtractMarksTruncation 守住"超长合同被截断时必须留下标记"。
+//
+// 缺陷形态：truncateRunes 截完什么都不记，20 页合同只分析了前 8 页，
+// 后面的风险条款一条都报不出来，而界面上看起来一切正常。
+func TestExtractMarksTruncation(t *testing.T) {
+	long := strings.Repeat("劳", 13000)
+	c := &recordingClient{FakeClient: llm.FakeClient{Reply: `{"party_a":"甲公司","contract_type":"固定期限劳动合同"}`}}
+	doc, err := New(c).Extract(context.Background(), long)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if !doc.Truncated {
+		t.Fatal("13000 字必须标记为已截断")
+	}
+	if doc.TruncatedAt != maxInputRunes {
+		t.Fatalf("TruncatedAt = %d, want %d", doc.TruncatedAt, maxInputRunes)
+	}
+	// 送给模型的正文必须真的是砍过的：多送一个字都会顶爆上下文。
+	if got := len([]rune(c.got.Messages[1].Content)); got != maxInputRunes {
+		t.Fatalf("送进模型的正文 %d 字, want %d", got, maxInputRunes)
+	}
+}
+
+// TestExtractNotTruncated 守住"没截断时标记为 false、长度等于原文"。
+func TestExtractNotTruncated(t *testing.T) {
+	text := strings.Repeat("合", 8000)
+	c := &recordingClient{FakeClient: llm.FakeClient{Reply: `{"party_a":"乙公司"}`}}
+	doc, err := New(c).Extract(context.Background(), text)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if doc.Truncated {
+		t.Fatal("8000 字不该标记为已截断")
+	}
+	if doc.TruncatedAt != 8000 {
+		t.Fatalf("TruncatedAt = %d, want 8000", doc.TruncatedAt)
+	}
+}
