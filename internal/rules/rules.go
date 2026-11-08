@@ -177,8 +177,11 @@ func ruleProbationMatch() Rule {
 				return nil
 			}
 			months, _ := contractMonths(c.TermStart, c.TermEnd)
-			evidence := fmt.Sprintf("约定试用期 %s 个月，合同期限 %d 个月，法定上限为 %d 个月",
-				formatMonths(c.ProbationMonths), months, limit)
+			// 只报月数会被当成算错：2026-01-01 至 2028-12-31 人眼是三年，实际是 35 个月 30 天。
+			// 把起止日期和档位一起摆出来，"差一天"和"为何取这个上限"都能自证。
+			evidence := fmt.Sprintf("约定试用期 %s 个月；合同期限 %s 共 %d 个月，%s，法定上限为 %d 个月",
+				formatMonths(c.ProbationMonths),
+				termRange(c.TermStart, c.TermEnd), months, termBand(months), limit)
 			return []Fragment{newFragment(c, []string{"试用期"},
 				evidence,
 				port.Suggestion{
@@ -483,6 +486,33 @@ func contractMonths(start, end string) (int, bool) {
 		months = 1
 	}
 	return months, true
+}
+
+// termRange 把起止日期排成"2026-01-01 至 2028-12-31"的形式。
+// 解析失败时退回原始字符串，宁可难看也不能让整条规则因为日期格式怪而消失。
+func termRange(start, end string) string {
+	s, ok1 := parseDate(start)
+	e, ok2 := parseDate(end)
+	if !ok1 || !ok2 {
+		return fmt.Sprintf("%s 至 %s", strings.TrimSpace(start), strings.TrimSpace(end))
+	}
+	return fmt.Sprintf("%s 至 %s", s.Format("2006-01-02"), e.Format("2006-01-02"))
+}
+
+// termBand 返回该月数落在第十九条的哪一档，用于 evidence 里说明为何取此上限。
+// 这里的边界必须与 probationLimit 的 switch 逐条一致，两边漂移就会
+// 出现"说是一年以上不满三年、却按 6 个月算"的自相矛盾。
+func termBand(months int) string {
+	switch {
+	case months < 3:
+		return "不满三个月，不得约定试用期"
+	case months < 12:
+		return "三个月以上不满一年"
+	case months < 36:
+		return "一年以上不满三年"
+	default:
+		return "三年以上"
+	}
 }
 
 // dateLayouts 覆盖中文合同里常见的日期写法。

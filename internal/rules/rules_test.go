@@ -340,6 +340,11 @@ func TestContractMonths(t *testing.T) {
 		{"2024-01-01", "2027-01-01", 36, true},
 		{"2024-01-31", "2024-03-30", 1, true}, // 差一天不满两个月，按日回退一个月
 		{"2024-01-31", "2024-03-31", 2, true},
+		// 这两条是行为钉子，不是待修的问题：法律按实际履行期间算，
+		// 2026-01-01 至 2028-12-31 是 35 个月 30 天，不满 36 个月，不进"三年以上"档。
+		// 谁敢改成 36，先来这里看这条注释。
+		{"2026-01-01", "2028-12-31", 35, true},
+		{"2026-01-01", "2026-12-31", 11, true},
 		{"", "2024-03-01", 0, false},
 		{"2024-01-01", "", 0, false},
 		{"不是日期", "2024-03-01", 0, false},
@@ -350,4 +355,71 @@ func TestContractMonths(t *testing.T) {
 			t.Fatalf("contractMonths(%q,%q)=%d,%v 期望 %d,%v", tc.start, tc.end, got, ok, tc.want, tc.ok)
 		}
 	}
+}
+
+// termBand 的边界必须与 probationLimit 的 switch 一致，漂移会让 evidence 自相矛盾。
+func TestTermBand(t *testing.T) {
+	cases := []struct {
+		months int
+		want   string
+	}{
+		{2, "不满三个月，不得约定试用期"},
+		{6, "三个月以上不满一年"},
+		{11, "三个月以上不满一年"},
+		{12, "一年以上不满三年"},
+		{35, "一年以上不满三年"},
+		{36, "三年以上"},
+	}
+	for _, tc := range cases {
+		if got := termBand(tc.months); got != tc.want {
+			t.Fatalf("termBand(%d)=%q 期望 %q", tc.months, got, tc.want)
+		}
+	}
+
+	// 逐档对照 probationLimit，防止两处边界将来各改各的。
+	byMonths := []int{2, 6, 11, 12, 35, 36}
+	wantLimit := []int{0, 1, 1, 2, 2, 6}
+	for i, months := range byMonths {
+		c := Contract{
+			TermStart:       "2026-01-01",
+			TermEnd:         addMonths("2026-01-01", months),
+			ProbationMonths: 1,
+		}
+		limit, ok := probationLimit(c)
+		if !ok || limit != wantLimit[i] {
+			t.Fatalf("合同 %d 个月：probationLimit=%d,%v 期望 %d；termBand=%q",
+				months, limit, ok, wantLimit[i], termBand(months))
+		}
+		if termBand(months) == "" {
+			t.Fatalf("合同 %d 个月：termBand 返回空串", months)
+		}
+	}
+}
+
+func TestTermRange(t *testing.T) {
+	cases := []struct {
+		start, end string
+		want       string
+	}{
+		{"2026-01-01", "2028-12-31", "2026-01-01 至 2028-12-31"},
+		{"2026年1月1日", "2028年12月31日", "2026-01-01 至 2028-12-31"},
+		{"不是日期", "2024-03-01", "不是日期 至 2024-03-01"},
+		// 两端都空不会走到证据文案（probationLimit 先判日期是否齐全），
+		// 这里只钉住"不 panic、不返回空串"，两端的空格是 fmt 拼接的结果。
+		{"", "", " 至 "},
+	}
+	for _, tc := range cases {
+		if got := termRange(tc.start, tc.end); got != tc.want {
+			t.Fatalf("termRange(%q,%q)=%q 期望 %q", tc.start, tc.end, got, tc.want)
+		}
+	}
+}
+
+// addMonths 只在测试里用来造"正好 N 个月"的终止日，避免手写日期写错。
+func addMonths(start string, months int) string {
+	s, ok := parseDate(start)
+	if !ok {
+		return ""
+	}
+	return s.AddDate(0, months, 0).Format("2006-01-02")
 }
