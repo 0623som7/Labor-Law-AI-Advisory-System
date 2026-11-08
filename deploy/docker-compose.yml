@@ -54,6 +54,10 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        # 国内构建机走官方代理会 TLS 超时（storage.googleapis.com）。
+        # 需要时 GOPROXY=https://goproxy.cn,direct docker compose build
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     restart: unless-stopped
     depends_on:
       mysql:
@@ -123,6 +127,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
     profiles: ["seed"]
     depends_on:
       mysql:

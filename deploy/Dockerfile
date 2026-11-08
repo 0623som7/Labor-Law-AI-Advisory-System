@@ -4,6 +4,13 @@ FROM golang:1.22-alpine AS build
 
 WORKDIR /src
 
+# 默认走官方代理，但在国内构建机上 proxy.golang.org / storage.googleapis.com 会 TLS 超时
+# （实测卡在 mimetype@v1.4.3 的 zip 上，报 net/http: TLS handshake timeout）。
+# 开成 build-arg 而不是写死：CI 与海外机器保持官方源，需要的机器传
+#   GOPROXY=https://goproxy.cn,direct docker compose build
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+
 # 先只拷依赖清单：依赖没变时这一层能命中缓存，改业务代码不会重下模块。
 COPY go.mod go.sum ./
 RUN go mod download
