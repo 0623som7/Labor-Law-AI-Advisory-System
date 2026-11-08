@@ -544,3 +544,126 @@ func TestRefreshFailsClosedWithoutCache(t *testing.T) {
 		t.Fatalf("无缓存时续期: status=%d code=%d, want 500/50001（失败关闭）", rec.Code, env.Code)
 	}
 }
+
+// doLoginFrom 从指定 IP 发一次登录请求。
+//
+// doJSON 用的是 httptest 默认 RemoteAddr（192.0.2.1），而本组用例要区分
+// "同一个 IP" 与 "不同 IP"，必须能改来源地址。gin 的 ClientIP 在来源地址
+// 不属于可信代理时直接用 RemoteAddr，所以这里改它就够了。
+func doLoginFrom(t *testing.T, h http.Handler, ip, phone, password string) (*httptest.ResponseRecorder, Envelope) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]string{"phone": phone, "password": password})
+	if err != nil {
+		t.Fatalf("序列化请求体失败: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(string(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = ip + ":54321"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var env Envelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("响应不是 JSON: %v，body=%q", err, rec.Body.String())
+	}
+	return rec, env
+}
+
+// TestLoginIPBucketIsWiderThanAccountBucket 证明 IP 桶上限是 20 而不是 5：
+// 四个账号各错 5 次（共 20 次），没有任何一次被 IP 桶拦。
+//
+// 旧实现按 IP 每分钟 5 次，第 6 次就 429——一个教室共用一个出口 IP 时，
+// 前一个人输错三次，后面的人连试都试不了。
+func TestLoginIPBucketIsWiderThanAccountBucket(t *testing.T) {
+	h := authTestServer(t, authTestConfig("", 5), newFakeUserStore(), newFakeCache())
+
+	for acc := 0; acc < 4; acc++ {
+		phone := "1390013900" + strconv.Itoa(acc)
+		for i := 0; i < 5; i++ {
+			rec, _ := doLoginFrom(t, h, "203.0.113.9", phone, testPassword)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("账号 %s 第 %d 次: status=%d, want 401（IP 桶不该在这里拦）", phone, i+1, rec.Code)
+			}
+		}
+	}
+
+	// 第 21 次才轮到 IP 桶：此时任一账号计数已满，只可能是 IP 维度拦的。
+	rec, env := doLoginFrom(t, h, "203.0.113.9", "13900139009", testPassword)
+	if rec.Code != http.StatusTooManyRequests || env.Code != 42901 {
+		t.Fatalf("第 21 次: status=%d code=%d, want 429/42901", rec.Code, env.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "60" {
+		t.Errorf("Retry-After = %q, want 60", got)
+	}
+}
+
+// TestLoginAccountBucketIgnoresIP 证明账号桶独立于 IP：
+// 同一个手机号每换一个 IP 试一次，第 6 次仍被拦。
+func TestLoginAccountBucketIgnoresIP(t *testing.T) {
+	h := authTestServer(t, authTestConfig("", 5), newFakeUserStore(), newFakeCache())
+	const phone = "13900139000"
+
+	for i := 0; i < 5; i++ {
+		ip := "203.0.113." + strconv.Itoa(10+i)
+		rec, _ := doLoginFrom(t, h, ip, phone, testPassword)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("第 %d 次（IP %s）: status=%d, want 401", i+1, ip, rec.Code)
+		}
+	}
+
+	rec, env := doLoginFrom(t, h, "203.0.113.99", phone, testPassword)
+	if rec.Code != http.StatusTooManyRequests || env.Code != 42901 {
+		t.Fatalf("第 6 个 IP: status=%d code=%d, want 429/42901", rec.Code, env.Code)
+	}
+}
+
+// TestLoginSuccessResetsBothBuckets 证明成功登录会清零 IP 桶与账号桶。
+//
+// 只看"下一次登录不被拦"是不够的：账号桶 5 次、IP 桶 20 次，单看一次成功
+// 分不清清的是哪个。因此直接查假缓存里的两个键，并再连错 5 次确认第 6 次才 429。
+func TestLoginSuccessResetsBothBuckets(t *testing.T) {
+	cache := newFakeCache()
+	users := newFakeUserStore()
+	cfg := authTestConfig("", 5)
+	h := authTestServer(t, cfg, users, cache)
+	registerUser(t, h, testPhone, testPassword)
+
+	const ip = "203.0.113.7"
+	for i := 0; i < 4; i++ {
+		rec, _ := doLoginFrom(t, h, ip, testPhone, "wrong-password")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("第 %d 次错密码: status=%d, want 401", i+1, rec.Code)
+		}
+	}
+	if cache.value(keyLoginIPAttempts+ip) == "" {
+		t.Fatal("IP 桶计数应已建立")
+	}
+
+	rec, env := doLoginFrom(t, h, ip, testPhone, testPassword)
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("正确密码登录失败: status=%d code=%d msg=%s", rec.Code, env.Code, env.Message)
+	}
+
+	if got := cache.value(keyLoginIPAttempts + ip); got != "" {
+		t.Errorf("登录成功后 IP 桶未清零，仍为 %q", got)
+	}
+	sum, err := auth.Hash(testSecret, testPhone)
+	if err != nil {
+		t.Fatalf("计算手机号哈希失败: %v", err)
+	}
+	if got := cache.value(keyLoginAccountAttempts + sum); got != "" {
+		t.Errorf("登录成功后账号桶未清零，仍为 %q", got)
+	}
+
+	// 再连错 5 次都该是 401（若桶没清，第 2 次就会 429）。
+	for i := 0; i < 5; i++ {
+		rec, _ := doLoginFrom(t, h, ip, testPhone, "wrong-password")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("清零后再错第 %d 次: status=%d, want 401", i+1, rec.Code)
+		}
+	}
+	rec, _ = doLoginFrom(t, h, ip, testPhone, "wrong-password")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("清零后再错第 6 次: status=%d, want 429", rec.Code)
+	}
+}

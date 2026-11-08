@@ -125,8 +125,17 @@ func (c *redisAuthCache) expire(ctx context.Context, key string, ttl time.Durati
 // 缓存键约定。集中在这里，避免某处写 "auth:refresh:" 另一处写 "auth:refresh_"
 // 导致轮换写出一个永远查不到的白名单项。
 const (
-	// keyLoginAttempts 是登录失败计数的前缀，后面接客户端 IP。
-	keyLoginAttempts = "auth:login:"
+	// keyLoginIPAttempts 是登录失败计数的 IP 维度前缀，后面接 ClientIP。
+	//
+	// 这一桶只挡"单机撞库"：一个教室、一间公司常常共用一个出口 IP，
+	// 上限必须宽（见 loginIPRateLimit），否则一个人输错就把整栋楼锁死。
+	keyLoginIPAttempts = "auth:login:ip:"
+	// keyLoginAccountAttempts 是登录失败计数的账号维度前缀，后面接手机号 HMAC。
+	//
+	// 真正防的是"猜某个人密码"：同一个手机号无论从多少 IP 来，都共用一个计数。
+	// 后缀必须是 HMAC 而不是明文号码——Redis 的 key 会出现在 MONITOR、
+	// 慢日志和备份里，明文手机号等于把用户表抄了一份进去。
+	keyLoginAccountAttempts = "auth:login:acct:"
 	// keyRegisterAttempts 是注册尝试计数的前缀。
 	//
 	// 注册要跑 cost 12 的 bcrypt（约 250ms CPU），不限流的话单 IP 每秒几个

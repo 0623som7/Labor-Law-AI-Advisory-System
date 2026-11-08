@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -41,6 +42,16 @@ const (
 	// loginWindow 是登录限流窗口。每 IP 每分钟 N 次，窗口固定而非滑动：
 	// 实现只有一次 INCR + 一次 EXPIRE，而滑动窗口要 ZSET，MVP 阶段收益不值这个复杂度。
 	loginWindow = time.Minute
+	// loginIPRateLimit 是单 IP 每分钟的登录尝试上限。
+	//
+	// 取 20 而不是 AUTH_LOGIN_RATE_LIMIT（默认 5）：一个教室、一间公司、一个
+	// 运营商 NAT 后面常常有几十个人共用一个出口 IP。按 5 次算，评委里第一个人
+	// 连错几次，后面所有人都会被 429 挡在门外——限流不该由陌生人替自己买单。
+	// 挡单机撞库 20 次/分钟足够：对手要试 10^10 个号码，这个速率毫无意义。
+	loginIPRateLimit = 20
+	// rateLimitRetryAfter 是 429 响应里 Retry-After 的秒数，与 loginWindow 对齐。
+	// 前端不读它，但 curl 调试和演示时能直接说明"等多久再来"。
+	rateLimitRetryAfter = 60
 	// registerRateLimit 是注册接口每 IP 每分钟的上限。与登录同量级，但更值钱：
 	// 注册没有"猜密码"可言，每放行一次就实打实烧掉约 250ms 的 bcrypt CPU。
 	registerRateLimit = 5
@@ -78,7 +89,7 @@ func (a *API) register(c *gin.Context) {
 	}
 
 	// 限流排在哈希之前：要在花掉 bcrypt 的 CPU 之前就把流量挡住。
-	if a.rateLimited(c.Request.Context(), c, keyRegisterAttempts, registerRateLimit) {
+	if a.registerRateLimited(c.Request.Context(), c) {
 		FailCode(c, port.CodeRateLimited, msgRegRateLimited)
 		return
 	}
@@ -154,8 +165,8 @@ func (a *API) login(c *gin.Context) {
 	ctx := c.Request.Context()
 	log := loggerFrom(c)
 
-	if a.loginRateLimited(ctx, c) {
-		FailCode(c, port.CodeRateLimited, msgRateLimited)
+	if a.loginIPRateLimited(ctx, c) {
+		failRateLimited(c)
 		return
 	}
 
@@ -164,6 +175,13 @@ func (a *API) login(c *gin.Context) {
 		// 格式错的手机号也走完整的一次 bcrypt，否则"格式非法"会比"密码错"快得多。
 		_ = auth.VerifyPasswordAlways("", req.Password)
 		failBadCredentials(c)
+		return
+	}
+
+	// 账号桶必须在 GetByPhone 与 bcrypt 之前：它的意义就是"猜某个人密码"时
+	// 连 CPU 都不给对方烧。放在 bcrypt 之后，撞库照样每次跑满 250ms。
+	if a.loginAccountRateLimited(ctx, c, phone) {
+		failRateLimited(c)
 		return
 	}
 
@@ -191,10 +209,15 @@ func (a *API) login(c *gin.Context) {
 		return
 	}
 
-	// 成功即清零。计数器只减不增的话，一天里正常登录几次就会攒到上限，
-	// 把自己锁进 429——限流本来是防撞库，不该惩罚本人。
+	// 成功即清零：两个桶都要清。IP 桶不清，同一出口的其他人在本窗口内会
+	// 替这次输错继续背账；账号桶不清，本人下一次登录可能被判超限。
+	// 计数器只减不增的话，一天里正常登录几次就会攒到上限，把自己锁进 429。
 	if a.cache != nil {
-		if err := a.cache.del(ctx, keyLoginAttempts+c.ClientIP()); err != nil {
+		keys := []string{keyLoginIPAttempts + c.ClientIP()}
+		if key, ok := a.loginAccountKey(c, phone); ok {
+			keys = append(keys, key)
+		}
+		if err := a.cache.del(ctx, keys...); err != nil {
 			log.Warn("登录成功但限流计数未清零", "trace_id", TraceID(c), "err", err.Error())
 		}
 	}
@@ -385,20 +408,51 @@ func (a *API) issueTokens(ctx context.Context, u *port.User, log *slog.Logger) (
 	}, nil
 }
 
-// loginRateLimited 判断该 IP 是否已超过登录尝试上限。
-func (a *API) loginRateLimited(ctx context.Context, c *gin.Context) bool {
-	return a.rateLimited(ctx, c, keyLoginAttempts, a.cfg.Auth.LoginRateLimit)
+// loginIPRateLimited 判断该 IP 是否已超过登录尝试上限（防单机撞库）。
+func (a *API) loginIPRateLimited(ctx context.Context, c *gin.Context) bool {
+	return a.incrWindow(ctx, c, keyLoginIPAttempts+c.ClientIP(), loginIPRateLimit)
 }
 
-// rateLimited 是限流原语：prefix 区分计数域，limit 是窗口内允许的次数。
+// loginAccountRateLimited 判断该手机号是否已超过登录尝试上限（防猜某个人密码）。
+//
+// phone 必须是 auth.Normalize 之后的 11 位号码：拿原始输入做键的话，
+// "138 0013 8000" 和 "13800138000" 会各算一个桶，攻击者换个写法就重置了计数。
+func (a *API) loginAccountRateLimited(ctx context.Context, c *gin.Context, phone string) bool {
+	key, ok := a.loginAccountKey(c, phone)
+	if !ok {
+		return false
+	}
+	return a.incrWindow(ctx, c, key, a.cfg.Auth.LoginRateLimit)
+}
+
+// loginAccountKey 拼账号桶的 Redis 键，后缀是手机号的 HMAC。
+//
+// 哈希失败（密钥太短/没配）时限流失效并 Warn：宁可少一道减速带，
+// 也不能让带 "-" 的号码因为 Key 拼不出来而绕过限流，更不能 panic 掉登录。
+func (a *API) loginAccountKey(c *gin.Context, phone string) (string, bool) {
+	sum, err := auth.Hash(a.cfg.Auth.Secret, phone)
+	if err != nil || sum == "" {
+		loggerFrom(c).Warn("手机号哈希不可用，账号维度限流放行", "trace_id", TraceID(c), "err", err)
+		return "", false
+	}
+	return keyLoginAccountAttempts + sum, true
+}
+
+// registerRateLimited 是注册接口的限流：只有 IP 单桶。
+//
+// 注册防的是"批量注册"，与账号无关；同一个人注册第二个号的正常需求也不该被锁。
+func (a *API) registerRateLimited(ctx context.Context, c *gin.Context) bool {
+	return a.incrWindow(ctx, c, keyRegisterAttempts+c.ClientIP(), registerRateLimit)
+}
+
+// incrWindow 是限流原语：对给定键在固定窗口内计数，返回是否超限。
 //
 // 失败一律放行并 Warn：限流是防撞库的减速带，不是可用性的前置条件。
 // Redis 挂掉时把所有人挡在门外，等于用限流造成一次自己发起的故障。
-func (a *API) rateLimited(ctx context.Context, c *gin.Context, prefix string, limit int) bool {
+func (a *API) incrWindow(ctx context.Context, c *gin.Context, key string, limit int) bool {
 	if limit <= 0 || a.cache == nil {
 		return false
 	}
-	key := prefix + c.ClientIP()
 	n, err := a.cache.incr(ctx, key)
 	if err != nil {
 		loggerFrom(c).Warn("限流不可用，本次放行", "trace_id", TraceID(c), "err", err.Error())
@@ -406,13 +460,21 @@ func (a *API) rateLimited(ctx context.Context, c *gin.Context, prefix string, li
 	}
 	if n == 1 {
 		if err := a.cache.expire(ctx, key, loginWindow); err != nil {
-			// 计数器没有过期时间会变成永久封禁：宁可删键重来，也不能锁死这个 IP。
+			// 计数器没有过期时间会变成永久封禁：宁可删键重来，也不能锁死这个键。
 			loggerFrom(c).Warn("限流窗口设置失败，重置计数", "trace_id", TraceID(c), "err", err.Error())
 			_ = a.cache.del(ctx, key)
 			return false
 		}
 	}
 	return n > int64(limit)
+}
+
+// failRateLimited 统一超限响应：42901 + Retry-After。
+//
+// 带上秒数是为了让调用方知道"等一分钟"，而不是把 429 当成服务坏了。
+func failRateLimited(c *gin.Context) {
+	c.Header("Retry-After", strconv.Itoa(rateLimitRetryAfter))
+	FailCode(c, port.CodeRateLimited, msgRateLimited)
 }
 
 // bindAuthBody 解析账号域请求体，并把"超限"与"格式错"分成两个错误码。

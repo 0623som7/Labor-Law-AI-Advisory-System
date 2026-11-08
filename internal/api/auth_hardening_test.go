@@ -71,21 +71,24 @@ func TestClientIPIgnoresUntrustedXFF(t *testing.T) {
 	doJSON(t, h, http.MethodPost, "/api/v1/auth/login", body,
 		map[string]string{"X-Forwarded-For": "203.0.113.9"})
 
+	sum, err := auth.Hash(cfg.Auth.Secret, "13900139000")
+	if err != nil {
+		t.Fatalf("计算手机号哈希失败: %v", err)
+	}
+	wantKeys := []string{keyLoginIPAttempts + "192.0.2.1", keyLoginAccountAttempts + sum}
+
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if len(cache.kv) != 1 {
+	if len(cache.kv) != len(wantKeys) {
 		keys := make([]string, 0, len(cache.kv))
 		for k := range cache.kv {
 			keys = append(keys, k)
 		}
-		t.Fatalf("限流键 = %v, want 只有一个桶（XFF 不得改变计数域）", keys)
+		t.Fatalf("限流键 = %v, want %v（XFF 不得改变计数域）", keys, wantKeys)
 	}
-	for k, v := range cache.kv {
-		if k != keyLoginAttempts+"192.0.2.1" {
-			t.Fatalf("限流键 = %q, want %q（应以 TCP 对端为准）", k, keyLoginAttempts+"192.0.2.1")
-		}
-		if v != "2" {
-			t.Fatalf("计数 = %q, want 2（两次请求必须落在同一个桶）", v)
+	for _, k := range wantKeys {
+		if v := cache.kv[k]; v != "2" {
+			t.Fatalf("键 %q 的计数 = %q, want 2（两次请求必须落在同一个桶）", k, v)
 		}
 	}
 }
