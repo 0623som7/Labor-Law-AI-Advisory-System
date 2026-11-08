@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"laborlaw/internal/extract"
+	"laborlaw/internal/llm"
 	"laborlaw/internal/port"
 	"laborlaw/internal/rules"
 )
@@ -85,6 +86,10 @@ func runReview(ctx context.Context, deps ReviewDeps, payload json.RawMessage, pr
 	if deps.Files == nil || deps.Reviews == nil || deps.Extractor == nil {
 		return port.New(port.CodeInternal, "审查链路依赖未装配")
 	}
+
+	// 计量归属：审查跑在 worker 里，没有 HTTP 上下文，user_id 只能从载荷取。
+	// port.Task 没有 UserID 字段（那是任务调度信息），载荷里的才是业务归属。
+	ctx = llm.WithUserID(ctx, p.UserID)
 
 	notify(progress, 5, stageReadFile)
 	file, err := deps.Files.Get(ctx, p.UserID, p.FileID)

@@ -323,6 +323,9 @@ type Task struct {
 // 只写不读的业务路径不需要它，但 A3 的日成本闸和答辩时的"token 消耗按 scene 分组"
 // 都必须靠这张表，落日志会导致数据随容器重建丢失。
 type UsageRecord struct {
+	// UserID 是产生这次调用的用户。后台任务取 payload 里的 user_id；
+	// 匿名路径（没有登录态的脚本、后台自检）为空串，报表按 user_id = '' 单独归组。
+	UserID string
 	// TraceID 关联请求链路。
 	TraceID string
 	// Scene 是调用场景。

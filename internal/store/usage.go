@@ -37,8 +37,8 @@ var _ UsageStore = (*Usage)(nil)
 // usageInsertSQL 只列需要写的列：id 自增，created_at 有默认值但由调用方给，
 // 这样重试或补录时写入的是"实际调用发生的时刻"，而不是落库那一刻。
 const usageInsertSQL = `INSERT INTO usage_records
-	(trace_id, scene, model, prompt_tokens, completion_tokens, latency_ms, cost_est, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	(user_id, trace_id, scene, model, prompt_tokens, completion_tokens, latency_ms, cost_est, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // Record 写入一条调用计量。
 //
@@ -56,6 +56,7 @@ func (u *Usage) Record(ctx context.Context, rec port.UsageRecord) error {
 		created = time.Now().UTC()
 	}
 	if _, err := u.db.ExecContext(ctx, usageInsertSQL,
+		rec.UserID,
 		rec.TraceID,
 		rec.Scene,
 		rec.Model,

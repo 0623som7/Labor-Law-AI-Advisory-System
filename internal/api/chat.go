@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"laborlaw/internal/id"
+	"laborlaw/internal/llm"
 	"laborlaw/internal/port"
 )
 
@@ -217,6 +218,10 @@ func (a *API) chatCompletions(c *gin.Context) {
 		}
 		return nil
 	}
+
+	// 计量归属：llm 层按 ctx 上的 user_id 记账，不从 port.ChatRequest 取。
+	// 放在 Run 之前，重试与流式都会继承同一个 ctx。
+	ctx = llm.WithUserID(ctx, UserID(c))
 
 	result, runErr := a.runner.Run(ctx, port.Request{
 		Scene:     chatScene,

@@ -30,6 +30,7 @@ func TestUsageRecord(t *testing.T) {
 
 	d := NewUsage(db)
 	rec := port.UsageRecord{
+		UserID:           "01M6TX0EHP4XCP804NG5QCVRQ3",
 		TraceID:          traceID,
 		Scene:            "consult",
 		Model:            "qwen3.8-max",
@@ -43,19 +44,24 @@ func TestUsageRecord(t *testing.T) {
 	}
 
 	var (
+		userID                   string
 		scene, model             string
 		promptTokens, completion int
 		latencyMS                int
 		cost                     float64
 		createdAt                time.Time
 	)
-	err := db.QueryRowContext(context.Background(), `SELECT scene, model, prompt_tokens, completion_tokens, latency_ms, cost_est, created_at
+	err := db.QueryRowContext(context.Background(), `SELECT user_id, scene, model, prompt_tokens, completion_tokens, latency_ms, cost_est, created_at
 		FROM usage_records WHERE trace_id = ?`, traceID).
-		Scan(&scene, &model, &promptTokens, &completion, &latencyMS, &cost, &createdAt)
+		Scan(&userID, &scene, &model, &promptTokens, &completion, &latencyMS, &cost, &createdAt)
 	if err != nil {
 		t.Fatalf("回读计量失败: %v", err)
 	}
 
+	// user_id 是成本归属键：写丢了这一列，"谁花的钱"就永远答不出来。
+	if userID != rec.UserID {
+		t.Errorf("user_id 回读不一致: %q != %q", userID, rec.UserID)
+	}
 	if scene != rec.Scene || model != rec.Model {
 		t.Errorf("scene/model 回读不一致: %q/%q", scene, model)
 	}
@@ -102,5 +108,31 @@ func TestUsageRecordRejectsEmptyScene(t *testing.T) {
 	err := NewUsage(db).Record(context.Background(), port.UsageRecord{TraceID: id.New()})
 	if !port.IsCode(err, port.CodeInvalidArgument) {
 		t.Fatalf("scene 为空应返回 40001，实际: %v", err)
+	}
+}
+
+// TestUsageRecordAllowsAnonymous 守住匿名路径：没有登录态的调用（脚本、自检）
+// user_id 为空串，必须照常写入，报表里按 user_id = ” 单独归组。
+func TestUsageRecordAllowsAnonymous(t *testing.T) {
+	db := testDB(t)
+	traceID := id.New()
+	cleanupUsage(t, db, traceID)
+
+	d := NewUsage(db)
+	if err := d.Record(context.Background(), port.UsageRecord{
+		TraceID: traceID,
+		Scene:   "extract",
+		Model:   "qwen3-coder-flash",
+	}); err != nil {
+		t.Fatalf("匿名记录应允许写入: %v", err)
+	}
+
+	var userID string
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT user_id FROM usage_records WHERE trace_id = ?`, traceID).Scan(&userID); err != nil {
+		t.Fatalf("回读失败: %v", err)
+	}
+	if userID != "" {
+		t.Errorf("匿名记录的 user_id = %q, want 空串", userID)
 	}
 }

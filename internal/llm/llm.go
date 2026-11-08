@@ -242,8 +242,11 @@ func (c *Client) afterSuccess(ctx context.Context, req port.ChatRequest, model s
 		return
 	}
 	rec := port.UsageRecord{
-		// trace_id 是 usage_records 与 messages 之间唯一的连接键：
-		// 表里不存 user_id，按人归集只能靠它。
+		// UserID 从 ctx 取：调用方在进入业务前用 WithUserID 挂好，
+		// 这里不关心是 HTTP 还是后台任务，也不 import api/store（会成环）。
+		UserID: UserIDFrom(ctx),
+		// trace_id 仍是 usage_records 与 messages 之间的连接键：
+		// user_id 只解决"算谁的钱"，一条请求里的多轮消息还是靠 trace_id 串。
 		TraceID:          req.TraceID,
 		Scene:            req.Scene,
 		Model:            model,
