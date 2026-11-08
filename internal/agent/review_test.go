@@ -53,10 +53,14 @@ type fakeReviewStore struct {
 	saves   int
 	saved   []port.Finding
 	saveErr error
+	// ctxErrs 与 updates 一一对应：记录每次 Update 拿到的 ctx 是否已经取消。
+	// 失败路径必须用 WithoutCancel 派生的 ctx 写库，否则记下来的就是取消态。
+	ctxErrs []error
 }
 
-func (f *fakeReviewStore) Update(_ context.Context, r *port.Review) error {
+func (f *fakeReviewStore) Update(ctx context.Context, r *port.Review) error {
 	f.updates = append(f.updates, *r)
+	f.ctxErrs = append(f.ctxErrs, ctx.Err())
 	return nil
 }
 
@@ -421,6 +425,114 @@ func TestReviewHandlerSaveFindingsError(t *testing.T) {
 		if u.Status == port.TaskSucceeded {
 			t.Fatal("落库失败后不得标记 succeeded")
 		}
+	}
+}
+
+// cancellingClient 在第一次被调用时取消外层 ctx，再返回 ctx 的错误。
+// 模拟"worker 超时正好发生在抽取那一刻"——真实日志里就是这个形态：
+// 上游卡到 120 秒，worker 到时 cancel，抽取返回 context deadline exceeded。
+type cancellingClient struct {
+	*llm.FakeClient
+	cancel context.CancelFunc
+}
+
+func (c *cancellingClient) Chat(ctx context.Context, _ port.ChatRequest) (port.ChatResponse, error) {
+	c.cancel()
+	return port.ChatResponse{}, ctx.Err()
+}
+
+// lastUpdate 返回最后一次写入 review 的状态与那次写入拿到的 ctx 错误。
+func lastUpdate(t *testing.T, reviews *fakeReviewStore) (port.Review, error) {
+	t.Helper()
+	if len(reviews.updates) == 0 {
+		t.Fatal("没有任何 review 写入")
+	}
+	last := len(reviews.updates) - 1
+	return reviews.updates[last], reviews.ctxErrs[last]
+}
+
+// TestReviewMarksFailedOnExtractError 覆盖抽取报错：Run 返回 error，review 落成 failed。
+//
+// 这条是 P0 回归：失败路径原来直接 return，review 永远停在 running，
+// 前端一直转圈，而 /tasks 已经是 failed。
+func TestReviewMarksFailedOnExtractError(t *testing.T) {
+	reviews := &fakeReviewStore{}
+	handler := NewReviewHandler(ReviewDeps{
+		Files:     &fakeFileStore{record: port.FileRecord{ID: reviewTestFile, UserID: reviewTestUser}, pages: pagesFixture()},
+		Reviews:   reviews,
+		Statutes:  &fakeStatuteStore{rows: seedStatutes()},
+		Extractor: extract.New(&llm.FakeClient{Err: errors.New("抽取挂了")}),
+	})
+
+	if err := handler(context.Background(), payloadFor(), nil); err == nil {
+		t.Fatal("want error")
+	}
+
+	last, _ := lastUpdate(t, reviews)
+	if last.Status != port.TaskFailed {
+		t.Fatalf("最后一次写入状态 = %q, want %q", last.Status, port.TaskFailed)
+	}
+	var sawRunning bool
+	for _, u := range reviews.updates {
+		if u.Status == port.TaskRunning {
+			sawRunning = true
+		}
+	}
+	if !sawRunning {
+		t.Fatal("失败前应当先落过 running，否则分不清'没被领取'与'跑失败'")
+	}
+	if reviews.saves != 0 {
+		t.Fatal("抽取失败时不得写 findings")
+	}
+}
+
+// TestReviewMarksFailedAfterContextCancel 覆盖 worker 超时：ctx 已取消仍要落终态。
+//
+// 最容易漏的一条：取消后的 ctx 拿去写库必然 context deadline exceeded，
+// 所以兜底必须用 context.WithoutCancel 派生的 ctx —— 断言 ctxErrs 最后一位为 nil 就是在验这件事。
+func TestReviewMarksFailedAfterContextCancel(t *testing.T) {
+	reviews := &fakeReviewStore{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	handler := NewReviewHandler(ReviewDeps{
+		Files:     &fakeFileStore{record: port.FileRecord{ID: reviewTestFile, UserID: reviewTestUser}, pages: pagesFixture()},
+		Reviews:   reviews,
+		Statutes:  &fakeStatuteStore{rows: seedStatutes()},
+		Extractor: extract.New(&cancellingClient{FakeClient: &llm.FakeClient{}, cancel: cancel}),
+	})
+
+	if err := handler(ctx, payloadFor(), nil); err == nil {
+		t.Fatal("ctx 被取消时必须返回 error")
+	}
+
+	last, ctxErr := lastUpdate(t, reviews)
+	if last.Status != port.TaskFailed {
+		t.Fatalf("最后一次写入状态 = %q, want %q", last.Status, port.TaskFailed)
+	}
+	if ctxErr != nil {
+		t.Fatalf("落终态用的 ctx 已被取消（%v），真实库上这次写入会失败", ctxErr)
+	}
+}
+
+// TestReviewSuccessKeepsSucceeded 覆盖成功路径：兜底的 failed 不许覆盖 succeeded。
+func TestReviewSuccessKeepsSucceeded(t *testing.T) {
+	handler, _, reviews, _ := newReviewFixture()
+	if err := handler(context.Background(), payloadFor(), nil); err != nil {
+		t.Fatalf("run review: %v", err)
+	}
+
+	last, _ := lastUpdate(t, reviews)
+	if last.Status != port.TaskSucceeded {
+		t.Fatalf("最后一次写入状态 = %q, want %q", last.Status, port.TaskSucceeded)
+	}
+	for _, u := range reviews.updates {
+		if u.Status == port.TaskFailed {
+			t.Fatal("成功路径不得出现 failed 写入")
+		}
+	}
+	if last.Score == 0 && last.Counts.High+last.Counts.Medium == 0 {
+		t.Fatal("成功终态必须带评分与计数，否则 /reviews 上没有风险信息")
 	}
 }
 

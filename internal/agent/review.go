@@ -119,6 +119,27 @@ func runReview(ctx context.Context, deps ReviewDeps, payload json.RawMessage, pr
 		return err
 	}
 
+	// 从这里往后任何一条错误路径都必须把 review 落成终态。
+	// 否则 GET /tasks 显示 failed、GET /reviews 永远显示 running，两个页面
+	// 自相矛盾；worker 超时会 cancel ctx，连"下一次重试再写"的机会都没有。
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		// 写库不能复用原 ctx：超时/取消的 ctx 一写就报 context deadline exceeded，
+		// 那正是需要落终态的那一刻。
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if uerr := deps.Reviews.Update(cctx, &port.Review{
+			ID:        p.ReviewID,
+			Status:    port.TaskFailed,
+			UpdatedAt: time.Now().UTC(),
+		}); uerr != nil && deps.Logger != nil {
+			deps.Logger.Warn("review mark failed", "review_id", p.ReviewID, "err", uerr)
+		}
+	}()
+
 	notify(progress, 10, stageExtract)
 	doc, err := deps.Extractor.Extract(ctx, text)
 	if err != nil {
@@ -151,6 +172,8 @@ func runReview(ctx context.Context, deps ReviewDeps, payload json.RawMessage, pr
 	}); err != nil {
 		return err
 	}
+	// 成功终态已经落库，defer 里的兜底必须让路。
+	committed = true
 
 	notify(progress, 100, stageDone)
 	return nil
