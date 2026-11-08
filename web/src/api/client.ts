@@ -99,6 +99,13 @@ export interface TokenRefresher {
   ensureFresh: () => Promise<boolean>
   /** 只判断要不要换，不发请求。 */
   isStale: () => boolean
+  /**
+   * 上一次 ensureFresh 失败的原因（成功或没尝试过时为 null）。
+   *
+   * 调用方需要它来区分两种"令牌不能用"：后端明确回 40101（登录真的失效了）
+   * 与网络抖动/网关 502（登录还好好的，只是这次没换成）。前者才该跳登录页。
+   */
+  failure: () => unknown
 }
 
 /**
@@ -120,18 +127,48 @@ export function createTokenRefresher(deps: TokenRefresherDeps): TokenRefresher {
     return tokens.expires_at - REFRESH_LEAD_MS < deps.now()
   }
 
+  // 上一次失败的原因。只在"确实换了但没换成"时被写入，成功即清空。
+  let lastFailure: unknown = null
+
+  function markFailure(err: unknown): false {
+    lastFailure = err
+    // 只有后端明确说"这个刷新令牌不认了"才清令牌跳登录页。网络超时、502、
+    // 限流都不代表登录失效——把它们也当成失效，就会在网抖一下时把用户踢出去，
+    // 而他手上的令牌其实还有二十分钟。
+    if (isAuthFailure(err)) deps.onUnauthorized()
+    return false
+  }
+
   async function run(): Promise<boolean> {
     const tokens = deps.readTokens()
     if (!tokens) return false
     try {
       const result = await deps.refreshTokens(tokens.refresh_token)
       deps.saveTokens(result)
+      lastFailure = null
       return true
-    } catch {
-      // 40101、网络失败、后端 5xx 都按"这次登录已经不可信"处理：
-      // 留着过期的令牌只会在下一条请求里再失败一次。
-      deps.onUnauthorized()
-      return false
+    } catch (err) {
+      // 多标签页同时在跑：两边拿同一个 refresh_token 去换，后端轮换后到者必然
+      // 收到 40101。这时 localStorage 里已经是赢家写进去的新令牌——先对账，
+      // 别用旧令牌的失败去清掉别人刚换回来的登录态。
+      const current = deps.readTokens()
+      if (current && current.refresh_token !== tokens.refresh_token) {
+        if (!isStale()) {
+          lastFailure = null
+          return true
+        }
+        // 别人换来的这个也快过期了（比如两个标签页隔了很久才先后醒过来），
+        // 用它再换一次，仍然失败才认输。
+        try {
+          const retried = await deps.refreshTokens(current.refresh_token)
+          deps.saveTokens(retried)
+          lastFailure = null
+          return true
+        } catch (retryErr) {
+          return markFailure(retryErr)
+        }
+      }
+      return markFailure(err)
     }
   }
 
@@ -146,7 +183,18 @@ export function createTokenRefresher(deps: TokenRefresherDeps): TokenRefresher {
       return refreshing
     },
     isStale,
+    failure: () => lastFailure,
   }
+}
+
+/**
+ * 这个错误是不是"刷新令牌已经不被承认"。
+ *
+ * 只认后端业务码 40101。HTTP 401/403、502、ECONNABORTED 都不算：它们说明的是
+ * "这次请求没走通"，不是"这个人不是登录状态"。
+ */
+function isAuthFailure(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 40101
 }
 
 const http = axios.create({
@@ -188,6 +236,11 @@ export function ensureFreshToken(): Promise<boolean> {
   return tokenRefresher.ensureFresh()
 }
 
+/** 上一次续期失败的原因；用于把"登录失效"与"网络没通"分开报给用户。 */
+export function ensureFreshTokenFailure(): unknown {
+  return tokenRefresher.failure()
+}
+
 http.interceptors.request.use(async (config) => {
   // 完全没登录时不在这里拦：/auth/login、/auth/register、/auth/refresh 都是匿名接口，
   // 拦了会把"密码错误"变成"请重新登录"。其它接口缺令牌由后端回 40101，走同一条失效链路。
@@ -196,6 +249,10 @@ http.interceptors.request.use(async (config) => {
 
   if (!(await ensureFreshToken())) {
     // 拦截器里抛 ApiError，由下面的 request() 原样兜住，视图层拿到的文案与后端一致。
+    // 续期失败的真实原因要原样抛出去：40101 是"请重新登录"，网络错误是
+    // "连不上后端"，让用户看到的提示与实际原因对上。
+    const cause = tokenRefresher.failure()
+    if (cause instanceof ApiError) throw cause
     throw new ApiError(40101, MSG_RELOGIN)
   }
   const tokens = getTokens()
@@ -216,9 +273,9 @@ function toApiError(error: unknown): ApiError {
       if (body.code === 40101) notifyUnauthorized()
       return new ApiError(body.code, body.message || '请求失败', body.fields, body.retryable ?? false)
     }
-    if (error.response?.status === 401) {
-      notifyUnauthorized()
-    }
+    // 不看 HTTP 状态码 401：后端所有失败都带包络，业务码才是唯一真相。没有包络
+    // 的 401 来自反向代理/网关（证书过期、nginx 鉴权），把它当成"登录失效"会在
+    // 一次网关抖动里踢掉所有人。
     if (error.code === 'ECONNABORTED') {
       return new ApiError(-1, '请求超时，请重试')
     }

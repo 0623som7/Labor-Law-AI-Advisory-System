@@ -141,3 +141,92 @@ test('失败后不会卡在单飞状态里：令牌被清掉，后续调用立�
   assert.equal(await refresher.ensureFresh(), false)
   assert.equal(state.refreshCalls, 1)
 })
+
+test('续期遇到网络错误：这次失败，但不把用户踢下线', async () => {
+  // 缺陷形态：catch 里无条件 onUnauthorized()，地铁里信号断一下、网关回 502，
+  // 用户手里的令牌明明还有二十分钟可用，却被清掉跳登录页。
+  const { state, refresher } = harness(pair('access-1', 'refresh-1', NOW + 1_000))
+  state.failWith = new Error('Network Error')
+
+  assert.equal(await refresher.ensureFresh(), false)
+  assert.equal(state.refreshCalls, 1)
+  assert.equal(state.unauthorizedCalls, 0)
+  assert.notEqual(state.tokens, null)
+  assert.equal(state.tokens?.refresh_token, 'refresh-1')
+})
+
+test('续期遇到 5xx / 限流：同样只让本次失败', async () => {
+  for (const code of [50001, 50201, 42901]) {
+    const { state, refresher } = harness(pair('access-1', 'refresh-1', NOW + 1_000))
+    state.failWith = new ApiError(code, '服务暂时不可用')
+
+    assert.equal(await refresher.ensureFresh(), false)
+    assert.equal(state.unauthorizedCalls, 0, `code=${code} 不该清令牌`)
+    assert.notEqual(state.tokens, null, `code=${code} 不该清令牌`)
+  }
+})
+
+test('别的标签页已经换过令牌：40101 之后对账，不把用户踢下线', async () => {
+  // 两个标签页同时过期，都用同一个 refresh_token 去换；后端轮换后到者必然 40101。
+  // 此时 localStorage 里是赢家的新令牌，清掉它等于"一个人刷新页面把另一个也甩出去"。
+  let tokens: TokenPair | null = pair('access-1', 'refresh-1', NOW + 1_000)
+  let refreshCalls = 0
+  let unauthorizedCalls = 0
+
+  const refresher = createTokenRefresher({
+    now: () => NOW,
+    readTokens: () => tokens,
+    saveTokens: (result) => {
+      tokens = pair(result.access_token, result.refresh_token, NOW + result.expires_in * 1000)
+    },
+    onUnauthorized: () => {
+      unauthorizedCalls += 1
+      tokens = null
+    },
+    refreshTokens: async () => {
+      refreshCalls += 1
+      // 另一个标签页抢先换成功，把新令牌写进了 localStorage。
+      tokens = pair('other-access', 'other-refresh', NOW + 2 * 60 * MINUTE)
+      throw new ApiError(40101, '登录状态已失效，请重新登录')
+    },
+  })
+
+  assert.equal(await refresher.ensureFresh(), true)
+  assert.equal(refreshCalls, 1)
+  assert.equal(unauthorizedCalls, 0)
+  assert.equal(tokens?.access_token, 'other-access')
+  assert.equal(refresher.failure(), null)
+})
+
+test('对账发现别人的令牌也快过期：用它再换一次，成功了就不踢人', async () => {
+  let tokens: TokenPair | null = pair('access-1', 'refresh-1', NOW + 1_000)
+  let refreshCalls = 0
+  let unauthorizedCalls = 0
+
+  const refresher = createTokenRefresher({
+    now: () => NOW,
+    readTokens: () => tokens,
+    saveTokens: (result) => {
+      tokens = pair(result.access_token, result.refresh_token, NOW + result.expires_in * 1000)
+    },
+    onUnauthorized: () => {
+      unauthorizedCalls += 1
+      tokens = null
+    },
+    refreshTokens: async (refreshToken) => {
+      refreshCalls += 1
+      if (refreshCalls === 1) {
+        // 别人的令牌拿着也快了，本标签页醒来时已经进了续期窗口。
+        tokens = pair('other-access', 'other-refresh', NOW + 1_000)
+        throw new ApiError(40101, '登录状态已失效，请重新登录')
+      }
+      return authResult('fresh-access', `fresh-${refreshToken}`)
+    },
+  })
+
+  assert.equal(await refresher.ensureFresh(), true)
+  assert.equal(refreshCalls, 2)
+  assert.equal(unauthorizedCalls, 0)
+  assert.equal(tokens?.access_token, 'fresh-access')
+  assert.equal(tokens?.refresh_token, 'fresh-other-refresh')
+})

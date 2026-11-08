@@ -10,7 +10,7 @@
 //   2. 一个坏帧只 warn，不中断整条流（否则一次 JSON 不完整就白屏）；
 //   3. 没等到 done 就结束 = 失败（"连接中断，请重试"），不能当成功渲染半句话。
 
-import { ApiError, ensureFreshToken, getTokens, MSG_RELOGIN, notifyUnauthorized } from './client'
+import { ApiError, ensureFreshToken, ensureFreshTokenFailure, getTokens, MSG_RELOGIN, notifyUnauthorized } from './client'
 import type { ChatRequest, Envelope } from './types'
 import { isKnownEvent, decodeEvent, SSEParser } from '@/utils/sse'
 import type { CitationEvent, DeltaEvent, DoneEvent, MetaEvent, ToolCallEvent } from '@/utils/sse'
@@ -45,7 +45,9 @@ async function readErrorEnvelope(response: Response): Promise<ApiError> {
     // 响应体不是 JSON（例如网关的 HTML 错误页），保持上面的默认文案。
   }
 
-  if (code === 40101 || response.status === 401) notifyUnauthorized()
+  // 只在后端明确回 40101 时才清令牌：没有包络的 401 来自网关/反代，
+  // 把它当成登录失效会在一次证书或上游抖动里把所有人踢下线。
+  if (code === 40101) notifyUnauthorized()
   return new ApiError(code, message, undefined, retryable)
 }
 
@@ -67,7 +69,10 @@ export async function streamChat(
   const usable = await ensureFreshToken()
   if (!usable) {
     if (signal?.aborted) return { aborted: true, done: false }
-    throw new ApiError(40101, MSG_RELOGIN)
+    // 续期失败的原因可能不是"登录失效"（网络断了、网关 502），原样抛出去，
+    // 用户看到"连不上后端"而不是被莫名其妙踢到登录页。
+    const cause = ensureFreshTokenFailure()
+    throw cause instanceof ApiError ? cause : new ApiError(40101, MSG_RELOGIN)
   }
 
   const tokens = getTokens()
