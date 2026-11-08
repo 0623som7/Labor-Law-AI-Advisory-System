@@ -74,6 +74,13 @@ docker pull registry.cn-hangzhou.aliyuncs.com/<命名空间>/laborlaw-api:v0.1.0
 ## 3. 首次部署
 
 ```bash
+# 本节所有 compose 命令都在仓库根执行，统一带 --env-file .env。
+# 为什么必须带：deploy/ 下没有 .env，Compose V2 只从 compose 文件所在目录找 .env，
+# 找不到就不会读仓库根那份，于是报 "required variable APP_ENV is missing a value"。
+# 注意 --env-file 的路径是按**当前工作目录**解析的（不是 compose 文件所在目录）：
+# 在仓库根写 .env；先 cd deploy 再执行的话才写 ../.env，写反了会报 couldn't find env file。
+export APP_ENV=production   # 首次上云；.env 里也有 APP_ENV，但 shell 变量优先
+
 # 3.1 拉仓库（只为了 compose / my.cnf / redis.conf，不需要源码）
 git clone https://github.com/0623som7/Labor-Law-AI-Advisory-System.git
 cd Labor-Law-AI-Advisory-System
@@ -102,19 +109,19 @@ chmod 600 .env
 
 > 国内机器上 `docker compose build` 可能卡在 `go mod download`：
 > `proxy.golang.org` / `storage.googleapis.com` 的 TLS 握手超时。
-> 用 `GOPROXY=https://goproxy.cn,direct docker compose -f deploy/docker-compose.yml build` 覆盖，
+> 用 `GOPROXY=https://goproxy.cn,direct docker compose -f deploy/docker-compose.yml --env-file .env build` 覆盖，
 > 默认值仍是官方源，CI 与海外机器不用改。
 
 # 3.3 首次建库要手动跑一次迁移（生产禁了 AUTO_MIGRATE）
-docker compose -f deploy/docker-compose.yml up -d mysql redis
-docker compose -f deploy/docker-compose.yml run --rm api -migrate
+docker compose -f deploy/docker-compose.yml --env-file .env up -d mysql redis
+docker compose -f deploy/docker-compose.yml --env-file .env run --rm api -migrate
 
 # 3.4 起服务
-docker compose -f deploy/docker-compose.yml up -d api
+docker compose -f deploy/docker-compose.yml --env-file .env up -d api
 
 # 3.4.1 导入法条种子（空库时检索恒 0 命中，模型只能答"没有检索到法条"，
 #       前端一张卡片都不会有——这一步不做，前面全白搭）
-docker compose -f deploy/docker-compose.yml --profile seed run --rm seed
+docker compose -f deploy/docker-compose.yml --env-file .env --profile seed run --rm seed
 # 期望输出：
 #   共 205 条法条 → /app/seed/statutes.json
 #   法条表重建完成：0 → 205 行
@@ -125,13 +132,13 @@ docker compose -f deploy/docker-compose.yml --profile seed run --rm seed
 # 3.4.2 确认 MySQL 的配置真的被读到了（改过 my.cnf 就必须重跑这一步）
 #      deploy/mysql/my.cnf 由 deploy/mysql/Dockerfile COPY 进镜像并 chmod 644，
 #      不再是 bind mount —— 挂载方式在 Windows 上落成 0777，MySQL 会整份忽略它。
-docker compose -f deploy/docker-compose.yml exec -T mysql ls -l /etc/mysql/conf.d/my.cnf
+docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql ls -l /etc/mysql/conf.d/my.cnf
 #   期望 -rw-r--r--（或 -r--r--r--）；看到 rwxrwxrwx 说明又被挂载覆盖了
-docker compose -f deploy/docker-compose.yml exec -T mysql \
+docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql \
   sh -c 'mysqld --defaults-extra-file=/etc/mysql/conf.d/my.cnf --print-defaults'
 #   期望含 --innodb_buffer_pool_size=512M、--max_connections=50、--performance_schema=OFF，
 #   并且没有 "World-writable config file ... is ignored" 这句 Warning
-docker compose -f deploy/docker-compose.yml exec -T mysql mysql -uroot -p -N -e \
+docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql mysql -uroot -p -N -e \
   "select @@innodb_buffer_pool_size, @@max_connections, @@performance_schema, @@ngram_token_size, @@global.time_zone, @@innodb_flush_log_at_trx_commit"
 #   期望 536870912  50  0  2  +00:00  2
 
@@ -146,7 +153,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
 chmod 600 deploy/nginx/certs/server.key
 
 # 3.6 起 TLS 层（api 的端口已改成 127.0.0.1:8080，公网只看得到 8443）
-docker compose -f deploy/docker-compose.yml up -d nginx
+docker compose -f deploy/docker-compose.yml --env-file .env up -d nginx
 
 # 3.7 存储目录属主（Linux 上必做，Windows 本机不用）
 #      compose 用 ../storage:/app/storage 把宿主目录盖在镜像的 /app/storage 上，
@@ -178,7 +185,7 @@ curl -s localhost:8080/healthz                      # {"status":"ok"}
 curl -s localhost:8080/readyz                       # checks 里 mysql/redis 都是 up
 docker stats --no-stream                            # 三个容器 RSS，api 应 < 400MB
 free -m                                             # available 必须 > 300MB
-docker compose logs --tail=50 api                   # 无 ERROR、有 trace_id
+docker compose -f deploy/docker-compose.yml --env-file .env logs --tail=50 api   # 无 ERROR、有 trace_id
 
 # 存储目录可写（§3.7 没做时这条必挂：permission denied）
 curl -k -H "Authorization: Bearer <token>" -F "file=@sample.pdf" \
@@ -212,7 +219,7 @@ curl -k -N -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json
 
 ```bash
 # 镜像回滚：compose 里 image 改成上一个 tag，然后
-docker compose -f deploy/docker-compose.yml up -d --force-recreate api
+docker compose -f deploy/docker-compose.yml --env-file .env up -d --force-recreate api
 
 # 数据库回滚：先快照，再手工执行 down 脚本
 mysqldump -h 127.0.0.1 -u root -p laborlaw > backup_$(date +%F_%H%M).sql
