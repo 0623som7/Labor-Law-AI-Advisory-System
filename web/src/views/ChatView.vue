@@ -59,6 +59,8 @@ const scroller = ref<HTMLElement | null>(null)
 // 当前这一轮流式回答。卸载、点停止、退出登录都要把它作废：
 // 否则组件已经没了，SSE 的 onDelta 还在往 assistant 气泡里写。
 let session: StreamSession | null = null
+// 组件是否还在。卸载之后不再碰 DOM/滚动，也不用再去改 messages。
+let alive = true
 let keySeed = 0
 
 const currentTitle = computed(() => {
@@ -231,8 +233,8 @@ async function send(): Promise<void> {
       void refreshSessions()
     }
   } catch (error) {
-    // 页面已经卸载时不用再动 DOM/状态；组件销毁后改响应式对象只会漏内存。
-    if (current.closed()) return
+    // 已停止或已卸载：不要把错误再糊到气泡上（停止是用户主动的，不是失败）。
+    if (current.closed() || !alive) return
     assistant.thinking = false
     if (error instanceof ApiError && error.code === 40101) {
       // 拦截器已经把令牌清掉并跳登录页，这里不再往气泡上写错误。
@@ -243,9 +245,11 @@ async function send(): Promise<void> {
     assistant.barFaded = true
   } finally {
     if (session === current) session = null
-    if (current.closed()) return
-    assistant.thinking = false
+    // "发送中"是界面状态，跟这轮流有没有被掐断无关：点了停止之后必须复位，
+    // 否则输入框永远发不出下一条（e2e 第 4 步就是抓这个）。
     sending.value = false
+    if (!alive) return
+    assistant.thinking = false
     await scrollToBottom()
   }
 }
@@ -279,6 +283,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   // 用户切走页面/退出时，流必须跟着停：组件都没了，onDelta 还在改 messages，
   // 除了漏内存没有别的结果。
+  alive = false
   session?.close()
   session = null
 })
