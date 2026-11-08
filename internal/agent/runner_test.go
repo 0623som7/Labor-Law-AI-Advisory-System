@@ -539,3 +539,43 @@ func TestConsultInputLengthLimit(t *testing.T) {
 		}
 	})
 }
+
+// cancelAfterFirstDelta 模拟"用户点了停止"：吐一个字之后 ctx 被取消，
+// 上游随即返回可重试的超时错误（真实 ChatStream 在 ctx 取消时就是这样）。
+type cancelAfterFirstDelta struct {
+	cancel context.CancelFunc
+}
+
+func (c *cancelAfterFirstDelta) Chat(context.Context, port.ChatRequest) (port.ChatResponse, error) {
+	return port.ChatResponse{}, port.Wrap(port.CodeUpstreamTimeout, context.Canceled, "测试不覆盖非流式")
+}
+
+func (c *cancelAfterFirstDelta) ChatStream(ctx context.Context, _ port.ChatRequest, onDelta func(string) error) (port.ChatResponse, error) {
+	if err := onDelta("用人单位应当"); err != nil {
+		return port.ChatResponse{}, err
+	}
+	c.cancel()
+	return port.ChatResponse{}, port.Wrap(port.CodeUpstreamTimeout, context.Canceled, "已取消")
+}
+
+// TestConsultCancelledFinishReason 守住"被中断的一轮要标明 cancelled"。
+//
+// 缺陷形态：FinishReason 写死 "stop"，前端无法区分"正常说完"和"被掐断"。
+func TestConsultCancelledFinishReason(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	r := New(&cancelAfterFirstDelta{cancel: cancel})
+	var c collector
+
+	res, err := r.Run(ctx, port.Request{Scene: SceneConsult, Input: "公司不给我交社保"}, c.emit)
+	if err != nil {
+		t.Fatalf("客户端主动停止不该当成失败: %v", err)
+	}
+	if res.FinishReason != "cancelled" {
+		t.Fatalf("FinishReason = %q, want cancelled", res.FinishReason)
+	}
+	if res.Content != "用人单位应当" {
+		t.Fatalf("半截回答必须留下来，实际 %q", res.Content)
+	}
+}

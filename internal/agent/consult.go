@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -42,6 +43,18 @@ func (r *Runner) runConsult(ctx context.Context, req port.Request, emit func(por
 		return nil
 	})
 	if err != nil {
+		// 用户在客户端点了「停止」：ctx 被取消，上游也会吐一个（通常可重试的）错误。
+		// 这一轮不算失败——前半段已经流给用户了，把它降级成"被中断的回答"交上层落库，
+		// 比丢进错误分支更有用：前端那边已经打了"已中断"，历史里却什么都没有。
+		//
+		// 只认 context.Canceled：超时（DeadlineExceeded）是真的失败，仍按错误返回，
+		// 否则 worker 侧的重试与告警都会被一句"cancelled"掩盖。
+		if errors.Is(ctx.Err(), context.Canceled) && built.Len() > 0 {
+			return port.Result{
+				Content:      built.String(),
+				FinishReason: "cancelled",
+			}, nil
+		}
 		// 原样返回，不包装不换码：emit 的错误是 A 层用来判断"客户端断开"的，
 		// 上游的错误码决定前端要不要重试，两者都不能在这里被改写。
 		return port.Result{}, err
@@ -52,10 +65,24 @@ func (r *Runner) runConsult(ctx context.Context, req port.Request, emit func(por
 		content = built.String()
 	}
 
+	// 终止原因不能写死 "stop"：用户点「停止」或请求超时被掐断时，
+	// 前端收到的仍是 "stop"，就无法区分"正常说完"和"被切断"，
+	// 只能靠"正文看起来没写完"去猜。
+	//
+	// 看的是传给 Run 的原始 ctx：ChatStream 内部可能派生出带自己超时的子 ctx，
+	// 那个 ctx 的 Err() 反映不了用户在客户端点的取消。
+	finish := "stop"
+	switch {
+	case errors.Is(ctx.Err(), context.Canceled):
+		finish = "cancelled"
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		finish = "error"
+	}
+
 	return port.Result{
 		Content:      content,
 		Usage:        resp.Usage,
-		FinishReason: "stop",
+		FinishReason: finish,
 	}, nil
 }
 
