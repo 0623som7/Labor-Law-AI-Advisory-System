@@ -310,3 +310,63 @@ export function post<T>(url: string, data?: unknown): Promise<T> {
 export function del<T>(url: string): Promise<T> {
   return request<T>({ method: 'DELETE', url })
 }
+
+/**
+ * multipart 上传。
+ *
+ * 单独一条通道的必要性：实例默认头是 application/json，axios 的 transformRequest
+ * 看到"JSON 头 + FormData"会把 FormData 序列化成 JSON（文件字段变成 {}），
+ * 后端收到的是一个没有文件的请求。这里显式声明 multipart，浏览器再加 boundary。
+ *
+ * onProgress 拿不到 total 时回调 null：不显示百分比，而不是显示一个假的 100%。
+ */
+export async function postForm<T>(
+  url: string,
+  form: FormData,
+  onProgress?: (percent: number | null) => void,
+): Promise<T> {
+  return request<T>({
+    method: 'POST',
+    url,
+    data: form,
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (event) => {
+      if (!onProgress) return
+      const total = event.total ?? 0
+      onProgress(total > 0 ? Math.round((event.loaded / total) * 100) : null)
+    },
+  })
+}
+
+/**
+ * 取二进制（PDF 原文件）。
+ *
+ * 这条路径不回 {code,message,data} 包络：成功就是裸字节。失败时后端仍会回包络，
+ * 所以响应头是 JSON 时按 ApiError 解析，让 40101/40401 与其它接口表现一致。
+ */
+export async function getBinary(url: string): Promise<ArrayBuffer> {
+  try {
+    const response = await http.request<ArrayBuffer>({ method: 'GET', url, responseType: 'arraybuffer' })
+    const contentType = String(response.headers['content-type'] ?? '')
+    if (contentType.includes('application/json')) {
+      const text = new TextDecoder('utf-8').decode(response.data)
+      let body: Envelope<unknown> | null = null
+      try {
+        body = JSON.parse(text) as Envelope<unknown>
+      } catch {
+        body = null
+      }
+      if (body && typeof body.code === 'number') {
+        if (body.code === 40101) notifyUnauthorized()
+        throw new ApiError(body.code, body.message || '读取文件失败', body.fields, body.retryable ?? false)
+      }
+      throw new ApiError(-1, '读取文件失败：后端返回了非二进制内容')
+    }
+    if (response.data.byteLength === 0) {
+      throw new ApiError(-1, '文件内容为空，无法解析')
+    }
+    return response.data
+  } catch (error) {
+    throw toApiError(error)
+  }
+}

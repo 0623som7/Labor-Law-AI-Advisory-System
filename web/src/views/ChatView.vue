@@ -349,6 +349,10 @@ onBeforeUnmount(() => {
         </ul>
       </div>
 
+      <router-link v-if="!collapsed" class="review-link" :to="{ name: 'upload' }">
+        合同审查
+      </router-link>
+
       <div v-if="!collapsed" class="sidebar-foot">
         <span class="me">{{ auth.user?.nickname || auth.user?.phone_masked || '已登录' }}</span>
         <button type="button" class="logout" :disabled="sending" @click="signOut">退出</button>
@@ -565,6 +569,19 @@ onBeforeUnmount(() => {
 .session-del:hover {
   color: #d93026;
   background: #fdecea;
+}
+
+.review-link {
+  flex: none;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--ll-accent, #2563eb);
+  text-decoration: none;
+  border-top: 1px solid var(--ll-border);
+}
+
+.review-link:hover {
+  background: rgba(37, 99, 235, 0.06);
 }
 
 .sidebar-foot {

@@ -253,6 +253,25 @@ func (a *API) listReviews(c *gin.Context) {
 	if !ok {
 		return
 	}
+
+	// file_id 是给"进审查页要能看见已有结果"用的：前端只拿得到文件，
+	// 拿不到 review_id（那个存在浏览器里，换设备/清缓存就没了）。
+	// 底层早就有 GetByFile，这里只是把它接到 HTTP 层，不是新能力。
+	if fileID := strings.TrimSpace(c.Query("file_id")); fileID != "" {
+		rv, err := a.store.Review().GetByFile(ctx, UserID(c), fileID)
+		if err != nil {
+			// 没审过不是错误：列表语义下"没有"就是空列表，前端据此显示「开始审查」。
+			if port.IsCode(err, port.CodeNotFound) {
+				OK(c, toReviewDTOs(nil))
+				return
+			}
+			Fail(c, err)
+			return
+		}
+		OK(c, toReviewDTOs([]port.Review{*rv}))
+		return
+	}
+
 	items, err := a.store.Review().ListByUser(ctx, UserID(c), limit, offset)
 	if err != nil {
 		Fail(c, err)
