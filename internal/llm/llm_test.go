@@ -25,6 +25,7 @@ func testConfig(baseURL string) config.LLMConfig {
 		ModelExtract:     "model-extract",
 		ModelAdvise:      "model-advise",
 		Timeout:          2 * time.Second,
+		StreamTimeout:    5 * time.Second,
 		MaxRetries:       2,
 		RetryBackoff:     0,
 		PriceInputPer1K:  0.001,
@@ -296,6 +297,68 @@ func TestChatStreamNoRetryAfterEmit(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&calls); n != 1 {
 		t.Fatalf("调用次数 = %d, want 1（已吐字后不许重试）", n)
+	}
+}
+
+// TestChatStreamUsesStreamTimeout 守住"流式超时覆盖整段生成"。
+//
+// 修复前 doChatStream 用的是 cfg.Timeout（单次往返口径）。这里的服务端每 30ms
+// 吐一段、共五段（约 150ms），Timeout 设 50ms：用 Timeout 当上限时读到第三段
+// 就被 ctx 掐断；用 StreamTimeout 才能读完整段回答。
+func TestChatStreamUsesStreamTimeout(t *testing.T) {
+	parts := []string{"一", "二", "三", "四", "五"}
+	nl := string(rune(10)) + string(rune(10)) // SSE 帧分隔，避免源码里的转义
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, part := range parts {
+			fmt.Fprintf(w, `data: {"choices":[{"delta":{"content":%q}}]}`+nl, part)
+			w.(http.Flusher).Flush()
+			time.Sleep(30 * time.Millisecond)
+		}
+		fmt.Fprint(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`+nl)
+		fmt.Fprint(w, `data: [DONE]`+nl)
+	}))
+	defer srv.Close()
+
+	cfg := testConfig(srv.URL)
+	cfg.Timeout = 50 * time.Millisecond
+	cfg.StreamTimeout = 2 * time.Second
+	c := New(cfg)
+
+	var got []string
+	resp, err := c.ChatStream(context.Background(), simpleRequest(SceneConsult), func(d string) error {
+		got = append(got, d)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("流式调用被提前切断: %v（读到 %v）", err, got)
+	}
+	if want := strings.Join(parts, ""); resp.Content != want {
+		t.Fatalf("Content = %q, want %q", resp.Content, want)
+	}
+	if len(got) != len(parts) {
+		t.Fatalf("增量 %v，期望 %d 段", got, len(parts))
+	}
+}
+
+// TestChatStreamDisabledFallsBackToTimeout 守住兼容：StreamTimeout 未配置
+// （手工构造的配置）时退回 Timeout，行为与改前一致。
+func TestChatStreamDisabledFallsBackToTimeout(t *testing.T) {
+	nl := string(rune(10)) + string(rune(10))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"迟"}}]}`+nl)
+		w.(http.Flusher).Flush()
+		time.Sleep(300 * time.Millisecond)
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"到"}}]}`+nl)
+	}))
+	defer srv.Close()
+
+	cfg := testConfig(srv.URL)
+	cfg.Timeout = 50 * time.Millisecond
+	cfg.StreamTimeout = 0
+	if _, err := New(cfg).ChatStream(context.Background(), simpleRequest(SceneConsult), func(string) error { return nil }); err == nil {
+		t.Fatal("StreamTimeout 未配置时应退回 Timeout（本次应超时）")
 	}
 }
 

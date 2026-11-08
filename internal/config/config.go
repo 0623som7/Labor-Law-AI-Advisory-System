@@ -147,8 +147,14 @@ type LLMConfig struct {
 	ModelExtract string
 	// ModelAdvise 是 review.advise 场景的模型名，走强档。
 	ModelAdvise string
-	// Timeout 是单次调用上限（不含重试等待）。
+	// Timeout 是单次调用上限（不含重试等待）。非流式调用用它。
 	Timeout time.Duration
+	// StreamTimeout 是流式生成的整体上限。
+	//
+	// 流式响应是一个持续吐字的过程，耗时随回答长度增长（实测三轮咨询 35.6s /
+	// 44.2s / 51.7s），用 Timeout 这种"单次往返"口径当上限，会在长回答上把
+	// 连接整段掐断。所以单独给一个更大的值，且必须不小于 Timeout。
+	StreamTimeout time.Duration
 	// MaxRetries 是上游可重试错误的额外尝试次数。
 	MaxRetries int
 	// RetryBackoff 是首次重试前的等待，之后每次翻倍（上限 8s）。
@@ -264,6 +270,7 @@ func LoadFrom(get func(string) string) (Config, error) {
 			ModelExtract:     l.str("LLM_MODEL_EXTRACT", "deepseek-chat"),
 			ModelAdvise:      l.str("LLM_MODEL_ADVISE", "deepseek-chat"),
 			Timeout:          l.dur("LLM_TIMEOUT", 60*time.Second),
+			StreamTimeout:    l.dur("LLM_STREAM_TIMEOUT", 300*time.Second),
 			MaxRetries:       l.num("LLM_MAX_RETRIES", 2, 0, 5),
 			RetryBackoff:     l.durAllowZero("LLM_RETRY_BACKOFF", 300*time.Millisecond),
 			PriceInputPer1K:  l.frac("LLM_PRICE_INPUT_PER_1K", 0.001, 0, 1000),
@@ -323,6 +330,9 @@ func (c Config) Validate() error {
 	}
 	if c.Auth.AccessTTL >= c.Auth.RefreshTTL {
 		add("JWT_ACCESS_TTL 必须小于 JWT_REFRESH_TTL")
+	}
+	if c.LLM.StreamTimeout < c.LLM.Timeout {
+		add("LLM_STREAM_TIMEOUT 不能小于 LLM_TIMEOUT（流式覆盖整段生成，必须留得更宽）")
 	}
 	if c.MySQL.MaxIdleConns > c.MySQL.MaxOpenConns {
 		add("MYSQL_MAX_IDLE_CONNS 不能大于 MYSQL_MAX_OPEN_CONNS")

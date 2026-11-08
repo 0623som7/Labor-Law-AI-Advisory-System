@@ -176,6 +176,19 @@ func newTransport(cfg config.LLMConfig) *http.Transport {
 	}
 }
 
+// streamTimeout 返回流式调用的整体上限。
+//
+// 单独用 StreamTimeout 而不是 Timeout：流式响应持续吐字，耗时随回答长度增长，
+// 拿"单次往返"的 60s 当上限会在长回答上整段掐断（而且已吐过字就不能重试，
+// 用户直接丢一次回答）。StreamTimeout 未配置时退回 Timeout，保证手工构造的
+// 配置（测试、脚本）行为不变。
+func (c *Client) streamTimeout() time.Duration {
+	if c.cfg.StreamTimeout > 0 {
+		return c.cfg.StreamTimeout
+	}
+	return c.cfg.Timeout
+}
+
 // doChat 执行一次非流式调用。
 func (c *Client) doChat(ctx context.Context, body []byte, traceID string) (port.ChatResponse, error) {
 	endpoint, err := c.endpoint()
@@ -238,7 +251,7 @@ func (c *Client) doChatStream(ctx context.Context, body []byte, traceID string, 
 		return port.ChatResponse{}, err
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
+	callCtx, cancel := context.WithTimeout(ctx, c.streamTimeout())
 	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(callCtx, http.MethodPost, endpoint, bytes.NewReader(body))
