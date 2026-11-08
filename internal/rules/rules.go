@@ -423,11 +423,14 @@ func probationLimit(c Contract) (int, bool) {
 	}
 	if months, ok := contractMonths(c.TermStart, c.TermEnd); ok {
 		switch {
+		// 档位边界按第十九条的原话："三个月以上不满一年"、"一年以上不满三年"、
+		// "三年以上固定期限和无固定期限"。所以 12 个月属于"一年以上"（上限 2 个月），
+		// 36 个月属于"三年以上"（上限 6 个月），两处边界都归高一档。
 		case months < 3:
 			return 0, true
-		case months <= 12:
+		case months < 12:
 			return 1, true
-		case months <= 36:
+		case months < 36:
 			return 2, true
 		default:
 			return 6, true

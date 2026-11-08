@@ -63,15 +63,15 @@ func TestProbationMatch(t *testing.T) {
 	r := findRule(t, "R-PROBATION-MATCH")
 	base := Contract{
 		TermStart:       "2024-01-01",
-		TermEnd:         "2027-01-01", // 36 个月，上限 2 个月
-		ProbationMonths: 3,
-		Clauses:         []Clause{{Section: "第二条", Page: 0, BBox: [4]float64{10, 20, 300, 40}, Text: "试用期为三个月。"}},
+		TermEnd:         "2027-01-01", // 36 个月，上限 6 个月
+		ProbationMonths: 7,
+		Clauses:         []Clause{{Section: "第二条", Page: 0, BBox: [4]float64{10, 20, 300, 40}, Text: "试用期为七个月。"}},
 	}
 	frags := mustHit(t, r, base, 1)
 	if frags[0].Section != "第二条" || frags[0].BBox[2] != 300 {
 		t.Fatalf("片段定位错误：%+v", frags[0])
 	}
-	if !strings.Contains(frags[0].Evidence, "上限为 2 个月") {
+	if !strings.Contains(frags[0].Evidence, "上限为 6 个月") {
 		t.Fatalf("证据没写清上限：%s", frags[0].Evidence)
 	}
 	if frags[0].Suggestion.Type != "rewrite" || frags[0].Suggestion.Reason == "" {
@@ -90,6 +90,8 @@ func TestProbationMatch(t *testing.T) {
 	mustHit(t, r, unknown, 0)
 }
 
+// TestProbationMatchBoundaries 钉住第十九条的档位边界：三个月、一年、三年这三处
+// 都是"以上"进高档，所以 12 个月上限是 2 个月、36 个月上限是 6 个月。
 func TestProbationMatchBoundaries(t *testing.T) {
 	r := findRule(t, "R-PROBATION-MATCH")
 	cases := []struct {
@@ -99,12 +101,14 @@ func TestProbationMatchBoundaries(t *testing.T) {
 		months float64
 		want   int
 	}{
-		{"两个月合同不得约定试用期", "2024-01-01", "2024-03-01", 1, 1},
-		{"一年合同上限一个月", "2024-01-01", "2025-01-01", 2, 1},
-		{"一年合同一个月合法", "2024-01-01", "2025-01-01", 1, 0},
+		{"2 个月合同不得约定试用期", "2024-01-01", "2024-03-01", 1, 1},
+		{"11 个月合同一个月合法", "2024-01-01", "2024-12-01", 1, 0},
+		{"11 个月合同两个月违规", "2024-01-01", "2024-12-01", 2, 1},
+		{"12 个月合同两个月合法", "2024-01-01", "2025-01-01", 2, 0},
+		{"35 个月合同两个月合法", "2024-01-01", "2026-12-01", 2, 0},
+		{"36 个月合同六个月合法", "2024-01-01", "2027-01-01", 6, 0},
 		{"两年合同上限两个月", "2024-01-01", "2026-01-01", 3, 1},
 		{"五年合同上限六个月", "2024-01-01", "2029-01-01", 7, 1},
-		{"五年合同六个月合法", "2024-01-01", "2029-01-01", 6, 0},
 		{"中文日期写法同样识别", "2024年1月1日", "2029年1月1日", 7, 1},
 	}
 	for _, tc := range cases {
