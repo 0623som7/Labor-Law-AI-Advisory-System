@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# e2e 跑起来产生的 Chrome 临时 profile 与日志
+e2e/.tmp/
