@@ -220,6 +220,9 @@ func (a *API) chatCompletions(c *gin.Context) {
 	}, emit)
 	if runErr != nil {
 		a.publishRunError(messageID, runErr)
+		// 提问必须留下来：会话标题就是这句话生成的，只丢历史会让侧边栏
+		// 有一条"标题有、正文没有"的会话，刷新一次就自相矛盾。
+		a.persistUserTurn(ctx, UserID(c), sessionID, req.Input)
 		return
 	}
 
@@ -325,6 +328,38 @@ func (a *API) persistTurn(parent context.Context, userID, sessionID, messageID, 
 		a.log.Warn("persist chat turn failed",
 			"session_id", sessionID,
 			"message_id", messageID,
+			"err", err.Error(),
+		)
+	}
+}
+
+// persistUserTurn 在生成失败时补写用户提问。
+//
+// 不写 assistant 消息：失败时没有答案，占位内容会被下一轮的 loadHistory
+// 当成"模型说过这句话"回放给上游，污染上下文。
+func (a *API) persistUserTurn(parent context.Context, userID, sessionID, input string) {
+	if a.store == nil || sessionID == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), chatPersistTimeout)
+	defer cancel()
+
+	fn := func(st port.Store) error {
+		if err := st.Message().Append(ctx, &port.ChatMessage{
+			SessionID: sessionID,
+			Role:      port.RoleUser,
+			Content:   input,
+		}); err != nil {
+			return err
+		}
+		// 时间戳照样要推进：用户刚问过，列表按最近活跃排序就该排在前面。
+		return st.Session().Touch(ctx, userID, sessionID)
+	}
+
+	if err := a.store.Tx(ctx, fn); err != nil {
+		a.log.Warn("persist user turn failed",
+			"session_id", sessionID,
 			"err", err.Error(),
 		)
 	}

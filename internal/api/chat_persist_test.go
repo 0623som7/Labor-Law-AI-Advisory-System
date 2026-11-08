@@ -136,7 +136,7 @@ func TestChatRejectsUnknownSession(t *testing.T) {
 	}
 }
 
-// TestChatRunErrorDoesNotPersistAnswer 守住"失败的一轮不写库"。
+// TestChatRunErrorDoesNotPersistAnswer 守住"失败的一轮不写答案"。
 //
 // 写进一条空的 assistant 消息会让前端历史里出现一个永远空白的回答，
 // 用户以为系统答过、只是一片空白。
@@ -147,7 +147,39 @@ func TestChatRunErrorDoesNotPersistAnswer(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SSE 已开流，状态码应为 200，得到 %d", rec.Code)
 	}
-	if len(f.messages.appended) != 0 {
-		t.Fatalf("失败的一轮不该写消息，写入了 %d 条", len(f.messages.appended))
+	for _, m := range f.messages.appended {
+		if m.Role == port.RoleAssistant {
+			t.Fatalf("失败的一轮不该写 assistant 消息，写入了 %+v", m)
+		}
+	}
+}
+
+// TestChatErrorPersistsUserQuestion 守住"失败的一轮仍要留下提问"。
+//
+// 缺陷形态：模型超时后 runErr 分支直接 return，user 消息没落库。
+// 会话标题却已经由这句话生成，于是侧边栏有一条标题、打开却是空的，
+// 刷新一次就把"我问过什么"抹掉了。
+func TestChatErrorPersistsUserQuestion(t *testing.T) {
+	const input = "拖欠工资三个月能要经济补偿吗"
+	f := newChatFixture(t, &fakeRunner{runErr: port.New(port.CodeUpstream, "上游失败")})
+
+	postChat(t, f.h, `{"input":"`+input+`"}`, nil)
+
+	if len(f.messages.appended) != 1 {
+		t.Fatalf("落库消息数 = %d, want 1（只有 user）", len(f.messages.appended))
+	}
+	got := f.messages.appended[0]
+	if got.Role != port.RoleUser {
+		t.Fatalf("落库的 role = %q, want user", got.Role)
+	}
+	if got.Content != input {
+		t.Fatalf("落库的 content = %q, want %q", got.Content, input)
+	}
+	if f.sessions.created == nil || got.SessionID != f.sessions.created.ID {
+		t.Fatalf("user 消息的 session_id = %q，与新建会话 %+v 不一致", got.SessionID, f.sessions.created)
+	}
+	// Touch 也要走：用户刚问过，会话应按最近活跃排到前面。
+	if f.sessions.touched != got.SessionID {
+		t.Fatalf("Touch 打到 %q, want %q", f.sessions.touched, got.SessionID)
 	}
 }
