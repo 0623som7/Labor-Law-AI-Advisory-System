@@ -71,6 +71,12 @@ services:
       # dev 下 requireAuth 认 AUTH_DEV_USER 就把任何请求当成同一个用户，
       # 线上出现这种状态等于所有人共用 dev-user-0001。
       APP_ENV: ${APP_ENV:?APP_ENV 必须显式设置（dev / staging / production）}
+      # .env 是开发机用的，里面有 AUTH_DEV_USER=dev-user-0001、AUTO_MIGRATE=true。
+      # env_file 会把它整份注进来，而 config.Validate 只在 production 下拦 DevUser——
+      # 也就是说 staging 部署会悄悄保留"不带令牌就被当成 dev-user-0001"的后门。
+      # 这两行按部署语义强制盖掉：鉴权只认令牌，迁移必须显式执行。
+      AUTH_DEV_USER: ""
+      AUTO_MIGRATE: "false"
       # 容器内 poppler-utils 装在 PATH 里，直接写可执行名即可。
       # .env 里那个路径是宿主机 Windows 用的，注进来会让容器去执行一个不存在的文件。
       FILE_PDFTOTEXT_PATH: pdftotext
