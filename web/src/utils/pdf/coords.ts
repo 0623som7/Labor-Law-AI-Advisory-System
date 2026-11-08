@@ -89,3 +89,14 @@ export function inflateRect(rect: Rect, viewport: { width: number; height: numbe
     height: round2(Math.max(0, bottom - top)),
   }
 }
+
+/**
+ * 风险条目落在第几页。
+ *
+ * clause_ref.page 是 0 起；缺字段归 0（第 1 页），不返回 -1 让每个调用方自己兜。
+ * 注意与 pdf.js 的 getPage() 区分：那边页号 1 起，差一页就会把框画到下一页。
+ */
+export function findingPage(f: { clause_ref?: { page?: number } }): number {
+  const p = f.clause_ref?.page
+  return typeof p === 'number' && Number.isFinite(p) && p >= 0 ? Math.floor(p) : 0
+}

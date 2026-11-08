@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { HIGHLIGHT_PADDING, inflateRect, pdfBBoxToViewport, rectToCss, type Rect } from './coords.ts'
+import { HIGHLIGHT_PADDING, findingPage, inflateRect, pdfBBoxToViewport, rectToCss, type Rect } from './coords.ts'
 
 /**
  * 假的 pdf.js viewport，行为照 PageViewport.convertToViewportRectangle 抄：
@@ -87,4 +87,14 @@ test('inflateRect 允许自定义 padding，且退化矩形宽度不为负', () 
   assert.deepEqual(r, { left: 50, top: 50, width: 0, height: 0 })
   const wide = inflateRect({ left: 50, top: 50, width: 0, height: 0 }, vp, 200)
   assert.deepEqual(wide, { left: 0, top: 0, width: 100, height: 100 })
+})
+
+test('findingPage 缺字段归 0，负数与非整数都要收口', () => {
+  assert.equal(findingPage({}), 0)
+  assert.equal(findingPage({ clause_ref: {} }), 0)
+  assert.equal(findingPage({ clause_ref: { page: 0 } }), 0)
+  assert.equal(findingPage({ clause_ref: { page: 3 } }), 3)
+  assert.equal(findingPage({ clause_ref: { page: 2.7 } }), 2)
+  assert.equal(findingPage({ clause_ref: { page: -1 } }), 0)
+  assert.equal(findingPage({ clause_ref: { page: Number.NaN } }), 0)
 })
