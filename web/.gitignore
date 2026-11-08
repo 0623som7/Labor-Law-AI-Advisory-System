@@ -25,3 +25,10 @@ dist-ssr
 
 # e2e 跑起来产生的 Chrome 临时 profile 与日志
 e2e/.tmp/
+
+# unplugin-auto-import / unplugin-vue-components 每次 vite 启动都会重写这两份声明。
+# 入库过一次的后果：dev server 重写后变成"未跟踪文件"，挡住 git merge
+# （The following untracked working tree files would be overwritten by merge）。
+# build 脚本已改成先 vite build（顺带生成）再 vue-tsc，干净 clone 也能构建。
+components.d.ts
+auto-imports.d.ts
