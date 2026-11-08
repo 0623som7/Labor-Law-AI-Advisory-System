@@ -27,7 +27,7 @@
 {"code": 50001, "message": "创建会话接口尚未实现", "trace_id": "..."}
 ```
 
-`501 Not Implemented` 不是错误，是**挂号**：路由在那儿，实现没接。每接一个真 handler，就删掉 `routes.go` 里的一行 501。
+`501 Not Implemented` 不是错误，是**挂号**：路由在那儿，实现没接。每接一个真 handler，就删掉 `routes.go` 里的一行 501。（截至本轮，23 条 API 路由全部接上，`grep -c notImplemented internal/api/routes.go` = 0。）
 
 ---
 
@@ -151,11 +151,11 @@ data: {"seq":4,"message_id":"01J8Z0K3Q7","finish_reason":"stop","usage":{...}}
 | `GET /files/{id}/pages` | 解析结果：每页每个文本块 + 坐标 | **标注层的唯一数据源**；坐标单位 pt、原点左下、y 轴向上 |
 | `GET /files/{id}/content` | 下载原始 PDF | `Content-Disposition: inline`，PDF.js 拿它当底图 |
 
-### 组 5 · 审查 reviews（4 条，全 501）
+### 组 5 · 审查 reviews（4 条，已实现 `8226608`）
 
 | 接口 | 干什么 | 关键点 |
 |---|---|---|
-| `POST /contracts/review` | 发起审查 | 入参 `file_id` + 可选 `rule_scope`（只跑指定规则）+ `async`；**短合同同步 200 给结果，长合同 202 给 `task_id`**；池满立刻 429，不静默排队 |
+| `POST /contracts/review` | 发起审查 | 入参 `file_id` + 可选 `rule_scope`（只跑指定规则）+ `async`；**当前恒 202**，回 `task_id` + `review_id`；同步 200 分支按设计不做（一次审查实测 50–110 秒，同步会被网关掐断，见冲刺计划）；池满立刻 429，不静默排队 |
 | `GET /reviews` | 审查历史 | 按创建时间倒序，分页 |
 | `GET /reviews/{id}` | 审查详情 | 含整体风险等级、评分、条款通过率、高/中/低计数 |
 | `GET /reviews/{id}/findings` | 风险清单 | 每条含 `rule_id`、`severity`、`page_no`、`bbox`、`evidence`（合同原文）、`legal_basis`（法条依据）、`suggestion`；`?severity=high` 过滤 |
@@ -163,7 +163,7 @@ data: {"seq":4,"message_id":"01J8Z0K3Q7","finish_reason":"stop","usage":{...}}
 `202 Accepted` 这个设计值得多看一眼：它说的是"**我收下了，但还没做完**"，回的是 `task_id` 而不是结果。
 前端拿它去 `GET /tasks/{id}` 轮询。这样长合同不会把浏览器卡死 30 秒。
 
-### 组 6 · 任务 tasks（2 条，全 501）
+### 组 6 · 任务 tasks（2 条，已实现 `8226608`）
 
 | 接口 | 干什么 | 关键点 |
 |---|---|---|
@@ -268,8 +268,8 @@ curl -i -X PUT http://127.0.0.1:8080/api/v1/sessions
 | 2 | auth 五条 | `store.UserStore` + JWT + bcrypt | ✅ `99ca4c5`（加固 `e2d873a`） |
 | 3 | sessions + messages | `store.Session/Message` 实现 | ✅ 已完成 `7ad5dc2` + `2f9b6b7` |
 | 4 | files 四条 | `internal/file` 解析 + 坐标 | ✅ 已完成 `b9c3c77` |
-| 5 | contracts/review + tasks | `internal/worker` + `agent.Runner`（review 场景） | A+B |
-| 6 | reviews 四条 | `store.Review` 实现 | A |
+| 5 | `contracts/review` + tasks | `internal/worker` + `agent.Runner`（review 场景） | ✅ 已完成 `8226608`（审查编排 `4f2f68d`） |
+| 6 | reviews 四条 | `store.Review` 实现 | ✅ 已完成 `8226608` |
 | 7 | statutes 两条 | 205 条法条入库 + 检索归一 | ✅ `8d37755` / `d1902af` |
 
 验收标准写在 openapi 里：前端代码生成读同一份文件，所以**接口一旦定了，前端就能并行开工**——这就是"契约先行"的全部好处。
