@@ -92,12 +92,32 @@ chmod 600 .env
 > `APP_ENV` 在 compose 里是必填项：没设（`docker compose ... config` 会直接报错）
 > 起不来，避免部署时忘改 `APP_ENV` 就按 dev 跑起来。
 
+> `AUTH_DEV_USER` 与 `AUTO_MIGRATE` 在 compose 里被强制写成 `""` / `"false"`，
+> 覆盖 `.env` 里的值。原因：`config.Validate` 只在 `production` 下拦 DevUser，
+> 按 `staging` 部署时 `.env` 里那个 `dev-user-0001` 会让所有未登录请求共享同一份数据；
+> `AUTO_MIGRATE=true` 则让服务每次启动都自己改表结构。
+
+> 国内机器上 `docker compose build` 可能卡在 `go mod download`：
+> `proxy.golang.org` / `storage.googleapis.com` 的 TLS 握手超时。
+> 用 `GOPROXY=https://goproxy.cn,direct docker compose -f deploy/docker-compose.yml build` 覆盖，
+> 默认值仍是官方源，CI 与海外机器不用改。
+
 # 3.3 首次建库要手动跑一次迁移（生产禁了 AUTO_MIGRATE）
 docker compose -f deploy/docker-compose.yml up -d mysql redis
 docker compose -f deploy/docker-compose.yml run --rm api -migrate
 
 # 3.4 起服务
 docker compose -f deploy/docker-compose.yml up -d api
+
+# 3.4.1 导入法条种子（空库时检索恒 0 命中，模型只能答"没有检索到法条"，
+#       前端一张卡片都不会有——这一步不做，前面全白搭）
+docker compose -f deploy/docker-compose.yml --profile seed run --rm seed
+# 期望输出：
+#   共 205 条法条 → /app/seed/statutes.json
+#   法条表重建完成：0 → 205 行
+#   逐字复核通过：[LCL-38 LCL-82 LCL-87 LL-44]
+# 必需在 3.3 的迁移之后跑（statutes 表由迁移建）。它执行的是 ReplaceAll
+# （先 DELETE 再批量 INSERT，结果幂等），所以用 profile 隔离、不随 up 自动启动。
 
 # 3.5 自签证书（8443 的 TLS 由 nginx 终止，证书必须先在宿主机生成）
 #     没有证书时 nginx 会直接退出（ssl_certificate 指向不存在的文件），
