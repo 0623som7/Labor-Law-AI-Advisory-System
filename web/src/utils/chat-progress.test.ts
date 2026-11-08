@@ -91,3 +91,14 @@ test('ABORT 之前收到过 delta 就不会退回等待态', () => {
   assert.equal(state.phase, 'stopped')
   assert.equal(statusLine(state, T0 + 2100).visible, false)
 })
+
+test('只有 running 时仍算"正在检索"，过了 2 秒窗口才让位', () => {
+  // 网络抖动时 citation 可能比 tool_call 晚到：running ≠ 检索完成。
+  const state = feed([{ type: 'tool_call', status: 'running', detail: '检索相关法条' }], [30])
+
+  assert.equal(state.citations, 0)
+  assert.equal(state.retrieval, 'running')
+  assert.equal(statusLine(state, T0 + 500).text, '正在检索相关法条…')
+  // 2 秒窗口过了、citation 还是 0，才可以说"未检索到"。
+  assert.equal(statusLine(state, T0 + 3000).text, '未检索到直接相关法条，正在分析')
+})

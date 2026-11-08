@@ -77,7 +77,9 @@ export function statusLine(progress: ChatProgress, now: number): StatusLine {
     return { visible: false, text: '', showSeconds: false }
   }
   const stage = waitingStage(now - progress.startedAt, progress.citations, {
-    retrievalDone: progress.retrieval !== null,
+    // 只有 ok / failed 才算"检索结束"。running 是刚开始，citation 可能还没到，
+    // 这时候把窗口让出去会先写「未检索到直接相关法条」，半秒后卡片又冒出来。
+    retrievalDone: progress.retrieval === 'ok' || progress.retrieval === 'failed',
   })
   return { visible: true, ...stage }
 }

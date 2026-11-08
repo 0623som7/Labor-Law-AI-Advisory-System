@@ -11,17 +11,26 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { fileURLToPath } from 'node:url'
 
 const API = process.env.API_BASE || 'http://127.0.0.1:8080'
 const WEB = process.env.WEB_BASE || 'http://127.0.0.1:5173'
 const CHROME = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const CDP_PORT = Number(process.env.CDP_PORT || 9481)
-const PDF = path.resolve(process.env.PDF_PATH || '.dev/contract-demo.pdf')
 const CONSOLE_WAIT = 60_000
 
-const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
+// 路径一律从脚本自身位置推，不依赖 cwd：从仓库根、从 web 目录、从任意地方跑都行。
+const here = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(here, '../..')
+const PDF = path.resolve(process.env.PDF_PATH || path.join(repoRoot, '.dev', 'contract-demo.pdf'))
+
 const tmpDir = path.join(here, '.tmp')
 fs.mkdirSync(tmpDir, { recursive: true })
+
+if (!fs.existsSync(PDF)) {
+  console.error('找不到演示合同：' + PDF + '（应从仓库根或 web 目录执行均可）')
+  process.exit(1)
+}
 
 const tag = 'demo'
 const stamp = new Date()
