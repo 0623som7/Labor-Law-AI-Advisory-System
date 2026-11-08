@@ -32,6 +32,9 @@ sudo mkswap /swapfile
 sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 sudo sysctl vm.swappiness=10
+# 2G 机型的差异（本 runbook 默认按 4G 机型写）：
+#   deploy/mysql/my.cnf 的 innodb_buffer_pool_size 改 256M，
+#   compose 里 mysql 的 memory 限额从 1G 改 640M。
 
 # 1.2 时区与时间同步
 sudo timedatectl set-timezone Asia/Shanghai
@@ -118,6 +121,19 @@ docker compose -f deploy/docker-compose.yml --profile seed run --rm seed
 #   逐字复核通过：[LCL-38 LCL-82 LCL-87 LL-44]
 # 必需在 3.3 的迁移之后跑（statutes 表由迁移建）。它执行的是 ReplaceAll
 # （先 DELETE 再批量 INSERT，结果幂等），所以用 profile 隔离、不随 up 自动启动。
+
+# 3.4.2 确认 MySQL 的配置真的被读到了（改过 my.cnf 就必须重跑这一步）
+#      deploy/mysql/my.cnf 由 deploy/mysql/Dockerfile COPY 进镜像并 chmod 644，
+#      不再是 bind mount —— 挂载方式在 Windows 上落成 0777，MySQL 会整份忽略它。
+docker compose -f deploy/docker-compose.yml exec -T mysql ls -l /etc/mysql/conf.d/my.cnf
+#   期望 -rw-r--r--（或 -r--r--r--）；看到 rwxrwxrwx 说明又被挂载覆盖了
+docker compose -f deploy/docker-compose.yml exec -T mysql \
+  sh -c 'mysqld --defaults-extra-file=/etc/mysql/conf.d/my.cnf --print-defaults'
+#   期望含 --innodb_buffer_pool_size=512M、--max_connections=50、--performance_schema=OFF，
+#   并且没有 "World-writable config file ... is ignored" 这句 Warning
+docker compose -f deploy/docker-compose.yml exec -T mysql mysql -uroot -p -N -e \
+  "select @@innodb_buffer_pool_size, @@max_connections, @@performance_schema, @@ngram_token_size, @@global.time_zone, @@innodb_flush_log_at_trx_commit"
+#   期望 536870912  50  0  2  +00:00  2
 
 # 3.5 自签证书（8443 的 TLS 由 nginx 终止，证书必须先在宿主机生成）
 #     没有证书时 nginx 会直接退出（ssl_certificate 指向不存在的文件），
@@ -226,3 +242,16 @@ mysqldump -h 127.0.0.1 -u root -p laborlaw > backup_$(date +%F_%H%M).sql
 - [ ] 用真实账号走一遍：登录 → 咨询出字 → 上传合同 → 审查出结果 → 点标注高亮
 - [ ] LLM 日预算没被打满（`usage_records` 当日 sum）
 - [ ] 演练一次回滚（切到上一个镜像 tag 再切回来）
+
+---
+
+## 8. 排查清单（症状 → 原因 → 处理）
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| 改了 `my.cnf`，`select @@...` 还是默认值（pool 128M、`max_connections` 151、`performance_schema` 1） | MySQL 静默忽略 world-writable 的配置文件，只在启动日志打一条 `World-writable config file '/etc/mysql/conf.d/my.cnf' is ignored` | 确认容器内 `ls -l /etc/mysql/conf.d/my.cnf` 是 644/444。bind mount 在 Windows 上必定 0777、compose `configs` 在 standalone 模式也不改权限，所以本项目改用 `deploy/mysql/Dockerfile` 把文件 COPY 进镜像并 chmod 644；改完必须按 3.4.2 用 `--print-defaults` 验证一次 |
+| 上传接口 500，日志 `open /app/storage/...: permission denied` | bind mount 的宿主目录属主是 root，容器内是 uid 10001 | 按 3.7 做 `chown -R 10001:10001 storage` |
+| `docker compose exec api /app/api -migrate` 报 `exec: "C:/.../app/api": stat ...` | Git Bash 把 `/app/api` 当成路径改写成 Windows 路径 | 命令前加 `MSYS_NO_PATHCONV=1` |
+| 检索恒 0 命中，模型只答"没有检索到法条" | 空库，没导种子 | 按 3.4.1 跑 `--profile seed run --rm seed` |
+| 会话列表里刚建的会话排在最后 | `default-time-zone` 生效前后写入的时间混着 CST 与 UTC（8 小时差） | 统一时区口径后清库重灌，或把 `my.cnf` 的 `default-time-zone` 改成 `'+08:00'` 再重跑一次迁移 |
+
