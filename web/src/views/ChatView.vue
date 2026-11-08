@@ -16,12 +16,18 @@ import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
 import { streamChat } from '@/api/chat'
 import * as sessionApi from '@/api/session'
-import type { ChatMessage, Citation, ToolStatus } from '@/api/types'
+import type { ChatMessage, Citation } from '@/api/types'
+import {
+  applyProgress,
+  startProgress,
+  statusLine,
+  type ChatProgress,
+  type ProgressEvent,
+} from '@/utils/chat-progress'
 import { historyBubbles } from '@/utils/chat-history'
 import { formatRelative } from '@/utils/format-relative'
 import type { Session } from '@/api/types'
 import CitationCard from '@/components/CitationCard.vue'
-import ToolStatusBar from '@/components/ToolStatusBar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { createStreamSession, type StreamSession } from '@/utils/stream-session'
 
@@ -32,12 +38,11 @@ interface UiMessage {
   content: string
   /** 只有本轮实时生成的消息会有；历史消息恒为空数组 */
   citations: Citation[]
-  /** 占位气泡状态：还没收到第一个 delta */
-  thinking: boolean
-  toolStatus: ToolStatus | null
-  toolDetail: string
-  /** 首个 delta 到达后状态条淡出 */
-  barFaded: boolean
+  /**
+   * 本轮流式回答的进度（纯函数状态机，见 utils/chat-progress.ts）。
+   * 历史消息为 null，因为历史消息本来就没有"等待"这件事。
+   */
+  progress: ChatProgress | null
   /** 后端 error 帧或 HTTP 失败 */
   error: string
   interrupted: boolean
@@ -64,6 +69,34 @@ let session: StreamSession | null = null
 // 组件是否还在。卸载之后不再碰 DOM/滚动，也不用再去改 messages。
 let alive = true
 let keySeed = 0
+/**
+ * 状态行的"当前时间"。等待态文案靠它重算（2s / 8s / 20s 三档切换、
+ * 20 秒后秒数跳动）。它只表示"现在几点"，不代表任何进度，所以不是假进度条。
+ */
+const nowTick = ref(Date.now())
+let ticker: ReturnType<typeof setInterval> | null = null
+
+function startTicking(): void {
+  stopTicking()
+  // 250ms 一跳：够让 1999/2000ms 这种边界在肉眼上看不出来偏差，又不费 CPU。
+  ticker = setInterval(() => {
+    nowTick.value = Date.now()
+  }, 250)
+}
+
+function stopTicking(): void {
+  if (ticker !== null) {
+    clearInterval(ticker)
+    ticker = null
+  }
+}
+
+/** 本轮流式回答当前该显示的状态行；历史消息恒为不可见。 */
+function statusOf(m: UiMessage): { visible: boolean; text: string } {
+  if (m.progress === null) return { visible: false, text: '' }
+  const line = statusLine(m.progress, nowTick.value)
+  return { visible: line.visible, text: line.text }
+}
 
 const currentTitle = computed(() => {
   if (currentSessionId.value === '') return '新对话'
@@ -99,10 +132,7 @@ function newMessage(role: 'user' | 'assistant', content: string, fromHistory = f
     role,
     content,
     citations: [],
-    thinking: false,
-    toolStatus: null,
-    toolDetail: '',
-    barFaded: false,
+    progress: null,
     error: '',
     interrupted: false,
     fromHistory,
@@ -190,8 +220,12 @@ async function send(): Promise<void> {
 
   messages.value.push(newMessage('user', text))
   const assistant = reactive(newMessage('assistant', '')) as UiMessage
-  assistant.thinking = true
+  // 等待态从"点击发送"就开始计时，而不是从 meta 到齐开始：
+  // 用户感受到的等待就是从按下发送那一刻起的。
+  assistant.progress = startProgress(Date.now())
   messages.value.push(assistant)
+  nowTick.value = Date.now()
+  startTicking()
   await scrollToBottom()
 
   sending.value = true
@@ -199,6 +233,12 @@ async function send(): Promise<void> {
   const controller = new AbortController()
   current.bind(controller)
   session = current
+
+  /** 把真实事件喂给状态机；状态行的所有文案都从这里来。 */
+  const push = (event: ProgressEvent): void => {
+    if (assistant.progress === null) return
+    assistant.progress = applyProgress(assistant.progress, event, Date.now())
+  }
 
   try {
     const result = await streamChat(
@@ -214,34 +254,35 @@ async function send(): Promise<void> {
           // 新会话的 ID 只从这里拿：服务端在建会话时生成，
           // 没有它下一轮就会又新建一个会话。
           currentSessionId.value = event.session_id
+          push({ type: 'meta' })
           if (startedNew) void refreshSessions()
         },
         onDelta: (event) => {
           if (current.closed()) return
-          assistant.thinking = false
-          assistant.barFaded = true
+          // 先喂事件再写正文：状态行消失要和第一个字同时发生。
+          push({ type: 'delta' })
           assistant.content += event.text
           void scrollToBottom()
         },
         onCitation: (event) => {
           if (current.closed()) return
           addCitation(assistant, event.citation)
+          push({ type: 'citation' })
         },
         onToolCall: (event) => {
           if (current.closed()) return
-          assistant.toolStatus = event.tool.status
-          assistant.toolDetail = event.tool.detail
+          push({ type: 'tool_call', status: event.tool.status, detail: event.tool.detail })
         },
         onDone: () => {
           if (current.closed()) return
-          assistant.thinking = false
+          push({ type: 'done' })
         },
       },
       controller.signal,
     )
 
-    assistant.thinking = false
     if (result.aborted) {
+      push({ type: 'stopped' })
       assistant.interrupted = true
       if (assistant.content === '') assistant.content = '（已中断）'
     } else if (result.done) {
@@ -251,21 +292,21 @@ async function send(): Promise<void> {
   } catch (error) {
     // 已停止或已卸载：不要把错误再糊到气泡上（停止是用户主动的，不是失败）。
     if (current.closed() || !alive) return
-    assistant.thinking = false
     if (error instanceof ApiError && error.code === 40101) {
       // 拦截器已经把令牌清掉并跳登录页，这里不再往气泡上写错误。
       return
     }
-    assistant.error = error instanceof Error ? error.message : '发送失败'
+    const message = error instanceof Error ? error.message : '发送失败'
+    push({ type: 'error', message })
+    assistant.error = message
     if (assistant.content === '') assistant.content = '（没有收到回答）'
-    assistant.barFaded = true
   } finally {
+    stopTicking()
     if (session === current) session = null
     // "发送中"是界面状态，跟这轮流有没有被掐断无关：点了停止之后必须复位，
     // 否则输入框永远发不出下一条（e2e 第 4 步就是抓这个）。
     sending.value = false
     if (!alive) return
-    assistant.thinking = false
     await scrollToBottom()
   }
 }
@@ -395,21 +436,14 @@ onBeforeUnmount(() => {
           :class="m.role === 'user' ? 'row-user' : 'row-assistant'"
         >
           <div class="bubble" :class="m.role === 'user' ? 'bubble-user' : 'bubble-assistant'">
-            <template v-if="m.thinking">
-              <span class="thinking">正在思考…</span>
-            </template>
-            <p v-else class="content ll-pre-wrap">{{ m.content }}</p>
+            <div v-if="statusOf(m).visible" class="status-row">
+              <span class="status-dot" aria-hidden="true" />
+              <span class="status-text">{{ statusOf(m).text }}</span>
+            </div>
+            <p v-if="m.content !== ''" class="content ll-pre-wrap">{{ m.content }}</p>
 
             <p v-if="m.interrupted" class="meta-line">已中断</p>
             <p v-if="m.error" class="error-line">{{ m.error }}</p>
-
-            <div
-              v-if="!m.fromHistory && (m.thinking || m.toolStatus !== null)"
-              class="tool-row"
-              :class="{ faded: m.barFaded }"
-            >
-              <ToolStatusBar :status="m.toolStatus" :detail="m.toolDetail" :faded="m.barFaded" />
-            </div>
 
             <div v-if="m.citations.length > 0" class="citations">
               <CitationCard v-for="c in m.citations" :key="c.statute_id" :citation="c" />
@@ -706,14 +740,63 @@ onBeforeUnmount(() => {
   border: 1px solid var(--ll-border);
 }
 
+/*
+ * 状态行。
+ *
+ * 后端 0.1 秒把 meta / tool_call / citation 推完，然后模型推理 30 多秒不吐字。
+ * 状态行就是给这 30 秒一个"它在动"的可见证据：
+ *   - 文案由真实耗时与真实 citation 条数算出（见 utils/waiting.ts）；
+ *   - 左边的小圆点只是呼吸动画，不带任何进度含义；
+ *   - 第一个 delta 到达时整行消失，不留"已完成"的尾巴。
+ * 次要文字色，不抢正文。
+ */
+.status-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--ll-text-weak);
+}
+
+.status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--ll-primary);
+  border-radius: 50%;
+  animation: breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+/* 关掉动效的用户：静态点，别抖。 */
+@media (prefers-reduced-motion: reduce) {
+  .status-dot {
+    opacity: 0.75;
+    animation: none;
+    transform: none;
+  }
+}
+
 .content {
   margin: 0;
   font-size: 14px;
 }
 
-.thinking {
-  font-size: 13px;
-  color: var(--ll-text-weak);
+/* 状态行与正文之间留一点气口，正文第一行不要贴着点点。 */
+.status-row + .content {
+  margin-top: 6px;
 }
 
 .meta-line {
@@ -726,24 +809,6 @@ onBeforeUnmount(() => {
   margin: 6px 0 0;
   font-size: 12px;
   color: #d93026;
-}
-
-.tool-row {
-  max-height: 40px;
-  margin-top: 8px;
-  overflow: hidden;
-  /* 首个 delta 到达后淡出并收起高度：直接 v-if 抽掉会有一次跳动，
-     而"正在检索法条…"这句话应该在正文出现时安静退出，不是突然消失。 */
-  transition:
-    opacity 0.3s ease,
-    max-height 0.3s ease,
-    margin-top 0.3s ease;
-}
-
-.tool-row.faded {
-  max-height: 0;
-  margin-top: 0;
-  opacity: 0;
 }
 
 .citations {

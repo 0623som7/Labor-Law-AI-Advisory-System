@@ -277,10 +277,10 @@ async function main() {
     const state = () =>
       cdp.eval(`
         (() => ({
-          thinking: !!document.querySelector('.thinking'),
-          thinkingText: document.querySelector('.thinking')?.textContent ?? '',
-          statusBar: document.querySelector('.tool-label')?.textContent ?? '',
-          statusBarVisible: !!document.querySelector('.tool-bar:not(.faded)'),
+          thinking: !!document.querySelector('.status-row'),
+          thinkingText: document.querySelector('.status-text')?.textContent ?? '',
+          statusBar: document.querySelector('.status-text')?.textContent ?? '',
+          statusBarVisible: !!document.querySelector('.status-row'),
           citations: [...document.querySelectorAll('.citation-card')].map((el) => ({
             title: el.querySelector('.citation-title')?.textContent ?? '',
             text: (el.querySelector('.citation-text')?.textContent ?? '').slice(0, 40),
@@ -295,8 +295,8 @@ async function main() {
 
     await sendMessage(firstQuestion)
 
-    // 状态条是时序问题：running 只闪一下就被 ok 覆盖，单点采样很容易只抓到
-    // "正在思考…"。所以整段回答期间持续采样，最后打印见过的所有文案。
+    // 状态行是时序问题：0.03 秒内 meta / tool_call 就到齐，之后文案按 2s/8s/20s 跳档，
+    // 单点采样只会抓到一档。所以整段回答期间持续采样，最后打印见过的所有文案。
     const statusLabels = []
     let barFaded = false
     const sampler = (async () => {
@@ -306,8 +306,8 @@ async function main() {
         const snap = await cdp
           .eval(`
             (() => ({
-              label: document.querySelector('.tool-label')?.textContent ?? '',
-              faded: !!document.querySelector('.tool-row.faded'),
+              label: document.querySelector('.status-text')?.textContent ?? '',
+              faded: !document.querySelector('.status-row'),
               citations: document.querySelectorAll('.citation-card').length,
             }))()
           `)
@@ -315,7 +315,7 @@ async function main() {
         if (!snap) return
         if (snap.label !== '' && !statusLabels.includes(snap.label)) statusLabels.push(snap.label)
         if (snap.faded) barFaded = true
-        // 淡出发生在首个 delta（可能在法条卡片之后 1–3 秒），所以等到真淡出再收工。
+        // 状态行在首个 delta 到达时整行移除（可能在法条卡片之后十几秒），等到真消失再收工。
         if (snap.citations > 0 && snap.faded) return
         await sleep(100)
       }
@@ -327,7 +327,7 @@ async function main() {
       '占位气泡出现',
       100,
     )
-    const placeholder = await cdp.eval(`document.querySelector('.thinking')?.textContent ?? ''`)
+    const placeholder = await cdp.eval(`document.querySelector('.status-text')?.textContent ?? ''`)
     log('2a 占位', `占位气泡出现=${sawThinking} 文案=${JSON.stringify(placeholder)}`)
 
     const sawStatus = await waitFor(
@@ -420,7 +420,7 @@ async function main() {
       (() => ({
         interrupted: document.querySelectorAll('.meta-line').length,
         text: (document.querySelector('.meta-line')?.textContent ?? '').trim(),
-        thinking: !!document.querySelector('.thinking'),
+        thinking: !!document.querySelector('.status-row'),
       }))()
     `)
     log(
