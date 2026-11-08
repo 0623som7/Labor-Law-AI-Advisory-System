@@ -3,7 +3,9 @@
 //   node web/e2e/demo.mjs
 //
 // 前置条件与 full-flow.mjs 一样：api 在 8080、vite dev 在 5173、法条库 205 条、
-// 本机有 Chrome、上游 LLM 可用（qwen3.8-max 单轮 20–45 秒，要给够等待时间）。
+// 本机有 Chrome、上游 LLM 可用。
+// 模型可配：qwen-plus 首字约 0.5–1s、单轮 6–8s；qwen3.8-max 首字 18–37s、单轮 26–44s。
+// 下面的等待上限按慢档留足余量，不要收紧。
 //
 // 任何一步失败都非 0 退出；最后打印一行 DEMO OK … 方便直接贴到答辩笔记里。
 
