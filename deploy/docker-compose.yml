@@ -116,6 +116,29 @@ services:
         limits:
           memory: 64M
 
+  # 一次性法条导入。用 profile 隔离，默认 `up` 不会启动它——
+  # 它的工作是把 statutes 表整个删掉重建（ReplaceAll），混进默认启动等于每次起服务都清一遍表。
+  # 用法：docker compose --profile seed run --rm seed（跑完即退，restart: "no"）。
+  seed:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    profiles: ["seed"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: ${APP_ENV:?APP_ENV 必须显式设置（dev / staging / production）}
+      # 与 api 同源：用 root 是因为 statutes 表由 api 的迁移建、没有单独的业务账号。
+      MYSQL_DSN: "root:${MYSQL_ROOT_PASSWORD:-laborlaw_root}@tcp(mysql:3306)/laborlaw?parseTime=true&charset=utf8mb4&loc=UTC"
+    # -source 指到 HTML 原文目录（不是 /app/seed 本身：sources 里写的是文件名，
+    # 解析器把它们和 -source 拼在一起读）；-out 指到镜像内那份可写的拷贝，
+    # 因为 WORKDIR=/app 下的默认相对路径是 deploy/seed/statutes.json，容器里没有这个目录。
+    entrypoint: ["/app/statuteseed", "-import", "-source", "/app/seed/source", "-out", "/app/seed/statutes.json"]
+    restart: "no"
+
 volumes:
   mysql-data:
   redis-data:
