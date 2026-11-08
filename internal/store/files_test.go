@@ -338,3 +338,67 @@ func TestFilesLoadPagesEmptyBlocksIsArray(t *testing.T) {
 		t.Fatalf("无文本页序列化 = %s, want 含 \"Blocks\":[]", raw)
 	}
 }
+
+// TestFilesFinishParseAtomic 守住"元数据与页面同生共死"。
+//
+// 缺陷形态：finishParse 先 Update(page_count) 再 SavePages，第二次写失败就留下
+// page_count＞0 但没有页面的记录——LoadPages 报 40401，重传又因为 page_count＞0
+// 被当成"已经解析过"，这份合同从此永远没有文本层。
+func TestFilesFinishParseAtomic(t *testing.T) {
+	db := testDB(t)
+	userID := id.New()
+	cleanupUser(t, db, userID)
+
+	files := NewFiles(db)
+	rec := newFile(userID)
+	ctx := context.Background()
+	if err := files.Create(ctx, rec); err != nil {
+		t.Fatalf("Create() 失败: %v", err)
+	}
+
+	// 写页面阶段失败：两个块用同一个 block_id，第二条 INSERT 撞主键。
+	broken := samplePages()
+	broken[0].Blocks[1].ID = broken[0].Blocks[0].ID
+	err := files.FinishParse(ctx, rec.ID, 2, true, 0.9, broken)
+	if err == nil {
+		t.Fatal("FinishParse 本应失败，实际成功了")
+	}
+
+	got, gerr := files.Get(ctx, userID, rec.ID)
+	if gerr != nil {
+		t.Fatalf("Get() 失败: %v", gerr)
+	}
+	if got.PageCount != 0 {
+		t.Fatalf("失败后 page_count = %d, want 0（元数据必须跟着页面一起回滚）", got.PageCount)
+	}
+	if got.OCRUsed {
+		t.Fatal("失败后 ocr_used = true，元数据没有回滚")
+	}
+	if _, lerr := files.LoadPages(ctx, rec.ID); port.CodeOf(lerr) != port.CodeNotFound {
+		t.Fatalf("失败后 LoadPages 错误码 = %v, want 40401（不该留下半份页面）", port.CodeOf(lerr))
+	}
+
+	// 正常路径：一次调用同时写元数据与页面。
+	if err := files.FinishParse(ctx, rec.ID, 2, false, 0.97, samplePages()); err != nil {
+		t.Fatalf("FinishParse() 失败: %v", err)
+	}
+	got, gerr = files.Get(ctx, userID, rec.ID)
+	if gerr != nil {
+		t.Fatalf("Get() 失败: %v", gerr)
+	}
+	if got.PageCount != 2 || got.OCRUsed || got.Confidence < 0.96 || got.Confidence > 0.98 {
+		t.Fatalf("元数据回写不对: page_count=%d ocr=%v confidence=%v", got.PageCount, got.OCRUsed, got.Confidence)
+	}
+	pages, err := files.LoadPages(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("LoadPages() 失败: %v", err)
+	}
+	if len(pages) != 2 {
+		t.Fatalf("页数 = %d, want 2", len(pages))
+	}
+
+	// 不存在的文件不能静默成功。
+	if err := files.FinishParse(ctx, id.New(), 1, false, 0.5, samplePages()[:1]); port.CodeOf(err) != port.CodeNotFound {
+		t.Fatalf("不存在的文件错误码 = %v, want 40401", port.CodeOf(err))
+	}
+}

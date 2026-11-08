@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 
 	"laborlaw/internal/id"
@@ -137,51 +138,99 @@ func (f *Files) SavePages(ctx context.Context, fileID string, pages []port.Parse
 	}
 
 	return withTx(ctx, f.db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM text_blocks WHERE file_id = ?`, fileID); err != nil {
-			return port.Wrap(port.CodeInternal, err, "清理旧文本块失败")
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM file_pages WHERE file_id = ?`, fileID); err != nil {
-			return port.Wrap(port.CodeInternal, err, "清理旧页面失败")
-		}
-
-		for _, page := range pages {
-			pageID := id.New()
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO file_pages (id, file_id, page_no, width, height) VALUES (?, ?, ?, ?, ?)`,
-				pageID, fileID, page.Index, page.Width, page.Height,
-			); err != nil {
-				return port.Wrap(port.CodeInternal, err, "写入第 %d 页失败", page.Index)
-			}
-
-			for _, block := range page.Blocks {
-				// block_id 必须沿用解析层给的值：B 会把 finding 的坐标回填成
-				// block_id + char_span，重新生成 ID 等于把这条链路剪断。
-				blockID := block.ID
-				if blockID == "" {
-					blockID = id.New()
-				}
-
-				// 不截断：截断会让不同块的 ID 收敛成同一个主键，比直接报错更糟。
-				// 这里返回 40001 而不是等 MySQL 报 1406 再包成 50001：
-				// 后者会让用户看到"上传失败"，却查不出是哪一块超长。
-				if len(blockID) > maxBlockIDLen {
-					return port.New(port.CodeInvalidArgument, "文本块 ID 超长: %d", len(blockID))
-				}
-
-				if _, err := tx.ExecContext(ctx, `INSERT INTO text_blocks
-						(id, page_id, file_id, page_no, bbox_x0, bbox_y0, bbox_x1, bbox_y1,
-						 text, char_start, char_end)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					blockID, pageID, fileID, page.Index,
-					block.BBox[0], block.BBox[1], block.BBox[2], block.BBox[3],
-					block.Text, block.CharStart, block.CharEnd,
-				); err != nil {
-					return port.Wrap(port.CodeInternal, err, "写入第 %d 页文本块失败", page.Index)
-				}
-			}
-		}
-		return nil
+		return writePages(ctx, tx, fileID, pages)
 	})
+}
+
+// FinishParse 把解析元数据回写与文本块写入放进同一个事务。
+//
+// 分两次写会留下永久坏文件：先 UPDATE page_count＞0，再 SavePages 失败（磁盘满、
+// 连接断、ctx 取消），这条记录就变成"有页数、没有页面"——LoadPages 报 40401，
+// 上传接口折成 42201；更糟的是重传时因为 page_count＞0 被当成"已经解析过"直接返回，
+// 用户重传一百次也拿不到文本。两个写必须同生共死。
+//
+// 参数是散装的而不是整条 *port.FileRecord：调用方手上只有解析结果，文件名、大小
+// 这些字段这次不该动，整条回写会把并发改名之类的改动覆盖掉。
+func (f *Files) FinishParse(ctx context.Context, fileID string, pageCount int, ocrUsed bool, confidence float64, pages []port.ParsedPage) error {
+	if fileID == "" {
+		return port.New(port.CodeInvalidArgument, "file_id 为空")
+	}
+
+	return withTx(ctx, f.db, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE files SET
+			page_count = ?, ocr_used = ?, confidence = ?, updated_at = CURRENT_TIMESTAMP(3)
+			WHERE id = ?`, pageCount, ocrUsed, confidence, fileID)
+		if err != nil {
+			return port.Wrap(port.CodeInternal, err, "回写解析结果失败")
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return port.Wrap(port.CodeInternal, err, "读取更新行数失败")
+		}
+		// affected==0 有两种含义：文件不存在，或者新值与旧值完全相同（同一毫秒内
+		// updated_at 没变时 MySQL 也算 0 行）。不能像 Update 那样直接判 40401，
+		// 否则重复解析同一份合同会被报成"文件不存在"。
+		if affected == 0 {
+			var exists int
+			if qerr := tx.QueryRowContext(ctx, `SELECT 1 FROM files WHERE id = ?`, fileID).Scan(&exists); qerr != nil {
+				if errors.Is(qerr, sql.ErrNoRows) {
+					return port.New(port.CodeNotFound, "文件不存在")
+				}
+				return port.Wrap(port.CodeInternal, qerr, "确认文件是否存在失败")
+			}
+		}
+
+		return writePages(ctx, tx, fileID, pages)
+	})
+}
+
+// writePages 在给定事务里先删后插整份文档的页面与文本块。
+func writePages(ctx context.Context, tx *sql.Tx, fileID string, pages []port.ParsedPage) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM text_blocks WHERE file_id = ?`, fileID); err != nil {
+		return port.Wrap(port.CodeInternal, err, "清理旧文本块失败")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM file_pages WHERE file_id = ?`, fileID); err != nil {
+		return port.Wrap(port.CodeInternal, err, "清理旧页面失败")
+	}
+
+	for _, page := range pages {
+		pageID := id.New()
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO file_pages (id, file_id, page_no, width, height) VALUES (?, ?, ?, ?, ?)`,
+			pageID, fileID, page.Index, page.Width, page.Height,
+		); err != nil {
+			return port.Wrap(port.CodeInternal, err, "写入第 %d 页失败", page.Index)
+		}
+
+		for _, block := range page.Blocks {
+			// block_id 必须沿用解析层给的值：B 会把 finding 的坐标回填成
+			// block_id + char_span，重新生成 ID 等于把这条链路剪断。
+			blockID := block.ID
+			if blockID == "" {
+				blockID = id.New()
+			}
+
+			// 不截断：截断会让不同块的 ID 收敛成同一个主键，比直接报错更糟。
+			// 这里返回 40001 而不是等 MySQL 报 1406 再包成 50001：
+			// 后者会让用户看到"上传失败"，却查不出是哪一块超长。
+			if len(blockID) > maxBlockIDLen {
+				return port.New(port.CodeInvalidArgument, "文本块 ID 超长: %d", len(blockID))
+			}
+
+			if _, err := tx.ExecContext(ctx, `INSERT INTO text_blocks
+					(id, page_id, file_id, page_no, bbox_x0, bbox_y0, bbox_x1, bbox_y1,
+					 text, char_start, char_end)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				blockID, pageID, fileID, page.Index,
+				block.BBox[0], block.BBox[1], block.BBox[2], block.BBox[3],
+				block.Text, block.CharStart, block.CharEnd,
+			); err != nil {
+				return port.Wrap(port.CodeInternal, err, "写入第 %d 页文本块失败", page.Index)
+			}
+		}
+	}
+
+	return nil
 }
 
 // LoadPages 读回整份文档的解析结果。

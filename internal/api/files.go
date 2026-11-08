@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -33,7 +34,7 @@ const pdfMagic = "%PDF-"
 //  3. 前 5 字节必须是 %PDF-，否则 41501；
 //  4. 落盘时边写边算 sha256（一次读，不把文件读进内存两遍）；
 //  5. 同用户同哈希直接返回已有记录，跳过解析；
-//  6. 落盘 + Create + 解析 + Update + SavePages；
+//  6. 落盘 + Create + 解析 + 一次事务写入元数据与页面；
 //  7. 解析返回 42201 时，仍然把 file 记录与 confidence 落库，然后再返回 42201。
 func (a *API) uploadFile(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -176,9 +177,14 @@ func (a *API) finishParse(c *gin.Context, rec *port.FileRecord) {
 		rec.PageCount = doc.PageCount
 		rec.OCRUsed = doc.OCRUsed
 		rec.Confidence = doc.Confidence
-		if uerr := a.store.File().Update(ctx, rec); uerr != nil {
-			// 连元数据都写不进去时，解析结果没有意义：直接报错，不要假装成功。
-			Fail(c, uerr)
+		// 解析出错（典型是 42201 无文本层）时只留线索、不写页面：半份文本比没有更误导。
+		var pages []port.ParsedPage
+		if parseErr == nil {
+			pages = doc.Pages
+		}
+		if perr := a.saveParse(ctx, rec, pages); perr != nil {
+			// 连解析结果都写不进去时，这次解析没有意义：直接报错，不要假装成功。
+			Fail(c, perr)
 			return
 		}
 	}
@@ -188,12 +194,31 @@ func (a *API) finishParse(c *gin.Context, rec *port.FileRecord) {
 		return
 	}
 
-	if err := a.store.File().SavePages(ctx, rec.ID, doc.Pages); err != nil {
-		Fail(c, err)
-		return
-	}
-
 	OK(c, toFileRecordDTO(rec))
+}
+
+// parseFinisher 是 store.Files 提供的"元数据 + 页面同事务写入"能力。
+//
+// port.FileStore 已冻结（两人共用的契约），不能给它加方法，所以这里用结构匹配的
+// 窄接口：真实现有它就一次事务写完，测试里的假实现没有就退回两步写。
+type parseFinisher interface {
+	FinishParse(ctx context.Context, fileID string, pageCount int, ocrUsed bool, confidence float64, pages []port.ParsedPage) error
+}
+
+// saveParse 落库解析结果：能用单事务就单事务，否则先写页面、再回写元数据。
+//
+// 兜底路径的顺序不能反过来。先元数据后页面时，第二次写失败会留下 page_count＞0
+// 但没有页面的坏记录：LoadPages 报 40401、重传又因为 page_count＞0 被当成
+// "已经解析过"直接返回，这份文件从此永远拿不到文本。反过来最坏只留下一份
+// page_count=0 的记录，下次上传会重新解析。
+func (a *API) saveParse(ctx context.Context, rec *port.FileRecord, pages []port.ParsedPage) error {
+	if fin, ok := a.store.File().(parseFinisher); ok {
+		return fin.FinishParse(ctx, rec.ID, rec.PageCount, rec.OCRUsed, rec.Confidence, pages)
+	}
+	if err := a.store.File().SavePages(ctx, rec.ID, pages); err != nil {
+		return err
+	}
+	return a.store.File().Update(ctx, rec)
 }
 
 // getFile 处理 GET /api/v1/files/{fileId}。
