@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"laborlaw/internal/config"
 	"laborlaw/internal/port"
@@ -58,6 +59,12 @@ func WithEmbeddingHTTPClient(h *http.Client) EmbeddingOption {
 
 // NewEmbeddingClient 构造向量化客户端。
 func NewEmbeddingClient(cfg config.LLMConfig, opts ...EmbeddingOption) *EmbeddingClient {
+	// 零值 Timeout 会被 context.WithTimeout 当成"立刻到期"，请求必然失败，
+	// 而失败又会被检索层吃成关键词降级——只在日志里留一条 Warn，排查成本极高。
+	// 构造函数兜底，别让每个调用方各自记得填。
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = 60 * time.Second
+	}
 	e := &EmbeddingClient{
 		cfg:  cfg,
 		http: &http.Client{Transport: newTransport(cfg)},
@@ -66,8 +73,13 @@ func NewEmbeddingClient(cfg config.LLMConfig, opts ...EmbeddingOption) *Embeddin
 	for _, opt := range opts {
 		opt(e)
 	}
-	if u, err := url.Parse(cfg.BaseURL); err == nil {
-		e.baseURL = u
+	// 空串必须单独拦：url.Parse("") 会"成功"返回一个空 URL，endpoint() 于是拼出
+	// "/embeddings"，请求在传输层才炸成 50201——错在配置，报错却指向网络。
+	// 这里不填 baseURL，留给 endpoint() 报 40001。
+	if strings.TrimSpace(cfg.BaseURL) != "" {
+		if u, err := url.Parse(cfg.BaseURL); err == nil {
+			e.baseURL = u
+		}
 	}
 	return e
 }

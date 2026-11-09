@@ -10,7 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"laborlaw/internal/config"
 	"laborlaw/internal/port"
 )
 
@@ -291,5 +293,47 @@ func TestEmbedSendsModelAndBatchSize(t *testing.T) {
 		if len(body.Input) > maxEmbedBatch {
 			t.Fatalf("单批 %d 条，超过上限 %d", len(body.Input), maxEmbedBatch)
 		}
+	}
+}
+
+// TestEmbeddingClientDefaultsZeroTimeout 钉住"构造函数兜底 Timeout"。
+//
+// 零值 Timeout 会让 context.WithTimeout(ctx, 0) 立刻到期，请求必失败；
+// 而失败又被检索层吃成关键词降级，只在日志里留一条 Warn——这类故障排查成本极高，
+// 所以兜底必须做在构造函数里，不能指望每个调用方记得填。
+func TestEmbeddingClientDefaultsZeroTimeout(t *testing.T) {
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1.0,0.0]}],"usage":{}}`))
+	}))
+	t.Cleanup(slow.Close)
+
+	cfg := config.LLMConfig{BaseURL: slow.URL, APIKey: "sk-test-key-do-not-leak"}
+	if cfg.Timeout != 0 {
+		t.Fatalf("前置条件：Timeout 必须是零值，实际 %v", cfg.Timeout)
+	}
+
+	e := NewEmbeddingClient(cfg)
+	vecs, err := e.Embed(context.Background(), "text-embedding-v3", []string{"甲"})
+	if err != nil {
+		t.Fatalf("零值 Timeout 应当被兜底成可用值，实际失败: %v", err)
+	}
+	if len(vecs) != 1 || len(vecs[0]) != 2 {
+		t.Fatalf("向量形状不对: %v", vecs)
+	}
+}
+
+// TestEmbeddingClientRejectsEmptyBaseURL 钉住"空 BaseURL 报 40001 而不是 panic"。
+//
+// url.Parse("") 会成功返回一个空 URL，于是 endpoint() 拼出 "/embeddings"，
+// 请求在传输层才炸成 50301——错在这里，报错却指向网络。
+func TestEmbeddingClientRejectsEmptyBaseURL(t *testing.T) {
+	e := NewEmbeddingClient(config.LLMConfig{APIKey: "sk-test-key-do-not-leak"})
+	_, err := e.Embed(context.Background(), "text-embedding-v3", []string{"甲"})
+	if err == nil {
+		t.Fatal("空 BaseURL 应当报错")
+	}
+	if got := port.CodeOf(err); got != port.CodeInvalidArgument {
+		t.Fatalf("错误码 = %s, want %s（%v）", got, port.CodeInvalidArgument, err)
 	}
 }
