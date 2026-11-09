@@ -250,21 +250,20 @@ func TestStatutesSearchTextBlankQuery(t *testing.T) {
 	}
 }
 
-// 判例与向量没做就是没做，接口上必须是明确的"尚未实现"，不能返回空结果假装"没查到"。
+// 判例没做就是没做，接口上必须是明确的"尚未实现"，不能返回空结果假装"没查到"。
 // 项目约定这个状态用 50001 表达（见 errNotImplemented 的注释），所以同时钉码与文案。
+//
+// 向量两个方法已落地（见 embeddings_test.go），不在这条用例里。
 func TestStatutesUnimplementedDomains(t *testing.T) {
 	db := testDB(t)
 	st := NewStatutes(db)
 	ctx := context.Background()
 
 	cases := map[string]error{
-		"ReplaceCases":   st.ReplaceCases(ctx, nil),
-		"SaveEmbeddings": st.SaveEmbeddings(ctx, nil),
+		"ReplaceCases": st.ReplaceCases(ctx, nil),
 	}
 	_, err := st.SearchCases(ctx, "q", "", 0)
 	cases["SearchCases"] = err
-	_, err = st.LoadEmbeddings(ctx, "", "")
-	cases["LoadEmbeddings"] = err
 
 	for name, err := range cases {
 		if !hasCode(err, port.CodeInternal) || !strings.Contains(err.Error(), "尚未实现") {

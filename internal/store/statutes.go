@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 
 	"laborlaw/internal/port"
@@ -26,10 +27,10 @@ const (
 // 有上千个占位符，出问题时日志里那一条语句本身就没法读。
 const insertBatchSize = 50
 
-// Statutes 是 port.StatuteStore 的法条部分实现。
+// Statutes 是 port.StatuteStore 的实现：法条读写、检索与向量。
 //
-// 判例与向量的四个方法仍返回"尚未实现"：判例没有权威数据来源、向量没有选定
-// embedding 模型，现在写出实现也无法验证，留明确错误比留一段没被跑过的 SQL 强。
+// 判例的两个方法仍返回"尚未实现"：没有权威判例来源，写出来的 SQL 无从验证，
+// 留明确错误比留一段没被跑过的查询强。
 type Statutes struct {
 	db querier
 }
@@ -213,12 +214,130 @@ func (s *Statutes) SearchCases(context.Context, string, string, int) ([]port.Cas
 	return nil, errNotImplemented("判例")
 }
 
-// SaveEmbeddings 向量域尚未落地：embedding 模型未定，向量维度都无从确定。
-func (s *Statutes) SaveEmbeddings(context.Context, []port.Embedding) error {
-	return errNotImplemented("向量")
+// SaveEmbeddings 批量写向量，同一 (owner_type, owner_id, model) 覆盖旧值。
+//
+// 先全量校验再写：半截写入是最坏的失败形态——一部分法条有向量、一部分没有，
+// 混合检索时缺向量的那些只能靠词表那一路，而分数上看不出差别，只会觉得
+// "召回有点飘"。
+func (s *Statutes) SaveEmbeddings(ctx context.Context, items []port.Embedding) error {
+	if len(items) == 0 {
+		return nil
+	}
+	if err := validateEmbeddings(items); err != nil {
+		return err
+	}
+
+	return withTx(ctx, s.db, func(tx *sql.Tx) error {
+		for start := 0; start < len(items); start += insertBatchSize {
+			end := start + insertBatchSize
+			if end > len(items) {
+				end = len(items)
+			}
+			if err := insertEmbeddings(ctx, tx, items[start:end]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
-// LoadEmbeddings 向量域尚未落地。
-func (s *Statutes) LoadEmbeddings(context.Context, string, string) ([]port.Embedding, error) {
-	return nil, errNotImplemented("向量")
+// LoadEmbeddings 按宿主类型与模型名读回全部向量。
+func (s *Statutes) LoadEmbeddings(ctx context.Context, ownerType, model string) ([]port.Embedding, error) {
+	if strings.TrimSpace(ownerType) == "" {
+		return nil, port.New(port.CodeInvalidArgument, "向量宿主类型为空")
+	}
+	if strings.TrimSpace(model) == "" {
+		return nil, port.New(port.CodeInvalidArgument, "向量模型名为空")
+	}
+
+	// ORDER BY owner_id 不能省：不排序时返回顺序由执行计划决定，同一份数据
+	// 两次加载顺序可能不同，检索结果就不可复现。
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT owner_id, vector FROM embeddings
+		 WHERE owner_type = ? AND model = ?
+		 ORDER BY owner_id`, ownerType, model)
+	if err != nil {
+		return nil, port.Wrap(port.CodeInternal, err, "读取向量失败")
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]port.Embedding, 0, 256)
+	for rows.Next() {
+		var (
+			ownerID string
+			raw     []byte
+		)
+		if err := rows.Scan(&ownerID, &raw); err != nil {
+			return nil, port.Wrap(port.CodeInternal, err, "扫描向量行失败")
+		}
+		var vec []float32
+		if err := json.Unmarshal(raw, &vec); err != nil {
+			// 带上 owner_id：205 条里哪条坏的要能直接定位，不能靠猜。
+			return nil, port.Wrap(port.CodeInternal, err, "向量不是合法 JSON：owner_id=%s", ownerID)
+		}
+		out = append(out, port.Embedding{
+			OwnerType: ownerType,
+			OwnerID:   ownerID,
+			Model:     model,
+			Vector:    vec,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, port.Wrap(port.CodeInternal, err, "遍历向量失败")
+	}
+	return out, nil
+}
+
+// validateEmbeddings 校验整批，任一条不合格就整体拒绝。
+func validateEmbeddings(items []port.Embedding) error {
+	dim := 0
+	for i, item := range items {
+		switch {
+		case item.OwnerType == "" || len(item.OwnerType) > 16:
+			return port.New(port.CodeInvalidArgument,
+				"第 %d 条向量宿主类型非法（空或超过 16 字节）：owner_id=%s", i+1, item.OwnerID)
+		case item.OwnerID == "" || len(item.OwnerID) > 32:
+			return port.New(port.CodeInvalidArgument,
+				"第 %d 条向量宿主 ID 非法（空或超过 32 字节）：%q", i+1, item.OwnerID)
+		case item.Model == "" || len(item.Model) > 64:
+			return port.New(port.CodeInvalidArgument,
+				"第 %d 条向量模型名非法（空或超过 64 字节）：owner_id=%s", i+1, item.OwnerID)
+		case len(item.Vector) == 0:
+			return port.New(port.CodeInvalidArgument, "第 %d 条向量为空：owner_id=%s", i+1, item.OwnerID)
+		}
+		if dim == 0 {
+			dim = len(item.Vector)
+			continue
+		}
+		if len(item.Vector) != dim {
+			return port.New(port.CodeInvalidArgument,
+				"第 %d 条向量维度 %d 与首条 %d 不一致：owner_id=%s", i+1, len(item.Vector), dim, item.OwnerID)
+		}
+	}
+	return nil
+}
+
+// insertEmbeddings 写一批（≤ insertBatchSize 条）。
+func insertEmbeddings(ctx context.Context, q querier, items []port.Embedding) error {
+	var b strings.Builder
+	b.WriteString(`INSERT INTO embeddings (owner_type, owner_id, model, vector) VALUES `)
+	args := make([]any, 0, len(items)*4)
+	for i, item := range items {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString("(?,?,?,?)")
+		// json.Marshal 对 float32 输出最短可逆表示，自己拼字符串会丢精度。
+		raw, err := json.Marshal(item.Vector)
+		if err != nil {
+			return port.Wrap(port.CodeInvalidArgument, err, "向量无法序列化：owner_id=%s", item.OwnerID)
+		}
+		args = append(args, item.OwnerType, item.OwnerID, item.Model, raw)
+	}
+	b.WriteString(` ON DUPLICATE KEY UPDATE vector = VALUES(vector)`)
+
+	if _, err := q.ExecContext(ctx, b.String(), args...); err != nil {
+		return port.Wrap(port.CodeInternal, err, "写入向量失败")
+	}
+	return nil
 }
