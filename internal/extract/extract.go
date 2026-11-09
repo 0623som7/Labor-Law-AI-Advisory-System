@@ -49,6 +49,13 @@ type Document struct {
 
 	// Missing 列出模型没有给出的字段（JSON 名），规则层据此避免误判。
 	Missing []string `json:"missing"`
+	// ClausesSource 说明条款是从版面切出来的（layout）还是模型给的（model）。
+	//
+	// review.go 要据此决定是否还调 locateClauses：对 layout 结果再回填一次
+	// 会用单块 bbox 覆盖掉并集，等于把多块条款的框缩小。
+	ClausesSource string `json:"clause_source"`
+	// Source 说明标量要素来自正则（rule）、模型（llm）还是两者合并（rule+llm）。
+	Source string `json:"source"`
 	// Truncated 表示原文超过 maxInputRunes 被截断，审查结论只覆盖前 TruncatedAt 字。
 	//
 	// 必须透出来：截断是"看起来正常但结论不完整"，比直接报错更危险——
@@ -76,6 +83,21 @@ func (e *ParseError) Error() string {
 	return fmt.Sprintf("抽取结果解析失败：%s（原文开头：%q）", e.Reason, e.Raw)
 }
 
+// 条款与要素的来源标记，写进 Document 供 review.go 与日志区分。
+const (
+	// ClauseSourceLayout 表示条款与坐标来自 PDF 版面块。
+	ClauseSourceLayout = "layout"
+	// ClauseSourceModel 表示条款来自模型输出（版面里没有条号）。
+	ClauseSourceModel = "model"
+
+	// SourceRule 表示 14 个标量要素全部由正则抽出，没调模型。
+	SourceRule = "rule"
+	// SourceLLM 表示全部来自模型（正则一个都没命中）。
+	SourceLLM = "llm"
+	// SourceRuleLLM 表示正则为主、模型补齐了缺失的关键字段。
+	SourceRuleLLM = "rule+llm"
+)
+
 // Extractor 把合同全文转成结构化要素。
 type Extractor struct {
 	client port.Client
@@ -85,11 +107,15 @@ type Extractor struct {
 // 装配期少传一个参数，应当在请求进来时以 50001 暴露，而不是让进程起不来。
 func New(client port.Client) *Extractor { return &Extractor{client: client} }
 
-// Extract 调用模型并严格解析结果。
-func (e *Extractor) Extract(ctx context.Context, text string) (*Document, error) {
-	if e.client == nil {
-		return nil, port.New(port.CodeInternal, "模型客户端未装配，无法抽取合同要素")
-	}
+// Extract 抽取合同要素：正则与版面优先，模型只在必要处兜底。
+//
+// 为什么不再"整份丢给模型"：14 个要素在合同里全是固定格式表述，模型每次要
+// 12–18 秒，还会把"8000 元"读成 80000；更要紧的是它看不到版面，page/bbox
+// 只能瞎填，review.go 于是要拿字符串反查坐标。blocks 直接给的是真值。
+//
+// 只有在"缺规则依赖的字段"或"版面里切不出条款"时才调模型：规则缺字段会整条
+// 跳过，用户看到的是"审查通过"，这是最危险的失败形态。
+func (e *Extractor) Extract(ctx context.Context, text string, blocks []port.TextBlock) (*Document, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, port.New(port.CodeInvalidArgument, "合同正文为空，无法抽取要素")
@@ -99,6 +125,45 @@ func (e *Extractor) Extract(ctx context.Context, text string) (*Document, error)
 	totalRunes := len([]rune(text))
 	text = truncateRunes(text, maxInputRunes)
 
+	// 1) 版面优先：条款坐标只有这里才是真值。
+	layoutClauses := clausesFromBlocks(blocks)
+	clauseSource := ClauseSourceLayout
+	if len(layoutClauses) == 0 {
+		clauseSource = ClauseSourceModel
+	}
+
+	// 2) 正则优先：14 个标量要素先拿一遍。
+	contract, missing := extractByText(text)
+
+	doc := &Document{
+		Contract:      contract,
+		Missing:       missing,
+		Truncated:     totalRunes > maxInputRunes,
+		TruncatedAt:   len([]rune(text)),
+		Confidence:    confidence(missing),
+		ClausesSource: clauseSource,
+		Source:        SourceRule,
+	}
+	if clauseSource == ClauseSourceLayout {
+		doc.Clauses = layoutClauses
+	}
+
+	// 3) 够用就直接返回，不调模型。
+	if clauseSource == ClauseSourceLayout && !hasCriticalMissing(missing) {
+		return doc, nil
+	}
+
+	if e.client == nil {
+		// 没有模型时降级：版面能给什么就给什么，缺失留在 Missing 里让规则层保守处理，
+		// 而不是把整次审查判失败——桩模式下页面仍可演示。
+		if clauseSource == ClauseSourceLayout {
+			doc.Source = SourceRule
+			return doc, nil
+		}
+		return nil, port.New(port.CodeInternal, "模型客户端未装配，无法抽取合同要素")
+	}
+
+	// 4) 兜底：走模型，但只采信正则没抽到的字段。
 	resp, err := e.client.Chat(ctx, port.ChatRequest{
 		Scene: Scene,
 		Messages: []port.Message{
@@ -112,15 +177,30 @@ func (e *Extractor) Extract(ctx context.Context, text string) (*Document, error)
 		return nil, wrapUpstream(err)
 	}
 
-	doc, err := Parse(resp.Content)
+	modelDoc, err := Parse(resp.Content)
 	if err != nil {
 		return nil, err
 	}
-	// 截断标记挂在结果上而不是日志里：调用方要据此告诉用户"只看了前 N 字"，
-	// 只写日志等于把它埋进运维视野。
-	doc.TruncatedAt = len([]rune(text))
-	doc.Truncated = totalRunes > maxInputRunes
+
+	doc.Contract = mergeMissing(contract, modelDoc.Contract, missing)
+	doc.Missing = missingFields(doc)
+	doc.Confidence = confidence(doc.Missing)
+	doc.Source = SourceRuleLLM
+	if clauseSource == ClauseSourceLayout {
+		// 模型给的坐标一律丢弃：它对版面的猜测会覆盖掉真实并集。
+		doc.Clauses = layoutClauses
+	} else {
+		doc.Clauses = modelDoc.Clauses
+	}
 	return doc, nil
+}
+
+// confidence 是命中字段数 / 14。
+func confidence(missing []string) float64 {
+	if len(missing) >= trackedFields {
+		return 0
+	}
+	return float64(trackedFields-len(missing)) / float64(trackedFields)
 }
 
 // Parse 把模型正文解析成 Document，独立导出以便用固定样例测解析规则。

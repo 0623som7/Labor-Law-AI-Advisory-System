@@ -195,7 +195,7 @@ func TestParseLooseValues(t *testing.T) {
 
 func TestExtractSendsPromptAndSchema(t *testing.T) {
 	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
-	doc, err := New(client).Extract(context.Background(), "  劳动合同正文  ")
+	doc, err := New(client).Extract(context.Background(), "  劳动合同正文  ", nil)
 	if err != nil {
 		t.Fatalf("抽取失败：%v", err)
 	}
@@ -231,7 +231,7 @@ func TestExtractSendsPromptAndSchema(t *testing.T) {
 func TestExtractTruncatesLongInput(t *testing.T) {
 	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
 	long := strings.Repeat("劳", maxInputRunes+500)
-	if _, err := New(client).Extract(context.Background(), long); err != nil {
+	if _, err := New(client).Extract(context.Background(), long, nil); err != nil {
 		t.Fatalf("长文本不应失败：%v", err)
 	}
 	got := []rune(client.got.Messages[1].Content)
@@ -242,7 +242,7 @@ func TestExtractTruncatesLongInput(t *testing.T) {
 
 func TestExtractUpstreamErrorKeepsCode(t *testing.T) {
 	upstream := llm.FakeClient{Err: port.New(port.CodeRateLimited, "上游限流")}
-	_, err := New(&upstream).Extract(context.Background(), "合同正文")
+	_, err := New(&upstream).Extract(context.Background(), "合同正文", nil)
 	if port.CodeOf(err) != port.CodeRateLimited {
 		t.Fatalf("错误码应保留 42901，实际 %v", port.CodeOf(err))
 	}
@@ -251,22 +251,22 @@ func TestExtractUpstreamErrorKeepsCode(t *testing.T) {
 	}
 
 	timeout := llm.FakeClient{Err: port.New(port.CodeUpstreamTimeout, "上游超时")}
-	if _, err := New(&timeout).Extract(context.Background(), "合同正文"); port.CodeOf(err) != port.CodeUpstreamTimeout {
+	if _, err := New(&timeout).Extract(context.Background(), "合同正文", nil); port.CodeOf(err) != port.CodeUpstreamTimeout {
 		t.Fatalf("超时码应保留 50301，实际 %v", port.CodeOf(err))
 	}
 
 	bad := llm.FakeClient{Err: port.New(port.CodeInvalidArgument, "请求不合法")}
-	if _, err := New(&bad).Extract(context.Background(), "合同正文"); port.CodeOf(err) != port.CodeInvalidArgument {
+	if _, err := New(&bad).Extract(context.Background(), "合同正文", nil); port.CodeOf(err) != port.CodeInvalidArgument {
 		t.Fatalf("参数错误应原样返回，实际 %v", port.CodeOf(err))
 	}
 }
 
 func TestExtractGuards(t *testing.T) {
-	if _, err := New(nil).Extract(context.Background(), "合同正文"); port.CodeOf(err) != port.CodeInternal {
+	if _, err := New(nil).Extract(context.Background(), "合同正文", nil); port.CodeOf(err) != port.CodeInternal {
 		t.Fatalf("未装配客户端应返回 50001，实际 %v", port.CodeOf(err))
 	}
 	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
-	if _, err := New(client).Extract(context.Background(), "   "); port.CodeOf(err) != port.CodeInvalidArgument {
+	if _, err := New(client).Extract(context.Background(), "   ", nil); port.CodeOf(err) != port.CodeInvalidArgument {
 		t.Fatalf("空正文应返回 40001，实际 %v", port.CodeOf(err))
 	}
 	if client.calls != 0 {
@@ -296,7 +296,7 @@ func TestParseConfidenceCap(t *testing.T) {
 func TestExtractMarksTruncation(t *testing.T) {
 	long := strings.Repeat("劳", 13000)
 	c := &recordingClient{FakeClient: llm.FakeClient{Reply: `{"party_a":"甲公司","contract_type":"固定期限劳动合同"}`}}
-	doc, err := New(c).Extract(context.Background(), long)
+	doc, err := New(c).Extract(context.Background(), long, nil)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestExtractMarksTruncation(t *testing.T) {
 func TestExtractNotTruncated(t *testing.T) {
 	text := strings.Repeat("合", 8000)
 	c := &recordingClient{FakeClient: llm.FakeClient{Reply: `{"party_a":"乙公司"}`}}
-	doc, err := New(c).Extract(context.Background(), text)
+	doc, err := New(c).Extract(context.Background(), text, nil)
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
@@ -325,5 +325,131 @@ func TestExtractNotTruncated(t *testing.T) {
 	}
 	if doc.TruncatedAt != 8000 {
 		t.Fatalf("TruncatedAt = %d, want 8000", doc.TruncatedAt)
+	}
+}
+
+// ---- 正则优先路径（第二步改造）----
+
+// layoutBlocks 造出与 contractSample 对应的版面块，条号带真实 bbox。
+func layoutBlocks() []port.TextBlock {
+	return []port.TextBlock{
+		block("b0", 1, 72, 760, 520, 780, "劳动合同书"),
+		block("b1", 1, 72, 700, 520, 720, "第一条 合同期限"),
+		block("b2", 1, 72, 680, 520, 700, "本合同为固定期限劳动合同，自2026年1月1日起至2029年1月1日止。"),
+		block("b3", 1, 72, 640, 520, 660, "第二条 试用期"),
+		block("b4", 1, 72, 620, 520, 640, "双方约定试用期为八个月。"),
+	}
+}
+
+// TestExtractSkipsLLMWhenComplete：14 个要素全能正则命中、条款又能从版面切出来时，
+// 一次模型调用都不该发生——这是把 18 秒压到 1 秒的全部意义。
+func TestExtractSkipsLLMWhenComplete(t *testing.T) {
+	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
+
+	doc, err := New(client).Extract(context.Background(), contractSample, layoutBlocks())
+	if err != nil {
+		t.Fatalf("抽取失败：%v", err)
+	}
+	if client.calls != 0 {
+		t.Fatalf("要素齐全时不该调模型，实际调用 %d 次", client.calls)
+	}
+	if doc.Source != SourceRule {
+		t.Fatalf("source = %q, want %q", doc.Source, SourceRule)
+	}
+	if doc.ClausesSource != ClauseSourceLayout {
+		t.Fatalf("clause_source = %q, want layout", doc.ClausesSource)
+	}
+	if len(doc.Clauses) != 2 {
+		t.Fatalf("条款数 = %d, want 2", len(doc.Clauses))
+	}
+	if doc.Confidence != 1 {
+		t.Fatalf("confidence = %v, want 1", doc.Confidence)
+	}
+}
+
+// TestExtractCallsLLMWhenCriticalMissing：没有试用期信息时，试用期三条规则会整条跳过，
+// 用户看到的是"审查通过"——必须补一次模型。
+func TestExtractCallsLLMWhenCriticalMissing(t *testing.T) {
+	text := strings.Replace(contractSample, "双方约定试用期为八个月，自2026年1月1日起至2026年8月31日止。", "（本合同未约定试用期。）", 1)
+	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
+
+	doc, err := New(client).Extract(context.Background(), text, layoutBlocks())
+	if err != nil {
+		t.Fatalf("抽取失败：%v", err)
+	}
+	if client.calls != 1 {
+		t.Fatalf("缺关键字段时应调用模型 1 次，实际 %d", client.calls)
+	}
+	if doc.Source != SourceRuleLLM {
+		t.Fatalf("source = %q, want %q", doc.Source, SourceRuleLLM)
+	}
+	if doc.ProbationMonths != 3 {
+		t.Fatalf("probation_months = %v, want 3（来自模型补齐）", doc.ProbationMonths)
+	}
+	// 模型给的坐标一律丢弃：版面块才是真值。
+	if doc.ClausesSource != ClauseSourceLayout || len(doc.Clauses) != 2 {
+		t.Fatalf("条款应仍取自版面：source=%q n=%d", doc.ClausesSource, len(doc.Clauses))
+	}
+}
+
+// TestExtractKeepsRegexValues：模型把 8000 读成 80000 时，以正则抽到的原文数字为准。
+func TestExtractKeepsRegexValues(t *testing.T) {
+	text := strings.Replace(contractSample, "双方约定试用期为八个月，自2026年1月1日起至2026年8月31日止。", "（本合同未约定试用期。）", 1)
+	reply := strings.Replace(fullJSON, `"salary_monthly": 8000`, `"salary_monthly": 80000`, 1)
+	client := &recordingClient{FakeClient: llm.FakeClient{Reply: reply}}
+
+	doc, err := New(client).Extract(context.Background(), text, layoutBlocks())
+	if err != nil {
+		t.Fatalf("抽取失败：%v", err)
+	}
+	if doc.SalaryMonthly != 8000 {
+		t.Fatalf("salary_monthly = %v, want 8000（正则抽到的原文数字不许被模型覆盖）", doc.SalaryMonthly)
+	}
+}
+
+// TestExtractUsesLayoutClausesAndSkipLocate：版面条款的 bbox 是并集，page 是起始块页。
+func TestExtractUsesLayoutClauses(t *testing.T) {
+	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
+	blocks := []port.TextBlock{
+		block("b1", 2, 72, 700, 520, 720, "第一条 合同期限"),
+		block("b2", 2, 80, 680, 480, 700, "本合同为固定期限劳动合同。"),
+	}
+
+	doc, err := New(client).Extract(context.Background(), contractSample, blocks)
+	if err != nil {
+		t.Fatalf("抽取失败：%v", err)
+	}
+	if len(doc.Clauses) != 1 {
+		t.Fatalf("条款数 = %d, want 1", len(doc.Clauses))
+	}
+	if doc.Clauses[0].Page != 2 {
+		t.Fatalf("page = %d, want 2", doc.Clauses[0].Page)
+	}
+	want := [4]float64{72, 680, 520, 720}
+	if doc.Clauses[0].BBox != want {
+		t.Fatalf("bbox = %v, want %v", doc.Clauses[0].BBox, want)
+	}
+}
+
+// TestExtractFallsBackToModelClauses：版面里没有条号（例如扫描件只给了整段文本）时，
+// 条款只能来自模型，ClausesSource 要如实标成 model，review.go 才会去回填坐标。
+func TestExtractFallsBackToModelClauses(t *testing.T) {
+	client := &recordingClient{FakeClient: llm.FakeClient{Reply: fullJSON}}
+	blocks := []port.TextBlock{
+		block("b1", 1, 72, 700, 520, 720, "整段合同文本，没有条号。"),
+	}
+
+	doc, err := New(client).Extract(context.Background(), contractSample, blocks)
+	if err != nil {
+		t.Fatalf("抽取失败：%v", err)
+	}
+	if doc.ClausesSource != ClauseSourceModel {
+		t.Fatalf("clause_source = %q, want model", doc.ClausesSource)
+	}
+	if client.calls == 0 {
+		t.Fatal("版面切不出条款时必须退回模型")
+	}
+	if len(doc.Clauses) != 2 {
+		t.Fatalf("条款数 = %d, want 2（来自模型 raw_clauses）", len(doc.Clauses))
 	}
 }

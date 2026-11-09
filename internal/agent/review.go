@@ -146,11 +146,19 @@ func runReview(ctx context.Context, deps ReviewDeps, payload json.RawMessage, pr
 	}()
 
 	notify(progress, 10, stageExtract)
-	doc, err := deps.Extractor.Extract(ctx, text)
+	doc, err := deps.Extractor.Extract(ctx, text, blocks)
 	if err != nil {
 		return err
 	}
-	doc.Clauses = locateClauses(doc.Clauses, blocks)
+	// 版面切出来的条款，bbox 是并集、page 是真值；再跑 locateClauses 会用单块
+	// bbox 覆盖掉并集，把多块条款的框缩小一圈。只有模型给的坐标才需要回填。
+	if doc.ClausesSource != extract.ClauseSourceLayout {
+		doc.Clauses = locateClauses(doc.Clauses, blocks)
+	}
+	if deps.Logger != nil {
+		deps.Logger.Info("合同要素抽取完成", "review_id", p.ReviewID,
+			"source", doc.Source, "clause_source", doc.ClausesSource, "missing", len(doc.Missing))
+	}
 	// 截断必须让用户看见：只写日志等于把它埋进运维视野，而用户拿到的是一份
 	// "看起来正常、其实只分析了前 8 页"的结论——比直接报错更危险。
 	// 通道选 stage：任务进度本来就展示在审查页上，不需要为此改契约和表结构

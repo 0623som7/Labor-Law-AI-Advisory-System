@@ -292,7 +292,7 @@ func TestReviewHandlerRuleScope(t *testing.T) {
 
 	files := &fakeFileStore{
 		record: port.FileRecord{ID: reviewTestFile, UserID: reviewTestUser},
-		pages:  pagesFixture(),
+		pages:  withoutDeposit(),
 	}
 	reviews := &fakeReviewStore{}
 	handler := NewReviewHandler(ReviewDeps{
@@ -595,4 +595,16 @@ func ruleIDsOf(findings []port.Finding) []string {
 		out[i] = f.RuleID
 	}
 	return out
+}
+
+// withoutDeposit 返回一份"原文里确实没有押金"的版面。
+//
+// 正则优先之后，押金是否命中由原文决定：模型说"没有"而原文写着"缴纳押金"时，
+// 以原文为准本就是这次改造的目的。所以要造"合同确实没有押金"这个场景，
+// 必须连版面文本一起改，只改模型回复已经不够了。
+func withoutDeposit() []port.ParsedPage {
+	pages := pagesFixture()
+	pages[0].Blocks[2].Text = strings.Replace(pages[0].Blocks[2].Text,
+		"缴纳押金 2000 元", "缴纳工装费 2000 元", 1)
+	return pages
 }
