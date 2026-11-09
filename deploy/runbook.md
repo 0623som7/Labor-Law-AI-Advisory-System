@@ -142,6 +142,23 @@ docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql mysql 
   "select @@innodb_buffer_pool_size, @@max_connections, @@performance_schema, @@ngram_token_size, @@global.time_zone, @@innodb_flush_log_at_trx_commit"
 #   期望 536870912  50  0  2  +00:00  2
 
+# 3.4.3 灌法条向量（可选；RETRIEVAL_SEMANTIC=on 之前必须做）
+#      不灌向量而把开关打开，每次问答都会多一次公网往返再降级回关键词，
+#      日志里只剩一串"语义检索降级"，检索质量一点没变。
+#      先停 api 是为了腾内存：2G 机器上 mysql(1G) + api(512M) + redis(192M)
+#      已接近上限，再起一个容器会触发 OOM killer 挑最胖的杀。
+docker compose -f deploy/docker-compose.yml --env-file .env stop api
+docker compose -f deploy/docker-compose.yml --env-file .env run --rm --entrypoint /app/embeddingseed api
+#   --entrypoint 不能省：镜像的 ENTRYPOINT 是 /app/api，不覆盖会把 embeddingseed 当成参数传给它
+#   期望输出：
+#     完成：205 条，维度 1024，21 批，耗时约 8s
+#     写入 embeddings：205 行（owner_type=statute，model=text-embedding-v3）
+docker compose -f deploy/docker-compose.yml --env-file .env up -d api
+docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql sh -c \
+  'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "select count(*) from laborlaw.embeddings"'
+#   期望 205。0 就说明灌失败了：看上一次命令的输出是"向量库为空"还是 API key / 网络报错
+#   换过 LLM_EMBEDDING_MODEL 之后要重灌：索引按 model 分开读，旧向量对不上新模型
+
 # 3.5 自签证书（8443 的 TLS 由 nginx 终止，证书必须先在宿主机生成）
 #     没有证书时 nginx 会直接退出（ssl_certificate 指向不存在的文件），
 #     于是 8443 连不上——这不是"还没配好"，是容器起不来。
@@ -161,9 +178,16 @@ cd web && pnpm install --frozen-lockfile && pnpm build && cd ..
 scp -r web/dist ubuntu@<公网IP>:/opt/laborlaw/web/
 #      —— 在服务器执行 ——
 ls web/dist/index.html web/dist/assets/*.js     # 两个都在才算传成功
+# 3.6.1 每次上线核对前端产物（dist 不进仓库，传漏了没有任何报错，页面会一直是旧的）
+curl -sk https://127.0.0.1:8443/ | grep -o 'assets/index-[a-zA-Z0-9]*\.js'
+ls web/dist/assets/*.js
+#   两边 hash 必须一致；不一致说明这次没传 dist
 
 # 3.7 起 TLS 层 + 前端站点（api 的端口已改成 127.0.0.1:8080，公网只看得到 8443）
 docker compose -f deploy/docker-compose.yml --env-file .env up -d nginx
+# 配置改动（bind mount 进来的 default.conf）up -d 不会重读：容器没变就 Running 跳过。
+# 改过 conf 必须重启，否则线上静默跑旧配置 —— 例如新加的 /metrics 404 不会生效。
+docker compose -f deploy/docker-compose.yml --env-file .env restart nginx
 curl -sk -o /dev/null -w 'root=%{http_code}\n' https://127.0.0.1:8443/          # 必须 200 且是 HTML
 curl -sk -o /dev/null -w 'api=%{http_code}\n'  https://127.0.0.1:8443/healthz   # 必须 200 且是 JSON
 
