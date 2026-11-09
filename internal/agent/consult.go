@@ -21,12 +21,37 @@ func (r *Runner) runConsult(ctx context.Context, req port.Request, emit func(por
 		return port.Result{}, err
 	}
 
-	messages := make([]port.Message, 0, r.historyLimit+2)
+	// system 内容只算一次：预算估算与真正发出去的那条必须是同一个字符串，
+	// 否则估算的是一个、发出去的是另一个（ConsultWithStatutes 每次都会重新拼）。
+	systemContent := prompt.ConsultWithStatutes(hits)
+
+	// 预算 = 上下文上限 − 本次输出预留 − 固定开销（system + 本轮提问 + 角色标记）。
+	// 历史从剩下的空间里倒着装，装不下就不带：宁可少两句背景，也不让上游
+	// 回 400 说 context length exceeded。
+	base := estimateTokens(systemContent) + estimateTokens(req.Input) + historyReserveTokens
+	budget := r.contextTokens - r.maxTokens - base
+	history := r.loadHistory(ctx, req.SessionID)
+	if budget <= 0 {
+		// 预算不足仍然回答，只是不带历史。用户问一句长合同条款不该被历史撑爆成 500。
+		r.log.Warn("上下文预算不足，本次不带历史", "session_id", req.SessionID,
+			"context_tokens", r.contextTokens, "base", base, "max_tokens", r.maxTokens)
+		history = nil
+	} else {
+		var dropped int
+		history, dropped = trimHistory(history, budget)
+		if dropped > 0 {
+			// Debug 而不是 Info：演示时每轮都刷一行会盖住真正要看的面板错误。
+			r.log.Debug("历史被裁剪", "session_id", req.SessionID, "dropped", dropped,
+				"kept", len(history), "budget", budget)
+		}
+	}
+
+	messages := make([]port.Message, 0, len(history)+2)
 	messages = append(messages, port.Message{
 		Role:    port.RoleSystem,
-		Content: prompt.ConsultWithStatutes(hits),
+		Content: systemContent,
 	})
-	messages = append(messages, r.loadHistory(ctx, req.SessionID)...)
+	messages = append(messages, history...)
 	messages = append(messages, port.Message{Role: port.RoleUser, Content: req.Input})
 
 	var built strings.Builder

@@ -58,6 +58,11 @@ type Runner struct {
 	retrieveTopK int
 	maxTokens    int
 
+	// contextTokens 是单次请求的上下文上限，用来给历史定 token 预算。
+	// 它不发给上游（port.ChatRequest 没有这个字段，也不该有：不同模型的上限不同，
+	// 这个数字是我们自己配的假设），只在本进程里决定"带多少历史"。
+	contextTokens int
+
 	// locks 是按会话散列的条带锁，实现 port.Runner 要求的"同 SessionID 串行化"。
 	//
 	// 为什么不用 map[sessionID]*sync.Mutex：那个 map 会随会话数无限增长，
@@ -98,6 +103,15 @@ func WithHistoryLimit(n int) Option {
 	}
 }
 
+// WithContextTokens 设置单次请求的上下文上限，历史按它算出的预算裁剪。
+func WithContextTokens(n int) Option {
+	return func(r *Runner) {
+		if n > 0 {
+			r.contextTokens = n
+		}
+	}
+}
+
 // WithRetrieveTopK 设置每次检索注入多少条法条。
 func WithRetrieveTopK(n int) Option {
 	return func(r *Runner) {
@@ -119,11 +133,15 @@ func WithMaxTokens(n int) Option {
 // New 构造 Runner。llm 为 nil 时所有场景返回 50001，而不是在首次请求时 panic。
 func New(llm port.Client, opts ...Option) *Runner {
 	r := &Runner{
-		llm:          llm,
-		log:          slog.Default(),
-		historyLimit: 10,
-		retrieveTopK: 3,
-		maxTokens:    1200,
+		llm: llm,
+		log: slog.Default(),
+		// 40 条只做粗筛：真正的闸门是按 token 裁，这里只是别让一次 SQL
+		// 把几百条全拉回来。读 40 条的成本可忽略，而按 token 裁一定会砍到
+		// 10 条以内，所以这个数字放宽不会改变实际发给模型的内容。
+		historyLimit:  40,
+		retrieveTopK:  3,
+		maxTokens:     1200,
+		contextTokens: 8000,
 	}
 	for _, opt := range opts {
 		opt(r)

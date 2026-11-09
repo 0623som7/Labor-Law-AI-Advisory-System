@@ -401,7 +401,8 @@ func TestConsultHistoryLoadedAndFiltered(t *testing.T) {
 	if _, err := r.Run(context.Background(), port.Request{Scene: SceneConsult, SessionID: "S1", Input: "为什么"}, c.emit); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if history.gotSession != "S1" || history.gotLimit != 10 {
+	// 上限默认 40：它只做粗筛，真正的闸门是按 token 裁。
+	if history.gotSession != "S1" || history.gotLimit != 40 {
 		t.Errorf("历史请求 = (%q, %d)", history.gotSession, history.gotLimit)
 	}
 
@@ -431,6 +432,80 @@ func TestConsultHistoryFailureDegradesToStateless(t *testing.T) {
 	}
 	if len(client.got.Messages) != 2 {
 		t.Errorf("降级后消息数 = %d, want 2（system + user）", len(client.got.Messages))
+	}
+}
+
+// longHistory 造 n 条各 runes 个汉字的问答，用于把预算顶满。
+func longHistory(n, runes int) []port.ChatMessage {
+	body := ""
+	for i := 0; i < runes; i++ {
+		body += "字"
+	}
+	out := make([]port.ChatMessage, 0, n)
+	for i := 0; i < n; i++ {
+		role := port.RoleUser
+		if i%2 == 1 {
+			role = port.RoleAssistant
+		}
+		out = append(out, port.ChatMessage{Role: role, Content: body})
+	}
+	return out
+}
+
+// TestConsultTrimsHistoryByBudget 钉住"历史按 token 预算装，不是按条数装"。
+//
+// 6 条 300 字的问答共 1800 token；system（无检索时约 800 字）+ 本轮输入 +
+// 输出预留 1000 之后，3000 的上下文只装得下其中一部分，所以最终消息数必须
+// 少于 8（system + 6 历史 + input）。
+func TestConsultTrimsHistoryByBudget(t *testing.T) {
+	history := &fakeHistory{records: longHistory(6, 300)}
+	client := &recordingClient{chunks: []string{"答"}}
+	r := New(client, WithHistory(history), WithContextTokens(3000), WithMaxTokens(1000))
+	var c collector
+
+	if _, err := r.Run(context.Background(), port.Request{Scene: SceneConsult, SessionID: "S1", Input: "为什么"}, c.emit); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	msgs := client.got.Messages
+	if len(msgs) >= 8 {
+		t.Fatalf("消息数 = %d，预算 3000 装不下 6 条 300 字的历史，应当小于 8", len(msgs))
+	}
+	if len(msgs) <= 2 {
+		t.Fatalf("消息数 = %d，预算够装一部分历史时不该全丢", len(msgs))
+	}
+	if msgs[0].Role != port.RoleSystem {
+		t.Errorf("首条角色 = %q，期望 system", msgs[0].Role)
+	}
+	if first := msgs[1]; first.Role != port.RoleUser {
+		t.Errorf("历史首条角色 = %q，期望 user（不能以 assistant 开场）", first.Role)
+	}
+	last := msgs[len(msgs)-1]
+	if last.Role != port.RoleUser || last.Content != "为什么" {
+		t.Errorf("末条消息 = %+v，期望本轮输入", last)
+	}
+}
+
+// TestConsultWithoutBudgetStillAnswers 钉住"预算不足是降级不是报错"：
+// 用户问一句短问题不该因为带不下历史就 500。
+func TestConsultWithoutBudgetStillAnswers(t *testing.T) {
+	history := &fakeHistory{records: longHistory(4, 100)}
+	client := &recordingClient{chunks: []string{"答"}}
+	r := New(client, WithHistory(history), WithContextTokens(1), WithMaxTokens(1200))
+	var c collector
+
+	res, err := r.Run(context.Background(), port.Request{Scene: SceneConsult, SessionID: "S1", Input: "在吗"}, c.emit)
+	if err != nil {
+		t.Fatalf("预算不足不应报错: %v", err)
+	}
+	if res.Content != "答" {
+		t.Errorf("Content = %q", res.Content)
+	}
+	if client.calls != 1 {
+		t.Errorf("客户端调用次数 = %d，期望 1", client.calls)
+	}
+	if len(client.got.Messages) != 2 {
+		t.Errorf("消息数 = %d，期望 2（system + 本轮输入）", len(client.got.Messages))
 	}
 }
 

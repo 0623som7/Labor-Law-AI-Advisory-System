@@ -23,7 +23,7 @@ func testLogger() *slog.Logger {
 func TestNewRunnerWithoutAPIKey(t *testing.T) {
 	// 没有密钥时调用方不构造客户端（见 main.go），这里传 nil。
 	// 断言的是"不 panic 且明确退回桩"，而不是某个字段。
-	if _, ok := newRunner(testLogger(), nil, nil, nil).(*stubRunner); !ok {
+	if _, ok := newRunner(testLogger(), nil, nil, nil, 8000).(*stubRunner); !ok {
 		t.Error("API key 为空时必须退回演示桩")
 	}
 }
@@ -34,8 +34,23 @@ func TestNewRunnerUsesAgentWithKey(t *testing.T) {
 	cfg.LLM.BaseURL = "http://127.0.0.1:0"
 
 	client := newLLM(context.Background(), cfg, testLogger(), nil, nil)
-	if _, ok := newRunner(testLogger(), client, nil, nil).(*agent.Runner); !ok {
+	if _, ok := newRunner(testLogger(), client, nil, nil, 8000).(*agent.Runner); !ok {
 		t.Error("配置了 API key 后必须启用真实编排")
+	}
+}
+
+// 上下文预算只在 Runner 内部生效，外面看不到；这里钉住的是"传进去不炸、
+// 传 0 也不炸"以及构造点没有把 Config 漏进 agent 包。
+func TestNewRunnerPassesContextTokens(t *testing.T) {
+	cfg := config.Config{}
+	cfg.LLM.APIKey = "test-key"
+	cfg.LLM.BaseURL = "http://127.0.0.1:0"
+	client := newLLM(context.Background(), cfg, testLogger(), nil, nil)
+
+	for _, n := range []int{0, 8000, 64000} {
+		if _, ok := newRunner(testLogger(), client, nil, nil, n).(*agent.Runner); !ok {
+			t.Fatalf("ctxTokens=%d 时应当仍是真实编排", n)
+		}
 	}
 }
 

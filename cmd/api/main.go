@@ -124,7 +124,7 @@ func run(migrateOnly bool) error {
 	searcher := newSearcher(ctx, inf.db, inf.rdb, cfg, logger)
 	opts := []api.Option{
 		api.WithCheckers(inf.checkers...),
-		api.WithRunner(newRunner(logger, llmClient, searcher, newHistory(inf.db))),
+		api.WithRunner(newRunner(logger, llmClient, searcher, newHistory(inf.db), cfg.LLM.ContextTokens)),
 		api.WithHub(stream.NewHub(stream.Options{}, 0, logger)),
 		api.WithExtractor(extractor),
 	}

@@ -170,6 +170,11 @@ type LLMConfig struct {
 	PriceOutputPer1K float64
 	// QPS 是全局令牌桶速率，防止并发一高就把预算烧穿。
 	QPS float64
+	// ContextTokens 是单次请求的上下文上限（按汉字数近似估算）。
+	//
+	// 只用于决定"带多少历史"：发请求时并不把它传给上游（port.ChatRequest 没这个
+	// 字段，也不该有——上限因模型而异，把假设写进契约会让换模型变成改契约）。
+	ContextTokens int
 	// DailyBudgetYuan 是日成本硬闸，超过即降级到 ModelExtract 并告警。
 	DailyBudgetYuan float64
 }
@@ -289,6 +294,9 @@ func LoadFrom(get func(string) string) (Config, error) {
 			PriceOutputPer1K: l.frac("LLM_PRICE_OUTPUT_PER_1K", 0.002, 0, 1000),
 			QPS:              l.frac("LLM_QPS", 5, 0.1, 1000),
 			DailyBudgetYuan:  l.frac("LLM_DAILY_BUDGET_YUAN", 20, 0.1, 100000),
+			// 8000 的来历：system（基础提示词约 800 汉字 + 3 条法条约 700 汉字）
+			// + input 上限 4000 + 输出预留 1200 ≈ 6700，留一千余量。
+			ContextTokens: l.num("LLM_CONTEXT_TOKENS", 8000, 1024, 128000),
 		},
 		Storage: StorageConfig{
 			Root:        l.str("STORAGE_ROOT", "./storage"),

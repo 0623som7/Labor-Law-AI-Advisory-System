@@ -134,13 +134,17 @@ func newBudgetStore(rdb *redis.Client, log *slog.Logger) *store.RedisBudgetStore
 // client 为 nil 表示没有配 LLM_API_KEY：保留演示桩而不是直接上真 Runner——
 // 真 Runner 在密钥为空时只会让每次问答都以上游错误收场，演示反而倒退。
 // 降级必须在启动日志里喊出来，否则评审时会把桩回答当成模型效果来验收。
-func newRunner(log *slog.Logger, client *llm.Client, statutes agent.StatuteSearcher, history agent.MessageHistory) port.Runner {
+func newRunner(log *slog.Logger, client *llm.Client, statutes agent.StatuteSearcher, history agent.MessageHistory, ctxTokens int) port.Runner {
 	if client == nil {
 		log.Warn("LLM_API_KEY 为空，对话接口使用演示桩回答，不是真实模型输出")
 		return newStubRunner(log)
 	}
 
 	opts := []agent.Option{agent.WithLogger(log)}
+	// 只传数字不传 Config：这个包该知道的只有"上下文多大"，不该看见密钥与单价。
+	if ctxTokens > 0 {
+		opts = append(opts, agent.WithContextTokens(ctxTokens))
+	}
 	if statutes != nil {
 		opts = append(opts, agent.WithStatutes(statutes))
 	}
