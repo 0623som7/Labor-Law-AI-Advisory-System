@@ -52,9 +52,13 @@ export function hasMore(count: number, limit: number): boolean {
 /**
  * 这一行能不能点进去。
  *
- * 失败和取消的记录没有结果页可看，点进去只会看到一个错误页——
- * 与其让用户点两次才明白，不如直接不给点。
+ * 全部可点，包括 failed / cancelled：进 ReviewView 后
+ * restoreExisting 会把 review 置空，页面给出「开始审查」按钮，
+ * 后端对失败/取消的记录也会新建一份任务——所以失败行正是重试入口。
+ * 曾经在这里禁用失败行，等于让重启中断的那些合同彻底没有入口
+ * （上传页不列历史文件，审查历史是它们唯一的门）。
  */
 export function isClickable(status: string): boolean {
-  return status !== 'failed' && status !== 'cancelled'
+  void status
+  return true
 }

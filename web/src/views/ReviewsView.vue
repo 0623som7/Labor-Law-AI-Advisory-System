@@ -55,9 +55,8 @@ function retry(): void {
 }
 
 function open(row: Review): void {
-  if (!isClickable(row.status)) {
-    return
-  }
+  // 失败/取消行也照常进页面：那一页会自动给出「开始审查」按钮，
+  // 后端对失败记录会新建一份任务，所以这里就是重试入口。
   void router.push({ name: 'review', params: { fileId: row.file_id } })
 }
 
@@ -103,7 +102,18 @@ onMounted(() => {
             @click="open(row)"
           >
             <div class="row-head">
-              <span class="row-status" :class="`status-${row.status}`">{{ statusLabel(row.status) }}</span>
+              <span
+                class="row-status"
+                :class="`status-${row.status}`"
+                :title="
+                  row.status === 'failed'
+                    ? '上一次审查没有完成，点击可重新审查'
+                    : row.status === 'cancelled'
+                      ? '上一次审查已取消，点击可重新发起'
+                      : ''
+                "
+                >{{ statusLabel(row.status) }}</span
+              >
               <span class="row-risk" :class="`risk-${row.risk_level || 'none'}`">{{ riskLabel(row.risk_level) }}</span>
               <span class="row-time">{{ formatRelative(row.created_at) }}</span>
             </div>

@@ -43,10 +43,18 @@ test('hasMore 对非法 limit 一律 false，避免无限翻页', () => {
   assert.equal(hasMore(20, -5), false)
 })
 
-test('isClickable 只放过有结果的记录', () => {
+test('失败的记录仍然可点：进页面会拿到「开始审查」按钮', () => {
+  // 重启中断的审查会被启动对账标成 failed，审查历史是这些合同的唯一入口
+  // （上传页不列历史文件），所以这里必须是 true。
+  assert.equal(isClickable('failed'), true)
+})
+
+test('取消的记录同样可点', () => {
+  assert.equal(isClickable('cancelled'), true)
+})
+
+test('成功与进行中的记录可点', () => {
   assert.equal(isClickable('succeeded'), true)
   assert.equal(isClickable('running'), true)
   assert.equal(isClickable('pending'), true)
-  assert.equal(isClickable('failed'), false)
-  assert.equal(isClickable('cancelled'), false)
 })
