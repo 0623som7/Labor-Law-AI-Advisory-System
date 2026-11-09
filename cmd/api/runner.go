@@ -100,12 +100,33 @@ func newHistory(db *sql.DB) agent.MessageHistory {
 //
 // 密钥为空时这里不拦：llm.New 不校验 key，是否启用真模型由 newRunner 的
 // nil 分支决定，构造点保持纯粹。
-func newLLM(cfg config.Config, log *slog.Logger, usage llm.UsageRecorder) *llm.Client {
+// budgetStore 为 nil 表示没有 Redis：预算退回纯进程内计数（改动前的行为），
+// 而不是让整个服务起不来。预热失败同理，只记 Warn。
+func newLLM(ctx context.Context, cfg config.Config, log *slog.Logger, usage llm.UsageRecorder, budgetStore *store.RedisBudgetStore) *llm.Client {
 	opts := []llm.Option{llm.WithLogger(log)}
 	if usage != nil {
 		opts = append(opts, llm.WithUsageRecorder(usage))
 	}
-	return llm.New(cfg.LLM, opts...)
+	if budgetStore != nil {
+		opts = append(opts, llm.WithBudgetStore(budgetStore))
+	}
+	c := llm.New(cfg.LLM, opts...)
+
+	// 预热：把今天已经花掉的从 Redis 读回来。没有这一步，写穿只对新进程之后的
+	// 调用有效，重启那一刻闸门仍然是 0——而重启正是这次要解决的问题。
+	if err := c.WarmBudget(ctx); err != nil {
+		log.Warn("读取模型日预算失败，今日预算从 0 开始", "err", err.Error())
+	}
+	return c
+}
+
+// newBudgetStore 构造日预算存储。没有 Redis 就返回 nil，不构造半残对象：
+// 一个每次调用都失败的非 nil store 会让每条请求都打一条告警，那比没有更糟。
+func newBudgetStore(rdb *redis.Client, log *slog.Logger) *store.RedisBudgetStore {
+	if rdb == nil {
+		return nil
+	}
+	return store.NewBudgetStore(rdb, log)
 }
 
 // newRunner 装配对话编排。

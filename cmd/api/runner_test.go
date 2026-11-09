@@ -33,7 +33,7 @@ func TestNewRunnerUsesAgentWithKey(t *testing.T) {
 	cfg.LLM.APIKey = "test-key"
 	cfg.LLM.BaseURL = "http://127.0.0.1:0"
 
-	client := newLLM(cfg, testLogger(), nil)
+	client := newLLM(context.Background(), cfg, testLogger(), nil, nil)
 	if _, ok := newRunner(testLogger(), client, nil, nil).(*agent.Runner); !ok {
 		t.Error("配置了 API key 后必须启用真实编排")
 	}
@@ -43,9 +43,33 @@ func TestNewRunnerUsesAgentWithKey(t *testing.T) {
 // 用例直接钉住"两次调用是不同的实例、同一个构造点"这件事没有意义，
 // 真正要守的是 newLLM 不校验密钥（否则上面的桩分支根本走不到）。
 func TestNewLLMDoesNotRequireKey(t *testing.T) {
-	client := newLLM(config.Config{}, testLogger(), nil)
+	client := newLLM(context.Background(), config.Config{}, testLogger(), nil, nil)
 	if client == nil {
 		t.Fatal("密钥为空时 newLLM 也必须能安全构造")
+	}
+}
+
+// 没有 Redis 时预算只能留在进程内。要求：构造不 panic、预热不报错、
+// 也不构造一个"每次调用都失败"的半残 store（那会让每条请求刷一条告警）。
+func TestNewLLMWithoutRedisBudget(t *testing.T) {
+	if s := newBudgetStore(nil, testLogger()); s != nil {
+		t.Fatal("没有 Redis 时 newBudgetStore 必须返回 nil")
+	}
+
+	cfg := config.Config{}
+	cfg.LLM.APIKey = "test-key"
+	cfg.LLM.BaseURL = "http://127.0.0.1:0"
+	cfg.LLM.DailyBudgetYuan = 20
+
+	client := newLLM(context.Background(), cfg, testLogger(), nil, nil)
+	if client == nil {
+		t.Fatal("没有 Redis 也必须能构造客户端")
+	}
+	if err := client.WarmBudget(context.Background()); err != nil {
+		t.Fatalf("没有 store 时 WarmBudget 应当返回 nil，实际 %v", err)
+	}
+	if spent, limit := client.Budget(); spent != 0 || limit != 20 {
+		t.Fatalf("Budget() = (%v, %v), want (0, 20)", spent, limit)
 	}
 }
 

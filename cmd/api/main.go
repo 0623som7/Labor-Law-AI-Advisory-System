@@ -116,7 +116,7 @@ func run(migrateOnly bool) error {
 	// 没有密钥时不构造，让 newRunner 走演示桩（见 cmd/api/runner.go）。
 	var llmClient *llm.Client
 	if cfg.LLM.APIKey != "" {
-		llmClient = newLLM(cfg, logger, usageRec)
+		llmClient = newLLM(ctx, cfg, logger, usageRec, newBudgetStore(inf.rdb, logger))
 	}
 
 	// 检索器只构造一次：编排层（Runner）与 /statutes 接口必须用同一套口语归一规则，
