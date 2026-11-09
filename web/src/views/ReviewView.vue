@@ -40,7 +40,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 /** 渲染缩放。A4 在 1.25 倍下是 744×1052px，四页 canvas 合计不到 8MB。 */
 const SCALE = 1.25
 const POLL_INTERVAL = 2000
-const POLL_MAX = 60
+// 320s > WORKER_TASK_TIMEOUT(300s)：前端不能比后端先放弃，
+// 否则慢任务表现为"失败"，刷新后又出现。
+// 不从后端读这个值——前端拿不到，硬编码加注释比多一次请求好维护。
+const POLL_MAX = 160
 const ACTIVE_MS = 1500
 
 const route = useRoute()
