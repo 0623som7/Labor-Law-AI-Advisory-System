@@ -38,6 +38,7 @@ type Hybrid struct {
 	model    string
 	log      *slog.Logger
 	cache    VectorCache
+	qScope   string
 }
 
 // NewHybrid 构造融合检索。log 为 nil 时用 slog.Default()。
@@ -66,12 +67,25 @@ func NewHybrid(keyword *Retriever, semantic *Semantic, embedder Embedder, getter
 type HybridOption func(*Hybrid)
 
 // WithVectorCache 注入查询向量缓存。传 nil 等于不缓存。
-func WithVectorCache(c VectorCache) HybridOption {
+//
+// scope 是缓存键的命名空间（服务商 + 模型），由装配点拼好传进来：
+// 缓存层拿不到 config，也不该为了一行字符串去 import 它。
+// 传空串时退回模型名，既有调用点因此不必全部改写。
+func WithVectorCache(c VectorCache, scope string) HybridOption {
 	return func(h *Hybrid) {
 		if c != nil {
 			h.cache = c
 		}
+		h.qScope = scope
 	}
+}
+
+// scope 返回缓存键的命名空间。为空时退回模型名，保证既有测试与调用点行为不变。
+func (h *Hybrid) scope() string {
+	if h.qScope != "" {
+		return h.qScope
+	}
+	return h.model
 }
 
 // Len 返回语义索引条数，供装配点判断向量库是否为空。
@@ -107,7 +121,7 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 	// 3. 查询向量：先查缓存，miss 才走公网。
 	//    同一句话在彩排、试讲、正式演示里会被问很多遍，每一次都是一次公网往返。
 	var queryVec []float32
-	key := QueryVectorKey(h.model, input)
+	key := QueryVectorKey(h.scope(), input)
 	if h.cache != nil {
 		// 维度必须校验：旧模型留下的 1024 维向量喂给 1536 维索引会在点积里越界。
 		if cached, ok := h.cache.GetVector(ctx, key); ok && len(cached) == h.semantic.Dims() {

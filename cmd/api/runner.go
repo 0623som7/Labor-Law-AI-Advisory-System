@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"net/url"
 
 	"github.com/redis/go-redis/v9"
 
@@ -50,7 +51,20 @@ func newSearcher(ctx context.Context, db *sql.DB, rdb *redis.Client, cfg config.
 	// 查询向量缓存：同一句话第二次不再走公网。没 Redis 时它自己退化成不缓存，
 	// 不需要在这里判空——那会让"Redis 挂了"变成"检索不工作"。
 	return retrieval.NewHybrid(keyword, index, embedder, statutes, cfg.LLM.ModelEmbedding, logger,
-		retrieval.WithVectorCache(store.NewVectorCache(rdb, logger)))
+		retrieval.WithVectorCache(store.NewVectorCache(rdb, logger), embedScope(cfg.LLM)))
+}
+
+// embedScope 标识"哪一家的哪个模型"。只带模型名不够：同名同维不同空间的
+// 向量混在一起时，余弦仍然算得出数，只是名次没有意义。
+//
+// 用 host 而不是完整 BaseURL：路径部分（/compatible-mode/v1 之类）只是同一个
+// 服务商的不同入口，跟着改会让整库缓存白扔一次；host 变了才真的换了服务商。
+func embedScope(c config.LLMConfig) string {
+	host := c.BaseURL
+	if u, err := url.Parse(c.BaseURL); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	return c.ModelEmbedding + "@" + host
 }
 
 // searcher 是 cmd/api 对检索器的完整要求：编排层只要 Search，

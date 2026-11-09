@@ -104,3 +104,26 @@ func openDeadDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
+
+// TestEmbedScope 钉住缓存键的命名空间：带 host，但去掉路径。
+//
+// 路径（/compatible-mode/v1 之类）只是同一家服务商的不同入口，
+// 跟着它变会让整库缓存白扔一次；host 变了才是真的换了服务商。
+func TestEmbedScope(t *testing.T) {
+	cases := []struct {
+		base string
+		want string
+	}{
+		{"https://dashscope.aliyuncs.com/compatible-mode/v1", "text-embedding-v3@dashscope.aliyuncs.com"},
+		{"https://dashscope.aliyuncs.com", "text-embedding-v3@dashscope.aliyuncs.com"},
+		{"http://127.0.0.1:9999/v1", "text-embedding-v3@127.0.0.1:9999"},
+		{"", "text-embedding-v3@"},
+		{"::", "text-embedding-v3@::"},
+	}
+	for _, c := range cases {
+		got := embedScope(config.LLMConfig{BaseURL: c.base, ModelEmbedding: "text-embedding-v3"})
+		if got != c.want {
+			t.Errorf("embedScope(%q) = %q, want %q", c.base, got, c.want)
+		}
+	}
+}

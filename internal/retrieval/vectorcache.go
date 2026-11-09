@@ -25,12 +25,17 @@ type VectorCache interface {
 	SetVector(ctx context.Context, key string, vec []float32)
 }
 
-// QueryVectorKey 是缓存键：模型名进键，换模型自动失效，不需要手工清缓存。
+// QueryVectorKey 是缓存键。scope 标识"哪一家的哪个模型"，不能只用模型名：
+// 同名同维不同空间的向量混在一起时，余弦仍然算得出数，只是名次没有意义。
+//
+// 只带模型名时换平台换不掉缓存：两个平台都叫 text-embedding-v3、都返 1024 维，
+// 维度校验挡不住，于是旧缓存被当成命中，检索看着正常、引用全错、日志一条都没有。
+// scope 由装配点拼成"模型@host"，换服务商必然换键。
 //
 // 只 TrimSpace，不 lowercase、不去标点：中文改一个标点就是另一句话，归一化是
 // 检索层的事（keywords.go 的 aliases），缓存不掺和，否则关键词词表一调，
 // 缓存里躺着的就是旧口径的向量。
-func QueryVectorKey(model, input string) string {
-	sum := sha256.Sum256([]byte(model + "\x00" + strings.TrimSpace(input)))
+func QueryVectorKey(scope, input string) string {
+	sum := sha256.Sum256([]byte(scope + "\x00" + strings.TrimSpace(input)))
 	return queryVectorPrefix + hex.EncodeToString(sum[:])
 }
