@@ -259,3 +259,44 @@ func TestValidateCrossField(t *testing.T) {
 		})
 	}
 }
+
+func TestRetrievalSemanticSwitch(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		set  bool
+		want bool
+	}{
+		{"缺键默认关闭", "", false, false},
+		{"on 为真", "on", true, true},
+		{"true 为真", "true", true, true},
+		{"1 为真", "1", true, true},
+		{"off 为假", "off", true, false},
+		{"false 为假", "false", true, false},
+		{"0 为假", "0", true, false},
+		{"大写也认", "ON", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := baseEnv()
+			if tc.set {
+				env["RETRIEVAL_SEMANTIC"] = tc.raw
+			}
+			cfg, err := LoadFrom(envGetter(env))
+			if err != nil {
+				t.Fatalf("LoadFrom() 返回错误: %v", err)
+			}
+			if cfg.Retrieval.Semantic != tc.want {
+				t.Fatalf("Retrieval.Semantic = %v, want %v", cfg.Retrieval.Semantic, tc.want)
+			}
+		})
+	}
+}
+
+func TestRetrievalSemanticRejectsGarbage(t *testing.T) {
+	env := baseEnv()
+	env["RETRIEVAL_SEMANTIC"] = "yes"
+	if _, err := LoadFrom(envGetter(env)); err == nil {
+		t.Fatal("期望 RETRIEVAL_SEMANTIC=yes 报错，实际通过")
+	}
+}

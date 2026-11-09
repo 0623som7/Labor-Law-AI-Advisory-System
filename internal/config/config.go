@@ -38,16 +38,17 @@ const minSecretLen = 32
 // 分组与 .env.example 的段落一一对应：增删任何一项，两边必须同时改，
 // 否则新项会悄悄拿到默认值，而默认值在线上通常是错的。
 type Config struct {
-	App     AppConfig
-	HTTP    HTTPConfig
-	Auth    AuthConfig
-	MySQL   MySQLConfig
-	Redis   RedisConfig
-	LLM     LLMConfig
-	Storage StorageConfig
-	Worker  WorkerConfig
-	File    FileConfig
-	Log     LogConfig
+	App       AppConfig
+	HTTP      HTTPConfig
+	Auth      AuthConfig
+	MySQL     MySQLConfig
+	Redis     RedisConfig
+	LLM       LLMConfig
+	Storage   StorageConfig
+	Worker    WorkerConfig
+	File      FileConfig
+	Retrieval RetrievalConfig
+	Log       LogConfig
 }
 
 // AppConfig 是进程身份。
@@ -206,6 +207,13 @@ type FileConfig struct {
 	ExtractTimeout time.Duration
 }
 
+// RetrievalConfig 是检索策略开关。
+type RetrievalConfig struct {
+	// Semantic 控制咨询链路是否使用向量召回。默认 false：
+	// 向量库要先灌、模型名要能对上，灰度期开着只会让每次问答多一次网络往返。
+	Semantic bool
+}
+
 // LogConfig 是日志输出参数。
 type LogConfig struct {
 	// Level 取 debug / info / warn / error。
@@ -297,6 +305,9 @@ func LoadFrom(get func(string) string) (Config, error) {
 			MaxBlocksPerPage: l.num("FILE_MAX_BLOCKS_PER_PAGE", 500, 1, 10000),
 			PdfToTextPath:    l.str("FILE_PDFTOTEXT_PATH", "pdftotext"),
 			ExtractTimeout:   l.dur("FILE_EXTRACT_TIMEOUT", 30*time.Second),
+		},
+		Retrieval: RetrievalConfig{
+			Semantic: l.boolean("RETRIEVAL_SEMANTIC", false),
 		},
 		Log: LogConfig{
 			Level:  strings.ToLower(l.str("LOG_LEVEL", "info")),
@@ -496,16 +507,19 @@ func (l *loader) list(name string, def []string) []string {
 	return out
 }
 
-// boolean 只接受 true/false/1/0。写成 yes/on 也当错误：
-// 环境变量文件是人手写的，含糊的取值在排查时最费时间。
+// boolean 接受 true/false/1/0，以及 on/off 这对同义词。
+//
+// on/off 是给开关类配置留的：RETRIEVAL_SEMANTIC=off 这种写法在运维眼里就是布尔值，
+// 而把这个键写成运维习惯的样子却启动失败，是最不好解释的一类故障。
+// yes/no 仍然当错误：环境变量文件是人手写的，含糊的取值在排查时最费时间。
 func (l *loader) boolean(name string, def bool) bool {
 	raw := strings.ToLower(strings.TrimSpace(l.get(name)))
 	switch raw {
 	case "":
 		return def
-	case "true", "1":
+	case "true", "1", "on":
 		return true
-	case "false", "0":
+	case "false", "0", "off":
 		return false
 	default:
 		l.fail("%s 必须是 true / false", name)
