@@ -94,6 +94,16 @@ export function listFindings(reviewId: string): Promise<Finding[]> {
  * 用 API 触发过一次审查，进页面就什么都没了。后端按文件查的能力一直有，
  * 这里只是把它接出来。没有审查记录时后端回空列表，不是 404。
  */
+/**
+ * GET /reviews?limit=&offset=，按创建时间倒序。
+ *
+ * data 是数组、没有 total（后端 toReviewDTOs(items) 直接塞进 data），
+ * 所以"还有没有下一页"只能由调用方按"这一页是否装满"推断。
+ */
+export function listReviews(limit = 20, offset = 0): Promise<Review[]> {
+  return get<Review[]>('/reviews', { limit, offset })
+}
+
 export async function findReviewByFile(fileId: string): Promise<Review | null> {
   const items = await get<Review[]>(`/reviews?file_id=${encodeURIComponent(fileId)}`)
   return items.length > 0 ? items[0] : null

@@ -8,6 +8,7 @@ import { getTokens } from '@/api/client'
 import ChatView from '@/views/ChatView.vue'
 import LoginView from '@/views/LoginView.vue'
 import ReviewView from '@/views/ReviewView.vue'
+import ReviewsView from '@/views/ReviewsView.vue'
 import UploadView from '@/views/UploadView.vue'
 
 const router = createRouter({
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/chat', name: 'chat', component: ChatView, meta: { requiresAuth: true } },
     { path: '/upload', name: 'upload', component: UploadView, meta: { requiresAuth: true } },
     { path: '/review/:fileId', name: 'review', component: ReviewView, meta: { requiresAuth: true } },
+    { path: '/reviews', name: 'reviews', component: ReviewsView, meta: { requiresAuth: true } },
     // 直接读令牌而不是 store：守卫在 pinia 就绪前也可能被触发（硬刷新深链）。
     { path: '/:pathMatch(.*)*', redirect: '/chat' },
   ],
