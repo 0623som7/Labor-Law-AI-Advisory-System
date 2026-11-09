@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"math"
 	"testing"
 
 	"laborlaw/internal/port"
@@ -310,5 +311,55 @@ func TestHybridLen(t *testing.T) {
 	var nilHybrid *Hybrid
 	if nilHybrid.Len() != 0 {
 		t.Fatalf("nil Hybrid 的 Len 应为 0")
+	}
+}
+
+// 对外只有一个 score 字段：排序用的是 RRF 分，展示也必须是它，
+// 否则调用方会看到"余弦 0.63 排在关键词 7.5 前面"。
+func TestHybridScoreIsFusedScore(t *testing.T) {
+	keyword := []port.StatuteHit{
+		statuteHit("LCL-31", "用人单位应当严格执行劳动定额标准", 3),
+		statuteHit("LCL-85", "未依法支付劳动报酬", 2),
+	}
+	sem := mustSemantic(t, map[string][]float32{
+		"LCL-31": {1, 0},
+		"LL-44":  {0.6, 0.8},
+	})
+	emb := &fakeEmbedder{vec: []float32{1, 0}}
+	getter := &fakeGetter{byID: map[string]port.Statute{"LL-44": {ID: "LL-44", Text: "延长工作时间应支付加班工资"}}}
+	h := newTestHybrid(t, keyword, sem, emb, getter)
+
+	hits, err := h.Search(context.Background(), "加班费", 5)
+	if err != nil {
+		t.Fatalf("Search 返回错误：%v", err)
+	}
+	if len(hits) != 3 {
+		t.Fatalf("期望 3 条，实际 %d", len(hits))
+	}
+
+	// LCL-31 两路都是第 1 名：1/61 + 1/61；另两条各是某一路的第 2 名：1/62。
+	want := map[string]float64{
+		"LCL-31": 1.0/61 + 1.0/61,
+		"LCL-85": 1.0 / 62,
+		"LL-44":  1.0 / 62,
+	}
+	for _, hit := range hits {
+		expect, ok := want[hit.Statute.ID]
+		if !ok {
+			t.Fatalf("出现意料外的条目 %s", hit.Statute.ID)
+		}
+		if math.Abs(hit.Score-expect) > 1e-12 {
+			t.Fatalf("%s 的 Score = %v，期望融合分 %v", hit.Statute.ID, hit.Score, expect)
+		}
+	}
+
+	// 融合分必须严格降序，且不能残留任何原始分（关键词 3/2、余弦 1/0.8）。
+	if !(hits[0].Score > hits[1].Score && hits[1].Score >= hits[2].Score) {
+		t.Fatalf("Score 未严格降序：%v %v %v", hits[0].Score, hits[1].Score, hits[2].Score)
+	}
+	for _, hit := range hits {
+		if hit.Score > 1 {
+			t.Fatalf("%s 的 Score = %v，看起来是原始分没被融合分覆盖", hit.Statute.ID, hit.Score)
+		}
 	}
 }

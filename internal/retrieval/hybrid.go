@@ -209,6 +209,9 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 		if strings.TrimSpace(hit.Statute.Text) == "" {
 			continue
 		}
+		// Score 回填融合分：对外只有一个 score 字段，排序与展示必须同一个数。
+		// 保留原始分会让调用方看到"0.63 排在 7.5 前面"。
+		hit.Score = score[id]
 		out = append(out, hit)
 	}
 	return out, nil
