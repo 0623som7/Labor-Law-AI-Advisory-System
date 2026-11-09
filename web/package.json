@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "node --test src/**/*.test.ts",
     "test:e2e": "node e2e/full-flow.mjs",
+    "preflight": "node e2e/preflight.mjs",
     "typecheck": "vue-tsc -b"
   },
   "dependencies": {
