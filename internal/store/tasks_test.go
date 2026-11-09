@@ -244,3 +244,45 @@ func TestTasksListByStatusAndFailRunning(t *testing.T) {
 		t.Fatalf("FailRunning 误伤了已结束任务: %+v", other)
 	}
 }
+
+// 排队中的任务也是脏状态：进程被 kill 时它们还在池子里没人领，重启后队列是空的，
+// 不清理就会永远停在 pending，前端一直转圈。
+func TestFailRunningAlsoClearsPending(t *testing.T) {
+	db := testDB(t)
+	pending, running, done := newTask(), newTask(), newTask()
+	cleanupTasks(t, db, pending.ID, running.ID, done.ID)
+	s := NewTasks(db)
+	ctx := context.Background()
+
+	for _, task := range []*port.Task{pending, running, done} {
+		if err := s.Create(ctx, task); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+	// 只推进 running 与 done，pending 保持原状。
+	for _, task := range []*port.Task{running, done} {
+		if err := s.UpdateProgress(ctx, task.ID, 5, "跑"); err != nil {
+			t.Fatalf("UpdateProgress: %v", err)
+		}
+	}
+	if err := s.Finish(ctx, done.ID, port.TaskSucceeded, ""); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	if _, err := s.FailRunning(ctx, "服务重启，任务中断"); err != nil {
+		t.Fatalf("FailRunning: %v", err)
+	}
+
+	gotPending, _ := s.Get(ctx, pending.ID)
+	if gotPending.Status != port.TaskFailed {
+		t.Fatalf("pending 任务没被清理: %+v", gotPending)
+	}
+	gotRunning, _ := s.Get(ctx, running.ID)
+	if gotRunning.Status != port.TaskFailed {
+		t.Fatalf("running 任务没被清理: %+v", gotRunning)
+	}
+	gotDone, _ := s.Get(ctx, done.ID)
+	if gotDone.Status != port.TaskSucceeded {
+		t.Fatalf("已结束任务被误伤: %+v", gotDone)
+	}
+}

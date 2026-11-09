@@ -169,10 +169,14 @@ func (t *Tasks) ListByStatus(ctx context.Context, status port.TaskStatus, limit 
 	return out, nil
 }
 
-// FailRunning 把库里所有 running 任务标为 failed。
+// FailRunning 把库里所有 pending 与 running 任务标为 failed，返回受影响行数。
 //
-// worker 进程崩溃后 running 是脏状态：没人会再推进它，前端会一直转圈。
+// worker 进程崩溃后这两个状态都是脏状态：running 的没人会再推进，
+// pending 的还排在队列里没人领——重启后队列是空的，它们会永远停在那里。
 // 只在启动时调用一次，reason 写进 error 列供用户看到"服务重启，请重新提交"。
+//
+// 前提是单实例部署：多副本共享一个库时，启动时这样清理会误杀另一个副本
+// 正在跑的任务。真要横向扩容，得先给 tasks 加一个 owner 列再按副本过滤。
 func (t *Tasks) FailRunning(ctx context.Context, reason string) (int64, error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -183,7 +187,7 @@ func (t *Tasks) FailRunning(ctx context.Context, reason string) (int64, error) {
 	}
 	res, err := t.db.ExecContext(ctx,
 		`UPDATE tasks SET status = 'failed', error = ?, updated_at = CURRENT_TIMESTAMP(3)
-		 WHERE status = 'running'`, reason)
+		 WHERE status IN ('pending', 'running')`, reason)
 	if err != nil {
 		return 0, port.Wrap(port.CodeInternal, err, "清理中断任务失败")
 	}

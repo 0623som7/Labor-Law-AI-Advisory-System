@@ -154,6 +154,14 @@ func run(migrateOnly bool) error {
 		} else if n > 0 {
 			logger.Info("已把遗留的 running 任务标记为失败", "count", n)
 		}
+		// 任务收尾之后才能对账：成败与否取决于上一步有没有把任务写成终态。
+		// review 停在 pending/running 而任务已失败时，用户会一直轮询一个死任务，
+		// 重新点也只会复用同一条记录。
+		if n, err := store.FailStaleReviews(ctx, inf.db); err != nil {
+			logger.Warn("清理中断审查失败", "err", err.Error())
+		} else if n > 0 {
+			logger.Info("已把中断的审查标记为失败", "count", n)
+		}
 		// defer 在 run() 返回时执行，此时 srv 已 Shutdown 完：先停 HTTP 再停池，
 		// 不会出现"接口还在收请求、池已经关了"的窗口。
 		defer pool.Shutdown(context.Background())
