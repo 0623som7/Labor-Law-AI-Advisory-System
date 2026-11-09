@@ -37,11 +37,13 @@ func (a *API) handleMetrics(c *gin.Context) {
 	uptime := time.Since(a.startedAt).Seconds()
 	writeMetric("laborlaw_uptime_seconds", "进程启动至今的秒数", "gauge", strconv.FormatFloat(uptime, 'f', 0, 64))
 
-	streams := 0
+	subscribers, streams := 0, 0
 	if a.hub != nil {
+		subscribers = a.hub.Subscribers()
 		streams = a.hub.Streams()
 	}
-	writeMetric("laborlaw_sse_streams", "当前存活的 SSE 流数量", "gauge", strconv.Itoa(streams))
+	writeMetric("laborlaw_sse_subscribers", "当前挂着的 SSE 订阅者数", "gauge", strconv.Itoa(subscribers))
+	writeMetric("laborlaw_sse_streams", "Hub 跟踪中的流数量（含 TTL 内已无订阅者的空闲流）", "gauge", strconv.Itoa(streams))
 	writeMetric("laborlaw_sse_dropped_total", "因背压丢弃的帧总数", "counter", strconv.FormatInt(stream.DroppedTotal(), 10))
 	writeMetric("laborlaw_goroutines", "当前 goroutine 数", "gauge", strconv.Itoa(runtime.NumGoroutine()))
 

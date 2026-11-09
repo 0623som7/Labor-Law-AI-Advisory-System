@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"laborlaw/internal/port"
@@ -31,6 +32,12 @@ type Hub struct {
 	ttl     time.Duration
 	log     *slog.Logger
 	now     func() time.Time
+
+	// subs 是当前挂着的订阅者总数。
+	//
+	// 用原子计数而不是每次遍历 map 统计：/metrics 每次抓取都会读它，
+	// 遍历要在锁内扫所有流的 subs 集合，而计数器只是读一个 int64。
+	subs atomic.Int64
 }
 
 // stream 是一条逻辑消息流：一个自增 seq、一段可续传的帧缓冲、若干订阅者。
@@ -78,6 +85,7 @@ func (h *Hub) Attach(ctx context.Context, key string, lastEventID int, w http.Re
 	h.evictLocked()
 	s := h.streamLocked(key)
 	s.subs[writer] = struct{}{}
+	h.subs.Add(1)
 	// 在锁内取快照：保证"补发到哪一帧"与"从哪一帧开始收实时"是一致的。
 	writer.backlog = s.buf.from(lastEventID)
 	h.mu.Unlock()
@@ -184,11 +192,23 @@ func (h *Hub) LastSeq(key string) int {
 	return 0
 }
 
-// Streams 返回当前存活的流数量，用于 /metrics 观察内存是否泄漏。
+// Streams 返回 Hub 跟踪中的流数量（含 TTL 内已无订阅者的空闲流）。
+//
+// 空闲读数是懒回收的结果：evictLocked 只在 Attach / publish 时触发，
+// 没有后台协程。要"此刻在线多少条"请用 Subscribers。
 func (h *Hub) Streams() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.streams)
+}
+
+// Subscribers 返回当前挂着的 SSE 订阅者总数。
+//
+// 与 Streams 的区别：Streams 数的是 Hub 跟踪的流（含 TTL 内已无订阅者的
+// 空闲流，读数会停在下一次 attach/publish 之前），Subscribers 数的是此刻
+// 真正挂着的连接。做告警阈值请用这个。
+func (h *Hub) Subscribers() int {
+	return int(h.subs.Load())
 }
 
 // detach 摘除订阅；最后一个订阅者离开时记下时间，交给 TTL 回收。
@@ -200,7 +220,11 @@ func (h *Hub) detach(key string, w *Writer) {
 	if !ok {
 		return
 	}
-	delete(s.subs, w)
+	// 先确认确实挂着再减，否则重复 detach 会把计数减成负数。
+	if _, ok := s.subs[w]; ok {
+		delete(s.subs, w)
+		h.subs.Add(-1)
+	}
 	if len(s.subs) == 0 {
 		s.last = h.now()
 	}

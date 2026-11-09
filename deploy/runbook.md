@@ -230,8 +230,11 @@ curl -k -N -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json
 ```bash
 # api 发布在 127.0.0.1:8080，只从服务器本机抓
 curl -s http://127.0.0.1:8080/metrics
-# 期望 6 行（每行前有 # HELP / # TYPE）：uptime、sse_streams、sse_dropped_total、
-# goroutines、llm_spent_yuan、llm_budget_yuan；没接模型时只有前 4 行。
+# 期望 7 行（每行前有 # HELP / # TYPE）：uptime、sse_subscribers、sse_streams、
+# sse_dropped_total、goroutines、llm_spent_yuan、llm_budget_yuan；
+# 没接模型时没有最后两行。
+# sse_subscribers 是此刻真正挂着的连接数；sse_streams 是 Hub 跟踪的流数，
+# 含 TTL 内已无订阅者的空闲流，会停在下一次 attach 之前。
 
 # 公网入口必须 404——返回 200 HTML 说明 nginx 的 location = /metrics 没生效，
 # 监控脚本会把 HTML 当指标读。
