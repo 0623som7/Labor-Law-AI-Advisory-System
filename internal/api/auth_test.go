@@ -442,12 +442,20 @@ func TestRefreshRejectsForgedToken(t *testing.T) {
 	h := authTestServer(t, authTestConfig("", 5), newFakeUserStore(), newFakeCache())
 	reg := registerUser(t, h, testPhone, testPassword)
 
-	// 换掉签名开头一个字符：结构合法、签名必然无效。
+	// 换掉签名的第二个字符：结构合法、签名必然无效。
 	//
 	// 不要改签名最后一个字符。base64url 末位可能存在补齐用的空位，改字符后
 	// 实际字节可能完全不变，测试就会偶发放行同一枚令牌。
+	//
+	// 替换位必须从"被替换的那个字符"推出来：早先的写法按 sig[0] 决定替换成
+	// 什么，却替换的是 sig[1]，于是 sig[1] 本来就是那个字符时令牌一字未改，
+	// 用例约 1/64 的概率漏判（实测 -count=200 红过两次）。
 	sig := strings.Split(reg.RefreshToken, ".")[2]
-	forged := reg.RefreshToken[:len(reg.RefreshToken)-len(sig)+1] + forgeChar(sig[0]) + reg.RefreshToken[len(reg.RefreshToken)-len(sig)+2:]
+	pos := len(reg.RefreshToken) - len(sig) + 1
+	forged := reg.RefreshToken[:pos] + forgeChar(reg.RefreshToken[pos]) + reg.RefreshToken[pos+1:]
+	if forged == reg.RefreshToken {
+		t.Fatal("构造失败：伪造令牌与原令牌相同")
+	}
 
 	rec, env := doJSON(t, h, http.MethodPost, "/api/v1/auth/refresh",
 		map[string]string{"refresh_token": forged}, nil)
