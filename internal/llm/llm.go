@@ -57,6 +57,10 @@ type Client struct {
 	budget  *budget
 	baseURL *url.URL
 	now     func() time.Time
+
+	// budgetStore 在 New 的最后才交给 budget：Option 的施加顺序不该影响
+	// "谁给预算用哪个 logger"，否则 WithLogger 写在后面就会被静默忽略。
+	budgetStore BudgetStore
 }
 
 // Option 是 Client 的可选依赖注入点。生产代码只用默认值，测试用它换掉时钟与传输层。
@@ -77,6 +81,14 @@ func WithLogger(l *slog.Logger) Option {
 // 生产必须注入 store 实现，否则成本账随重启清零。
 func WithUsageRecorder(r UsageRecorder) Option {
 	return func(c *Client) { c.rec = r }
+}
+
+// WithBudgetStore 把日预算写穿到 Redis，进程重启不再清零。
+//
+// 不注入时退化成纯进程内计数（单元测试与 FakeClient 的默认），
+// 生产必须注入，否则每日上限只在单个进程的生命周期内有效。
+func WithBudgetStore(s BudgetStore) Option {
+	return func(c *Client) { c.budgetStore = s }
 }
 
 // WithHTTPClient 注入 HTTP 客户端，测试用它指向 httptest 服务器。
@@ -104,6 +116,9 @@ func New(cfg config.LLMConfig, opts ...Option) *Client {
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	if c.budgetStore != nil {
+		c.budget.withStore(c.budgetStore, c.log)
 	}
 	if u, err := url.Parse(cfg.BaseURL); err == nil {
 		c.baseURL = u
@@ -230,13 +245,21 @@ func (c *Client) Budget() (spent, limit float64) {
 	return c.budget.snapshot()
 }
 
+// WarmBudget 启动时把当日已花从 Redis 读回本地缓存。
+//
+// 不放进 New：New 没有 ctx，也没有错误返回；预热失败只该告警，不该让服务起不来——
+// 读不到就当今天从 0 开始，这是改动前的行为，不是新引入的风险。
+func (c *Client) WarmBudget(ctx context.Context) error {
+	return c.budget.warm(ctx)
+}
+
 // afterSuccess 记账：预算累加、成本写进 Usage、异步持久化。
 //
 // 落库失败不返回给用户：模型已经答完了，把"记账失败"变成用户侧 500 是错误的取舍。
 // 但必须打日志，否则成本闸会在无人察觉的情况下失效。
 func (c *Client) afterSuccess(ctx context.Context, req port.ChatRequest, model string, resp port.ChatResponse) {
 	cost := c.Cost(resp.Usage)
-	c.budget.add(cost)
+	c.budget.add(ctx, cost)
 
 	if c.rec == nil {
 		return

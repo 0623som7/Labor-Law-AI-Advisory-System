@@ -407,7 +407,7 @@ func TestRoute(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fresh := New(testConfig("http://127.0.0.1:1"))
 			if tc.overSpend {
-				fresh.budget.add(1000)
+				fresh.budget.add(context.Background(), 1000)
 			}
 			if got := fresh.route(tc.scene, tc.explicit); got != tc.want {
 				t.Fatalf("route(%q) = %q, want %q", tc.scene, got, tc.want)
