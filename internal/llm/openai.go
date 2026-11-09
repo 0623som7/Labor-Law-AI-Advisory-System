@@ -352,22 +352,9 @@ func (c *Client) applyHeaders(req *http.Request, traceID string) {
 	}
 }
 
-// transportError 把网络层错误翻译成业务码。
-//
-// 超时有三条来源，必须全部认出来，否则同一个 50ms 超时在不同 Go 版本上会
-// 落到不同业务码：
-//  1. ctx 到点 → context.DeadlineExceeded；
-//  2. 调用方取消 → context.Canceled；
-//  3. transport 的 ResponseHeaderTimeout 先到 → net.Error.Timeout() == true，
-//     它既不是 context 错误，文本也不稳定（"timeout awaiting response headers"）。
-//
-// 第 3 条是 CI 上才暴露的：Go 1.22 里 transport 超时先生效，Go 1.27 里 ctx 先生效，
-// 同一份代码给出 50201 与 50301 两个码。
+// transportError 把网络层错误翻译成业务码（映射见 errors_map.go）。
 func (c *Client) transportError(err error) error {
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || isTimeout(err) {
-		return port.Wrap(port.CodeUpstreamTimeout, c.redact(err), "模型调用超时")
-	}
-	return port.Wrap(port.CodeUpstream, c.redact(err), "模型调用失败")
+	return mapTransportError(c.cfg, err)
 }
 
 // isTimeout 识别 transport 层超时（ctx 超时不会走到这里，但两者都判一次更稳）。
@@ -376,24 +363,9 @@ func isTimeout(err error) bool {
 	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
-// statusError 把非 200 映射成业务码。
-//
-// 上游的错误正文只作为 cause 进日志，不进 Message：它经常把请求体回显出来，
-// 而请求体里可能已经有合同原文。回显 Authorization 头的网关也真实存在，
-// 所以这里先做一次 key 脱敏再进错误链。
+// statusError 把非 200 映射成业务码（映射见 errors_map.go）。
 func (c *Client) statusError(status int, raw []byte) error {
-	detail := errors.New(truncate(c.redactText(strings.TrimSpace(string(raw))), 300))
-	switch {
-	case status == http.StatusTooManyRequests:
-		return port.Wrap(port.CodeRateLimited, detail, "模型服务限流")
-	case status >= 500:
-		return port.Wrap(port.CodeUpstream, detail, "模型服务错误（HTTP %d）", status)
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		// 鉴权失败不会因为重试而恢复，因此用不可重试的码，只把原因留在 cause 里。
-		return port.Wrap(port.CodeInvalidArgument, detail, "模型鉴权失败，请检查 LLM_API_KEY")
-	default:
-		return port.Wrap(port.CodeInvalidArgument, detail, "模型请求被拒绝（HTTP %d）", status)
-	}
+	return mapStatusError(c.cfg, status, raw)
 }
 
 // redact 把错误文本里可能出现的 API key 抹掉。
@@ -409,10 +381,7 @@ func (c *Client) redact(err error) error {
 // 有些网关会把整个 Authorization 头回显在错误里（"Bearer sk-... is invalid"），
 // 这类文本一旦进 cause 就会被日志采集系统收走，等于把 key 写进了日志盘。
 func (c *Client) redactText(s string) string {
-	if c.cfg.APIKey == "" {
-		return s
-	}
-	return strings.ReplaceAll(s, c.cfg.APIKey, "***")
+	return redactKey(c.cfg, s)
 }
 
 // mergeToolCalls 按 index 合并流式工具调用片段。

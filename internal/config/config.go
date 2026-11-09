@@ -147,6 +147,9 @@ type LLMConfig struct {
 	ModelExtract string
 	// ModelAdvise 是 review.advise 场景的模型名，走强档。
 	ModelAdvise string
+	// ModelEmbedding 是向量化模型名。换它必须整体重建向量，不能与旧向量混用：
+	// 不同模型的向量空间互不相通，混着算余弦得到的排序没有任何意义。
+	ModelEmbedding string
 	// Timeout 是单次调用上限（不含重试等待）。非流式调用用它。
 	Timeout time.Duration
 	// StreamTimeout 是流式生成的整体上限。
@@ -269,6 +272,7 @@ func LoadFrom(get func(string) string) (Config, error) {
 			ModelConsult:     l.str("LLM_MODEL_CONSULT", "deepseek-chat"),
 			ModelExtract:     l.str("LLM_MODEL_EXTRACT", "deepseek-chat"),
 			ModelAdvise:      l.str("LLM_MODEL_ADVISE", "deepseek-chat"),
+			ModelEmbedding:   l.str("LLM_EMBEDDING_MODEL", "text-embedding-v3"),
 			Timeout:          l.dur("LLM_TIMEOUT", 60*time.Second),
 			StreamTimeout:    l.dur("LLM_STREAM_TIMEOUT", 300*time.Second),
 			MaxRetries:       l.num("LLM_MAX_RETRIES", 2, 0, 5),
