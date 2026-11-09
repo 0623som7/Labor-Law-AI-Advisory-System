@@ -3,6 +3,7 @@ package extract
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // contractSample 是一份"该有的写法都有"的劳动合同正文，14 个字段全覆盖。
@@ -184,6 +185,83 @@ func TestExtractByTextSocialInsurancePositive(t *testing.T) {
 	empty, _ := extractByText("甲方与乙方签订本合同。")
 	if empty.SocialInsurance != nil {
 		t.Fatalf("没提社保时应当是 nil，实际 %v", *empty.SocialInsurance)
+	}
+}
+
+// TestClauseStartAdvancesByRune 钉住小句边界按字符前进。
+//
+// 真正的回归断言是第二段 utf8.ValidString：老实现用 body[idx:idx+1] 只前进
+// 一个字节，遇到多字节标点就把小句开头劈成非法 UTF-8；当前标点表里的符号
+// 恰好都是 3 字节或 1 字节，错误被 []rune 的 U+FFFD（也是 3 字节）盖住了。
+func TestClauseStartAdvancesByRune(t *testing.T) {
+	// 每个用例：一句带标点的原文 + 目标位置 + 期望的小句（不含标点本身）。
+	cases := []struct {
+		name string
+		body string
+		pose string // 目标位置取这个子串在原文里的下标
+		want string
+	}{
+		{"句号", "甲方应当支付。试用期月工资5000元", "5000", "试用期月工资"},
+		{"全角分号", "甲方应当支付；试用期月工资5000元", "5000", "试用期月工资"},
+		{"半角分号", "甲方应当支付;试用期月工资5000元", "5000", "试用期月工资"},
+		{"换行", "甲方应当支付\n试用期月工资5000元", "5000", "试用期月工资"},
+		{"全角逗号", "甲方应当支付，试用期月工资5000元", "5000", "试用期月工资"},
+		{"半角逗号", "甲方应当支付,试用期月工资5000元", "5000", "试用期月工资"},
+		{"取最后一个标点", "甲方。乙方，试用期月工资5000元", "5000", "试用期月工资"},
+		{"小句含两字节字符", "甲方应当支付。·试用期月工资5000元", "5000", "·试用期月工资"},
+		{"无标点", "试用期月工资5000元", "5000", "试用期月工资"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pos := strings.Index(c.body, c.pose)
+			if pos < 0 {
+				t.Fatalf("用例自身有问题：原文里找不到 %q", c.pose)
+			}
+			start := clauseStart(c.body, pos)
+			got := c.body[start:pos]
+			if got != c.want {
+				t.Fatalf("clauseStart = %d, 小句 = %q, want %q", start, got, c.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("小句不是合法 UTF-8: %q", got)
+			}
+		})
+	}
+
+	t.Run("边界", func(t *testing.T) {
+		body := "甲方应当支付。试用期月工资5000元"
+		if start := clauseStart(body, 0); start != 0 {
+			t.Fatalf("pos=0 应返回 0，实际 %d", start)
+		}
+		if got := body[clauseStart(body, 0):0]; got != "" {
+			t.Fatalf("pos=0 小句应为空，实际 %q", got)
+		}
+		if start := clauseStart(body, len(body)); start != strings.Index(body, "试用期") {
+			t.Fatalf("pos=len(body) 应落在最后一个标点之后，实际 %d", start)
+		}
+		if start := clauseStart("没有标点", 3); start != 0 {
+			t.Fatalf("文中无标点应返回 0，实际 %d", start)
+		}
+		if start := clauseStart(body, len(body)+10); start != 0 {
+			t.Fatalf("pos 越界应返回 0，实际 %d", start)
+		}
+		if start := clauseStart(body, -1); start != 0 {
+			t.Fatalf("pos 负数应返回 0，实际 %d", start)
+		}
+	})
+}
+
+// TestInProbationContextUsesClauseBoundary 钉住两个匹配点的判定：
+// 第一处是试用期工资（true），第二处"满后"是转正之后（false）。
+func TestInProbationContextUsesClauseBoundary(t *testing.T) {
+	body := "试用期月工资5000元，试用期满后月工资8000元"
+	first := strings.Index(body, "5000")
+	second := strings.Index(body, "8000")
+	if !inProbationContext(body, first) {
+		t.Fatalf("第一处（试用期月工资）应判定为试用期语境")
+	}
+	if inProbationContext(body, second) {
+		t.Fatalf("第二处（试用期满后）不应判定为试用期语境")
 	}
 }
 

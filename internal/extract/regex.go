@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"laborlaw/internal/rules"
 )
@@ -262,16 +263,30 @@ func parseSmallNumber(s string) (int, bool) {
 // 第二处"试用期满后月工资 8000 元"里的"试用期"离匹配点只有 5 个字，
 // 固定窗口一定会把它也挡掉，结果 salary_monthly 变成 0——比取错更糟。
 // 小句里出现"满 / 后 / 结束 / 转正"说明说的是转正之后，不算试用期语境。
+// 小句边界的计算交给 clauseStart：边界必须按字符前进，不能按字节。
 func inProbationContext(body string, pos int) bool {
-	start := 0
-	if idx := strings.LastIndexAny(body[:pos], "。；;\n，,"); idx >= 0 {
-		start = idx + len(string([]rune(body[idx:idx+1])))
-	}
-	segment := body[start:pos]
+	segment := body[clauseStart(body, pos):pos]
 	if !strings.Contains(segment, "试用期") {
 		return false
 	}
 	return !strings.ContainsAny(segment, "满后结束转正")
+}
+
+// clauseStart 返回 pos 所在小句的起始字节下标：上一个句读标点之后的位置。
+//
+// 必须按字符前进，不能写 body[idx:idx+1]：那是取一个字节，遇到多字节标点
+// 只会前进 1 字节，把小句开头劈成非法 UTF-8。当前标点表里的符号恰好都是
+// 3 字节或 1 字节，错误会被 []rune 的 U+FFFD（也是 3 字节）掩盖，看不出问题。
+func clauseStart(body string, pos int) int {
+	if pos <= 0 || pos > len(body) {
+		return 0
+	}
+	idx := strings.LastIndexAny(body[:pos], "。；;\n，,")
+	if idx < 0 {
+		return 0
+	}
+	_, size := utf8.DecodeRuneInString(body[idx:])
+	return idx + size
 }
 
 // parseAmount 把 "8,000" / "1.2" 读成数字。
