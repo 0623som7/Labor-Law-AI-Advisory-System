@@ -522,7 +522,7 @@ func (l *loader) boolean(name string, def bool) bool {
 	case "false", "0", "off":
 		return false
 	default:
-		l.fail("%s 必须是 true / false", name)
+		l.fail("%s 必须是 true / false / 1 / 0 / on / off", name)
 		return def
 	}
 }
