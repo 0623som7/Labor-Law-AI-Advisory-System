@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 
@@ -17,11 +18,43 @@ import (
 // 没有 MySQL 就返回 nil 而不是返回一个每次查询都失败的检索器：
 // Runner 对 nil 检索器的处理是跳过检索并明说"本次没有可引用的法条"，
 // 这属于能力降级；而后者会让每次问答都带一条检索失败，属于故障。
-func newSearcher(db *sql.DB) *retrieval.Retriever {
+//
+// 开关关闭时返回值与引入向量之前完全一致（同一个 *retrieval.Retriever），
+// 不额外包一层 Hybrid：灰度关闭就该是零回归，包括类型与调用路径。
+//
+// 开着但向量库没灌、或索引建不起来时一律退回关键词检索，并在日志里喊一声。
+// 向量召回是锦上添花，不能因为索引没准备好就让咨询接口起不来或答不了。
+func newSearcher(ctx context.Context, db *sql.DB, cfg config.Config, logger *slog.Logger) searcher {
 	if db == nil {
 		return nil
 	}
-	return retrieval.New(store.NewStatutes(db))
+	statutes := store.NewStatutes(db)
+	keyword := retrieval.New(statutes)
+	if !cfg.Retrieval.Semantic || cfg.LLM.APIKey == "" {
+		return keyword
+	}
+
+	embedder := llm.NewEmbeddingClient(cfg.LLM, llm.WithEmbeddingLogger(logger))
+	index, err := retrieval.LoadSemanticIndex(ctx, statutes, "statute", cfg.LLM.ModelEmbedding)
+	if err != nil {
+		logger.Warn("语义索引构建失败，退回关键词检索", "err", err.Error())
+		return keyword
+	}
+	if index.Len() == 0 {
+		logger.Info("向量库为空，退回关键词检索")
+		return keyword
+	}
+	logger.Info("语义检索已启用", "vectors", index.Len(), "model", cfg.LLM.ModelEmbedding)
+	return retrieval.NewHybrid(keyword, index, embedder, statutes, cfg.LLM.ModelEmbedding, logger)
+}
+
+// searcher 是 cmd/api 对检索器的完整要求：编排层只要 Search，
+// 而 /statutes 接口要 SearchIn（带法律来源）。两个窄接口各在各的包里定义，
+// 这里用一个组合接口让同一份实例同时喂给两边——否则 /statutes 会另造一个检索器，
+// 改词表时只生效一半。
+type searcher interface {
+	agent.StatuteSearcher
+	SearchIn(ctx context.Context, input, law string, topK int) ([]port.StatuteHit, error)
 }
 
 // newHistory 装配会话历史读取。

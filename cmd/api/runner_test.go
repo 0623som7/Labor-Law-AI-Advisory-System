@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"testing"
 
+	_ "github.com/go-sql-driver/mysql"
+
 	"laborlaw/internal/agent"
 	"laborlaw/internal/config"
+	"laborlaw/internal/retrieval"
 )
 
 func testLogger() *slog.Logger {
@@ -46,8 +51,12 @@ func TestNewLLMDoesNotRequireKey(t *testing.T) {
 
 // 无 MySQL 时必须返回 nil 检索器，让 Runner 走"跳过检索"的降级路径。
 func TestNewSearcherWithoutDB(t *testing.T) {
-	if got := newSearcher(nil); got != nil {
-		t.Error("没有数据库连接时不应构造检索器")
+	on := config.Config{}
+	on.Retrieval.Semantic = true
+	for _, cfg := range []config.Config{{}, on} {
+		if got := newSearcher(context.Background(), nil, cfg, testLogger()); got != nil {
+			t.Errorf("没有数据库连接时不应构造检索器（semantic=%v）", cfg.Retrieval.Semantic)
+		}
 	}
 }
 
@@ -56,4 +65,42 @@ func TestNewHistoryWithoutDB(t *testing.T) {
 	if got := newHistory(nil); got != nil {
 		t.Error("没有数据库连接时不应构造历史读取器")
 	}
+}
+
+// 灰度关闭时必须与引入向量之前完全一致：同一个 *retrieval.Retriever，
+// 不是"包了一层但行为相同"。类型相同才有资格说零回归。
+func TestNewSearcherKeywordOnlyWhenSemanticOff(t *testing.T) {
+	db := openDeadDB(t)
+	got := newSearcher(context.Background(), db, config.Config{}, testLogger())
+	if _, ok := got.(*retrieval.Retriever); !ok {
+		t.Fatalf("开关关闭时应返回 *retrieval.Retriever，实际 %T", got)
+	}
+}
+
+// 开关打开但索引建不起来（库连不上/向量没灌）时必须降级，而不是返回坏检索器，
+// 更不能让启动失败：向量召回是增强项，不是启动前提。
+func TestNewSearcherDegradesWhenIndexFails(t *testing.T) {
+	db := openDeadDB(t)
+	cfg := config.Config{}
+	cfg.Retrieval.Semantic = true
+	cfg.LLM.APIKey = "test-key"
+	cfg.LLM.BaseURL = "http://127.0.0.1:0"
+	cfg.LLM.ModelEmbedding = "text-embedding-v3"
+
+	got := newSearcher(context.Background(), db, cfg, testLogger())
+	if _, ok := got.(*retrieval.Retriever); !ok {
+		t.Fatalf("索引建不起来时应退回关键词检索，实际 %T", got)
+	}
+}
+
+// openDeadDB 拿一个不连也不 ping 的连接池：sql.Open 只校验 DSN，
+// 真正发查询才会失败，正好用来测"库不可用"这条降级路径。
+func openDeadDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("mysql", "root@tcp(127.0.0.1:1)/laborlaw")
+	if err != nil {
+		t.Fatalf("sql.Open 失败：%v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
 }
