@@ -39,6 +39,7 @@ type Hybrid struct {
 	log      *slog.Logger
 	cache    VectorCache
 	qScope   string
+	reranker Reranker
 }
 
 // NewHybrid 构造融合检索。log 为 nil 时用 slog.Default()。
@@ -115,7 +116,8 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 	// 2. 索引空或没有向量化能力时直接收工：这一轮省掉一次公网往返，
 	//    在向量库还没灌的灰度期，每一次问答都会走这条分支。
 	if h.semantic.Len() == 0 || h.embedder == nil {
-		return clip(keywordHits, topK), nil
+		// 降级也要重排：语义那路没启用时，交叉编码器仍然是"例外条款翻盘"的唯一手段。
+		return h.rerankHits(ctx, input, keywordHits, topK), nil
 	}
 
 	// 3. 查询向量：先查缓存，miss 才走公网。
@@ -133,11 +135,11 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 		vecs, err := h.embedder.Embed(ctx, h.model, []string{input})
 		if err != nil {
 			h.log.Warn("语义检索降级，仅用关键词结果", "err", err.Error())
-			return clip(keywordHits, topK), nil
+			return h.rerankHits(ctx, input, keywordHits, topK), nil
 		}
 		if len(vecs) == 0 || len(vecs[0]) == 0 {
 			h.log.Warn("语义检索降级，仅用关键词结果", "reason", "向量化返回空结果")
-			return clip(keywordHits, topK), nil
+			return h.rerankHits(ctx, input, keywordHits, topK), nil
 		}
 		queryVec = vecs[0]
 		if h.cache != nil {
@@ -150,7 +152,7 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 	semanticHits, err := h.semantic.Search(queryVec, topK*2, 0)
 	if err != nil {
 		h.log.Warn("语义检索降级，仅用关键词结果", "err", err.Error())
-		return clip(keywordHits, topK), nil
+		return h.rerankHits(ctx, input, keywordHits, topK), nil
 	}
 
 	// 5. RRF 融合：分数只由名次决定，不把余弦与关键词分相加——
@@ -184,8 +186,10 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 		// 否则同一个问题两次提问给出的引用卡片顺序不一样。
 		return ids[i] < ids[j]
 	})
-	if len(ids) > topK {
-		ids = ids[:topK]
+	// 候选窗口比 topK 宽：重排要能看到"本来排在 topK 之外、但正是用户问的那条例外"
+	// 的条文，否则它没有翻盘机会。没开重排时这一步只是多补几条正文，最后仍截回 topK。
+	if len(ids) > maxRerankCandidates {
+		ids = ids[:maxRerankCandidates]
 	}
 
 	// 6. 回表补全：只补正文为空的（即向量独有条目）。
@@ -214,7 +218,9 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 		hit.Score = score[id]
 		out = append(out, hit)
 	}
-	return out, nil
+
+	// 7. 交叉编码器重排，然后截到 topK。失败保留融合顺序。
+	return h.rerankHits(ctx, input, out, topK), nil
 }
 
 // SearchIn 是 Search 的带法律来源版本，供 /statutes 接口复用同一个检索器。
@@ -224,7 +230,13 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 // 融合进来就会把别的法律的条文混进一个声称按法律过滤的结果里。
 func (h *Hybrid) SearchIn(ctx context.Context, input, law string, topK int) ([]port.StatuteHit, error) {
 	if strings.TrimSpace(law) != "" {
-		return h.keyword.SearchIn(ctx, input, law, topK)
+		// 先按 law 过滤再重排：候选窗口同样放宽到 maxRerankCandidates，
+		// 否则重排只在 topK 条里调顺序，等于没给例外条款留机会。
+		hits, err := h.keyword.SearchIn(ctx, input, law, maxRerankCandidates)
+		if err != nil {
+			return nil, err
+		}
+		return h.rerankHits(ctx, input, hits, topK), nil
 	}
 	return h.Search(ctx, input, topK)
 }

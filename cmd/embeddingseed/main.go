@@ -218,21 +218,14 @@ func loadStatutes(ctx context.Context, db *sql.DB, limit int) ([]port.Statute, e
 	return items, nil
 }
 
-// embedText 拼嵌入文本：法律名 + 条号 + 标题 + 正文。
+// embedText 拼嵌入文本。
 //
-// 法律名与条号必须进去：只嵌正文时"第八十五条"与"第八十七条"的文本几乎一样，
-// 语义向量也几乎一样，用户问"二倍工资"会两条都召回到差不多高的位置。
-//
-// 空字段直接跳过而不是留占位：种子数据里标题可能为空，拼出两个连续空格会
-// 让同一段文本在不同条目里被切词切成不同的 token。
+// 实现搬到了 retrieval.StatuteDocument：重排时要喂给交叉编码器的文本必须与
+// 这里建向量时喂给嵌入模型的文本逐字一致，否则"索引里的相似度"和"重排读到的
+// 内容"是两个东西，精度对不上时无从排查。留着这一层薄封装是因为调用点与测试
+// 都按这个名字找，改名的收益为零。
 func embedText(s port.Statute) string {
-	parts := make([]string, 0, 4)
-	for _, p := range []string{s.Law, s.Article, s.Title, s.Text} {
-		if p = strings.TrimSpace(p); p != "" {
-			parts = append(parts, p)
-		}
-	}
-	return strings.Join(parts, " ")
+	return retrieval.StatuteDocument(s)
 }
 
 // clampBatch 把批次大小夹到 1..10：上游单请求最多 10 条，多了就是静默丢批。

@@ -43,11 +43,25 @@ const topK = 5
 func main() {
 	dsn := flag.String("dsn", "", "MySQL DSN；不传则读 TEST_MYSQL_DSN")
 	verbose := flag.Bool("v", false, "逐条打印召回的条号")
-	semanticFlag := flag.Bool("semantic", false, "叠加向量召回；也认 RETRIEVAL_SEMANTIC=on/true/1")
+	semanticFlag := flag.Bool("semantic", false, "等价于 -mode hybrid，保留旧写法")
+	modeFlag := flag.String("mode", "", "keyword | semantic | hybrid | rerank；不传时看 -semantic 与环境变量")
 	flag.Parse()
 
 	// 命令行优先，环境变量兜底：开关在 .env 里，跑评测时不想每改一次都带上 flag。
-	semantic := *semanticFlag || envTruthy(os.Getenv("RETRIEVAL_SEMANTIC"))
+	mode := strings.TrimSpace(*modeFlag)
+	if mode == "" {
+		if *semanticFlag || envTruthy(os.Getenv("RETRIEVAL_SEMANTIC")) {
+			mode = "hybrid"
+		} else {
+			mode = "keyword"
+		}
+	}
+	switch mode {
+	case "keyword", "semantic", "hybrid", "rerank":
+	default:
+		fmt.Fprintf(os.Stderr, "未知 -mode %q，可选 keyword / semantic / hybrid / rerank\n", mode)
+		os.Exit(2)
+	}
 
 	if *dsn == "" {
 		*dsn = os.Getenv("TEST_MYSQL_DSN")
@@ -91,16 +105,16 @@ func main() {
 	statutes := store.NewStatutes(db)
 	keyword := retrieval.New(statutes)
 
-	// search 是一个函数值而不是接口：两种检索器的共同方法只有一个，
+	// search 是一个函数值而不是接口：几种检索器的共同方法只有一个，
 	// 为此多定义一个接口只是让调用点多绕一层。
 	search := func(q string) ([]port.StatuteHit, error) {
 		return keyword.Search(ctx, q, topK)
 	}
-	mode := "关键词"
-	if semantic {
+	label := "关键词"
+	if mode != "keyword" {
 		embedder, model, err := buildEmbedder()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "开启语义检索失败: %v\n", err)
+			fmt.Fprintf(os.Stderr, "开启向量检索失败: %v\n", err)
 			os.Exit(1)
 		}
 		index, err := retrieval.LoadSemanticIndex(ctx, statutes, "statute", model)
@@ -112,16 +126,43 @@ func main() {
 			fmt.Fprintln(os.Stderr, "embeddings 里没有可用的法条向量：先跑 go run ./cmd/embeddingseed")
 			os.Exit(1)
 		}
-		hybrid := retrieval.NewHybrid(keyword, index, embedder, statutes, model, slog.Default())
-		search = func(q string) ([]port.StatuteHit, error) {
-			return hybrid.Search(ctx, q, topK)
+
+		switch mode {
+		case "semantic":
+			// 纯向量：不融合、不重排。单列一档是为了看清向量单独有多强，
+			// 否则 RRF 的增益会跟向量的功劳记成一笔。
+			search = func(q string) ([]port.StatuteHit, error) {
+				vecs, err := embedder.Embed(ctx, model, []string{q})
+				if err != nil {
+					return nil, err
+				}
+				if len(vecs) == 0 || len(vecs[0]) == 0 {
+					return []port.StatuteHit{}, nil
+				}
+				return index.Search(vecs[0], topK, 0)
+			}
+			label = fmt.Sprintf("纯向量(%s, %d 条)", model, index.Len())
+		default:
+			opts := []retrieval.HybridOption{}
+			label = fmt.Sprintf("关键词+向量(%s, %d 条)", model, index.Len())
+			if mode == "rerank" {
+				reranker, err := buildReranker()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "开启重排失败: %v\n", err)
+					os.Exit(1)
+				}
+				opts = append(opts, retrieval.WithReranker(reranker))
+				label += " + 重排(" + rerankerModel() + ")"
+			}
+			hybrid := retrieval.NewHybrid(keyword, index, embedder, statutes, model, slog.Default(), opts...)
+			search = func(q string) ([]port.StatuteHit, error) {
+				return hybrid.Search(ctx, q, topK)
+			}
 		}
 		// 语义那路失败会静默降级成关键词结果，所以这里要明说这次跑的是哪一路，
 		// 否则"融合没提升"和"融合根本没生效"在输出上长得一模一样。
-		mode = fmt.Sprintf("关键词+向量(%s, %d 条)", model, index.Len())
 	}
 
-	fmt.Printf("法条库 %d 条，用例 %d 条，topK=%d，检索=%s\n\n", total, len(cases), topK, mode)
 	fmt.Printf("%-4s %-34s %-16s %-14s %-4s %-4s\n", "ID", "问题", "期望", "Top1", "@3", "@5")
 	fmt.Println(strings.Repeat("-", 92))
 
@@ -260,6 +301,34 @@ func buildEmbedder() (*llm.EmbeddingClient, string, error) {
 
 // envDuration 读时长，缺省或解析失败都退回 fallback：
 // 评测工具不该因为 .env 里少一个键就跑不起来。
+func rerankerModel() string {
+	if m := strings.TrimSpace(os.Getenv("LLM_RERANK_MODEL")); m != "" {
+		return m
+	}
+	return "qwen3-rerank"
+}
+
+func buildReranker() (*llm.RerankClient, error) {
+	_, _ = config.LoadDotEnv(".env")
+
+	key := strings.TrimSpace(os.Getenv("LLM_API_KEY"))
+	if key == "" {
+		return nil, fmt.Errorf("缺少 LLM_API_KEY：重排要调上游")
+	}
+	endpoint := strings.TrimSpace(os.Getenv("LLM_RERANK_URL"))
+	if endpoint == "" {
+		endpoint = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+	}
+	cfg := config.LLMConfig{
+		APIKey:      key,
+		RerankModel: rerankerModel(),
+		// 与 buildEmbedder 同样的坑：零值 Timeout 立刻到期，重排会静默降级，
+		// 评测表看着像"重排没效果"，实际一次都没发出去。
+		Timeout: envDuration("LLM_TIMEOUT", 60*time.Second),
+	}
+	return llm.NewRerankClient(cfg, endpoint), nil
+}
+
 func envDuration(key string, fallback time.Duration) time.Duration {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {

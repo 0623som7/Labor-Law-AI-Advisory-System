@@ -170,6 +170,14 @@ type LLMConfig struct {
 	PriceOutputPer1K float64
 	// QPS 是全局令牌桶速率，防止并发一高就把预算烧穿。
 	QPS float64
+	// RerankModel 是交叉编码器重排的模型名。
+	RerankModel string
+	// RerankURL 是重排端点。
+	//
+	// 写进配置而不是硬编码：DashScope 有两套地址（经典 dashscope.aliyuncs.com
+	// 与带业务空间 ID 的 {WorkspaceId}.cn-beijing.maas.aliyuncs.com），
+	// 换哪条只改环境变量。
+	RerankURL string
 	// ContextTokens 是单次请求的上下文上限（按汉字数近似估算）。
 	//
 	// 只用于决定"带多少历史"：发请求时并不把它传给上游（port.ChatRequest 没这个
@@ -217,6 +225,11 @@ type RetrievalConfig struct {
 	// Semantic 控制咨询链路是否使用向量召回。默认 false：
 	// 向量库要先灌、模型名要能对上，灰度期开着只会让每次问答多一次网络往返。
 	Semantic bool
+	// Rerank 控制咨询链路是否用交叉编码器重排候选。
+	//
+	// 默认 false：它每次问答多一次 HTTP 往返（实测 1.8~2.4s），开了就得接受
+	// 首字变慢；关掉时 Hybrid 的 reranker 保持 nil，行为与之前逐字一致。
+	Rerank bool
 }
 
 // LogConfig 是日志输出参数。
@@ -286,6 +299,8 @@ func LoadFrom(get func(string) string) (Config, error) {
 			ModelExtract:     l.str("LLM_MODEL_EXTRACT", "deepseek-chat"),
 			ModelAdvise:      l.str("LLM_MODEL_ADVISE", "deepseek-chat"),
 			ModelEmbedding:   l.str("LLM_EMBEDDING_MODEL", "text-embedding-v3"),
+			RerankModel:      l.str("LLM_RERANK_MODEL", "qwen3-rerank"),
+			RerankURL:        l.str("LLM_RERANK_URL", "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"),
 			Timeout:          l.dur("LLM_TIMEOUT", 60*time.Second),
 			StreamTimeout:    l.dur("LLM_STREAM_TIMEOUT", 300*time.Second),
 			MaxRetries:       l.num("LLM_MAX_RETRIES", 2, 0, 5),
@@ -316,6 +331,7 @@ func LoadFrom(get func(string) string) (Config, error) {
 		},
 		Retrieval: RetrievalConfig{
 			Semantic: l.boolean("RETRIEVAL_SEMANTIC", false),
+			Rerank:   l.boolean("RETRIEVAL_RERANK", false),
 		},
 		Log: LogConfig{
 			Level:  strings.ToLower(l.str("LOG_LEVEL", "info")),

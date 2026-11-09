@@ -48,10 +48,28 @@ func newSearcher(ctx context.Context, db *sql.DB, rdb *redis.Client, cfg config.
 		return keyword
 	}
 	logger.Info("语义检索已启用", "vectors", index.Len(), "model", cfg.LLM.ModelEmbedding)
-	// 查询向量缓存：同一句话第二次不再走公网。没 Redis 时它自己退化成不缓存，
-	// 不需要在这里判空——那会让"Redis 挂了"变成"检索不工作"。
-	return retrieval.NewHybrid(keyword, index, embedder, statutes, cfg.LLM.ModelEmbedding, logger,
-		retrieval.WithVectorCache(store.NewVectorCache(rdb, logger), embedScope(cfg.LLM)))
+
+	opts := []retrieval.HybridOption{
+		// 查询向量缓存：同一句话第二次不再走公网。没 Redis 时它自己退化成不缓存，
+		// 不需要在这里判空——那会让"Redis 挂了"变成"检索不工作"。
+		retrieval.WithVectorCache(store.NewVectorCache(rdb, logger), embedScope(cfg.LLM)),
+	}
+	// 交叉编码器重排：开关单独一个，因为它每次问答多一次 1.8~2.4s 的请求，
+	// 与"要不要走向量"是两笔不同的账（向量只多一次 0.1s 的量级）。
+	if reranker := newReranker(cfg, logger); reranker != nil {
+		opts = append(opts, retrieval.WithReranker(reranker))
+		logger.Info("交叉编码器重排已启用", "model", cfg.LLM.RerankModel)
+	}
+	return retrieval.NewHybrid(keyword, index, embedder, statutes, cfg.LLM.ModelEmbedding, logger, opts...)
+}
+
+// newReranker 按开关构造重排客户端。关着或没配 key 时返回 nil，
+// 调用方据此不注入——Hybrid 的 reranker 保持 nil，行为与开开关前逐字一致。
+func newReranker(cfg config.Config, logger *slog.Logger) *llm.RerankClient {
+	if !cfg.Retrieval.Rerank || cfg.LLM.APIKey == "" {
+		return nil
+	}
+	return llm.NewRerankClient(cfg.LLM, cfg.LLM.RerankURL, llm.WithRerankLogger(logger))
 }
 
 // embedScope 标识"哪一家的哪个模型"。只带模型名不够：同名同维不同空间的
