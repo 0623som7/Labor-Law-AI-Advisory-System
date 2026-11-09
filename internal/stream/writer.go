@@ -195,6 +195,8 @@ func (w *Writer) enqueue(f frame) bool {
 		w.mu.Lock()
 		w.dropped++
 		w.mu.Unlock()
+		// 单订阅计数之外再记一笔全局量，/metrics 才有整机视角（见 metrics.go）。
+		droppedTotal.Add(1)
 		return true
 	}
 	return false

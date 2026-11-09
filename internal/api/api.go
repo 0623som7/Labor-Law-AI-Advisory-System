@@ -9,6 +9,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -63,6 +64,13 @@ type API struct {
 	// 需要各自被替换——一个假实现 Submit 就能验证 202 载荷，不必拉起整个池。
 	submitter     taskSubmitter
 	reviewHandler port.Handler
+
+	// llmStats 只用于 /metrics 暴露今日花费。nil 表示没配模型（演示桩模式），
+	// 此时指标里干脆不出现这两行——报 0 会让人以为"今天一分钱没花"。
+	llmStats llmStats
+
+	// startedAt 是进程构造路由树的时刻，/metrics 的 uptime 以它为起点。
+	startedAt time.Time
 
 	engine *gin.Engine
 }
@@ -147,6 +155,14 @@ func WithReviewHandler(h port.Handler) Option {
 	return func(a *API) { a.reviewHandler = h }
 }
 
+// WithLLMStats 注入模型计量，供 /metrics 使用。不注入时该指标缺省。
+//
+// 注意传进来的若是一个 nil 具体类型的接口（typed nil），字段就不等于 nil，
+// handleMetrics 会调 Budget() 而 panic——调用点必须先判空再传（见 cmd/api/main.go）。
+func WithLLMStats(s llmStats) Option {
+	return func(a *API) { a.llmStats = s }
+}
+
 // WithRedis 注入缓存客户端，用于登录限流与 refresh 白名单。
 //
 // 不注入（dev 无 Redis）不是致命错误：限流转为放行，续期接口明确失败，
@@ -169,7 +185,7 @@ func New(cfg config.Config, log *slog.Logger, opts ...Option) *API {
 		gin.SetMode(gin.DebugMode)
 	}
 
-	a := &API{cfg: cfg, log: log}
+	a := &API{cfg: cfg, log: log, startedAt: time.Now()}
 	for _, opt := range opts {
 		opt(a)
 	}

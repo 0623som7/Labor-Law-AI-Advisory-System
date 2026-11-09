@@ -128,6 +128,11 @@ func run(migrateOnly bool) error {
 		api.WithHub(stream.NewHub(stream.Options{}, 0, logger)),
 		api.WithExtractor(extractor),
 	}
+	// 只有客户端真实存在时才注入计量：把 nil 的 *llm.Client 传进接口参数会得到
+	// 非 nil 的接口值，/metrics 里 a.llmStats != nil 成立，随即调 Budget() 空指针。
+	if llmClient != nil {
+		opts = append(opts, api.WithLLMStats(llmClient))
+	}
 	if searcher != nil {
 		opts = append(opts, api.WithStatutes(searcher))
 	}

@@ -225,6 +225,19 @@ curl -k -N -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json
 # 若停顿 30 秒后整屏一起出现，说明 nginx 的 proxy_buffering 没关。
 ```
 
+指标只在本机抓，公网必须 404：
+
+```bash
+# api 发布在 127.0.0.1:8080，只从服务器本机抓
+curl -s http://127.0.0.1:8080/metrics
+# 期望 6 行（每行前有 # HELP / # TYPE）：uptime、sse_streams、sse_dropped_total、
+# goroutines、llm_spent_yuan、llm_budget_yuan；没接模型时只有前 4 行。
+
+# 公网入口必须 404——返回 200 HTML 说明 nginx 的 location = /metrics 没生效，
+# 监控脚本会把 HTML 当指标读。
+curl -k -o /dev/null -w '%{http_code}\n' https://<公网IP>:8443/metrics   # 404
+```
+
 ---
 
 ## 5. 回滚

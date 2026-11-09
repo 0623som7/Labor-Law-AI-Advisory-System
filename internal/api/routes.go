@@ -30,6 +30,9 @@ func (a *API) buildRouter() *gin.Engine {
 	// 探针不套 Envelope：k8s / docker healthcheck 只认 200/503 与简单的 JSON 形状。
 	r.GET("/healthz", a.handleHealthz)
 	r.GET("/readyz", a.handleReadyz)
+	// /metrics 与探针同级：它是给监控抓的，不是给前端调的。
+	// 必须有 nginx 侧兜底，见 deploy/nginx/default.conf 的 location = /metrics。
+	r.GET("/metrics", a.handleMetrics)
 
 	v1 := r.Group("/api/v1")
 
