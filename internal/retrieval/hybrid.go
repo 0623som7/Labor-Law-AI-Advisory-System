@@ -37,20 +37,40 @@ type Hybrid struct {
 	getter   StatuteGetter
 	model    string
 	log      *slog.Logger
+	cache    VectorCache
 }
 
 // NewHybrid 构造融合检索。log 为 nil 时用 slog.Default()。
-func NewHybrid(keyword *Retriever, semantic *Semantic, embedder Embedder, getter StatuteGetter, model string, log *slog.Logger) *Hybrid {
+func NewHybrid(keyword *Retriever, semantic *Semantic, embedder Embedder, getter StatuteGetter, model string, log *slog.Logger, opts ...HybridOption) *Hybrid {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Hybrid{
+	h := &Hybrid{
 		keyword:  keyword,
 		semantic: semantic,
 		embedder: embedder,
 		getter:   getter,
 		model:    model,
 		log:      log,
+	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// HybridOption 是融合检索的可选依赖。
+//
+// 用变参而不是改构造签名：NewHybrid 的调用点已有测试与 cmd 两处，
+// 加一个必填参数会让所有调用点都得改一遍，而缓存本来就是可选的。
+type HybridOption func(*Hybrid)
+
+// WithVectorCache 注入查询向量缓存。传 nil 等于不缓存。
+func WithVectorCache(c VectorCache) HybridOption {
+	return func(h *Hybrid) {
+		if c != nil {
+			h.cache = c
+		}
 	}
 }
 
@@ -84,20 +104,36 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 		return clip(keywordHits, topK), nil
 	}
 
-	// 3. 查询向量化。空切片与 error 同等对待：都表示这一轮拿不到查询向量。
-	vecs, err := h.embedder.Embed(ctx, h.model, []string{input})
-	if err != nil {
-		h.log.Warn("语义检索降级，仅用关键词结果", "err", err.Error())
-		return clip(keywordHits, topK), nil
+	// 3. 查询向量：先查缓存，miss 才走公网。
+	//    同一句话在彩排、试讲、正式演示里会被问很多遍，每一次都是一次公网往返。
+	var queryVec []float32
+	key := QueryVectorKey(h.model, input)
+	if h.cache != nil {
+		// 维度必须校验：旧模型留下的 1024 维向量喂给 1536 维索引会在点积里越界。
+		if cached, ok := h.cache.GetVector(ctx, key); ok && len(cached) == h.semantic.Dims() {
+			queryVec = cached
+		}
 	}
-	if len(vecs) == 0 || len(vecs[0]) == 0 {
-		h.log.Warn("语义检索降级，仅用关键词结果", "reason", "向量化返回空结果")
-		return clip(keywordHits, topK), nil
+	if queryVec == nil {
+		// 空切片与 error 同等对待：都表示这一轮拿不到查询向量。
+		vecs, err := h.embedder.Embed(ctx, h.model, []string{input})
+		if err != nil {
+			h.log.Warn("语义检索降级，仅用关键词结果", "err", err.Error())
+			return clip(keywordHits, topK), nil
+		}
+		if len(vecs) == 0 || len(vecs[0]) == 0 {
+			h.log.Warn("语义检索降级，仅用关键词结果", "reason", "向量化返回空结果")
+			return clip(keywordHits, topK), nil
+		}
+		queryVec = vecs[0]
+		if h.cache != nil {
+			h.cache.SetVector(ctx, key, queryVec)
+		}
 	}
 
 	// 4. 向量召回。minScore 传 0：语义相似度没有跨模型可比的绝对阈值，
 	//    这一层只负责排序，阈值只在显式调用点给。
-	semanticHits, err := h.semantic.Search(vecs[0], topK*2, 0)
+	semanticHits, err := h.semantic.Search(queryVec, topK*2, 0)
 	if err != nil {
 		h.log.Warn("语义检索降级，仅用关键词结果", "err", err.Error())
 		return clip(keywordHits, topK), nil

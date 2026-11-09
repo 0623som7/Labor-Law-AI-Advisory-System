@@ -121,7 +121,7 @@ func run(migrateOnly bool) error {
 
 	// 检索器只构造一次：编排层（Runner）与 /statutes 接口必须用同一套口语归一规则，
 	// 各造一个的话改词表只会生效一半，而这类不一致在演示时看不出来。
-	searcher := newSearcher(ctx, inf.db, cfg, logger)
+	searcher := newSearcher(ctx, inf.db, inf.rdb, cfg, logger)
 	opts := []api.Option{
 		api.WithCheckers(inf.checkers...),
 		api.WithRunner(newRunner(logger, llmClient, searcher, newHistory(inf.db))),

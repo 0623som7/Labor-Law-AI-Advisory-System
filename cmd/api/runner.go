@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"log/slog"
 
+	"github.com/redis/go-redis/v9"
+
 	"laborlaw/internal/agent"
 	"laborlaw/internal/config"
 	"laborlaw/internal/llm"
@@ -24,7 +26,7 @@ import (
 //
 // 开着但向量库没灌、或索引建不起来时一律退回关键词检索，并在日志里喊一声。
 // 向量召回是锦上添花，不能因为索引没准备好就让咨询接口起不来或答不了。
-func newSearcher(ctx context.Context, db *sql.DB, cfg config.Config, logger *slog.Logger) searcher {
+func newSearcher(ctx context.Context, db *sql.DB, rdb *redis.Client, cfg config.Config, logger *slog.Logger) searcher {
 	if db == nil {
 		return nil
 	}
@@ -45,7 +47,10 @@ func newSearcher(ctx context.Context, db *sql.DB, cfg config.Config, logger *slo
 		return keyword
 	}
 	logger.Info("语义检索已启用", "vectors", index.Len(), "model", cfg.LLM.ModelEmbedding)
-	return retrieval.NewHybrid(keyword, index, embedder, statutes, cfg.LLM.ModelEmbedding, logger)
+	// 查询向量缓存：同一句话第二次不再走公网。没 Redis 时它自己退化成不缓存，
+	// 不需要在这里判空——那会让"Redis 挂了"变成"检索不工作"。
+	return retrieval.NewHybrid(keyword, index, embedder, statutes, cfg.LLM.ModelEmbedding, logger,
+		retrieval.WithVectorCache(store.NewVectorCache(rdb, logger)))
 }
 
 // searcher 是 cmd/api 对检索器的完整要求：编排层只要 Search，

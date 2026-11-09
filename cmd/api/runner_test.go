@@ -54,7 +54,7 @@ func TestNewSearcherWithoutDB(t *testing.T) {
 	on := config.Config{}
 	on.Retrieval.Semantic = true
 	for _, cfg := range []config.Config{{}, on} {
-		if got := newSearcher(context.Background(), nil, cfg, testLogger()); got != nil {
+		if got := newSearcher(context.Background(), nil, nil, cfg, testLogger()); got != nil {
 			t.Errorf("没有数据库连接时不应构造检索器（semantic=%v）", cfg.Retrieval.Semantic)
 		}
 	}
@@ -71,7 +71,7 @@ func TestNewHistoryWithoutDB(t *testing.T) {
 // 不是"包了一层但行为相同"。类型相同才有资格说零回归。
 func TestNewSearcherKeywordOnlyWhenSemanticOff(t *testing.T) {
 	db := openDeadDB(t)
-	got := newSearcher(context.Background(), db, config.Config{}, testLogger())
+	got := newSearcher(context.Background(), db, nil, config.Config{}, testLogger())
 	if _, ok := got.(*retrieval.Retriever); !ok {
 		t.Fatalf("开关关闭时应返回 *retrieval.Retriever，实际 %T", got)
 	}
@@ -87,7 +87,7 @@ func TestNewSearcherDegradesWhenIndexFails(t *testing.T) {
 	cfg.LLM.BaseURL = "http://127.0.0.1:0"
 	cfg.LLM.ModelEmbedding = "text-embedding-v3"
 
-	got := newSearcher(context.Background(), db, cfg, testLogger())
+	got := newSearcher(context.Background(), db, nil, cfg, testLogger())
 	if _, ok := got.(*retrieval.Retriever); !ok {
 		t.Fatalf("索引建不起来时应退回关键词检索，实际 %T", got)
 	}

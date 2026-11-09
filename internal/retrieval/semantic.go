@@ -70,6 +70,17 @@ func NewSemantic(items []port.Embedding) (*Semantic, error) {
 }
 
 // Len 返回索引条数。
+// Dims 返回索引的向量维度，用于识别"缓存里的向量是旧模型留下的"。
+//
+// 换模型时维度常常一起变（1024 → 1536），缓存键虽然带了模型名，但模型名不变、
+// 维度变（网关侧升级）时只能靠这一层挡住越界。
+func (s *Semantic) Dims() int {
+	if s == nil {
+		return 0
+	}
+	return s.dim
+}
+
 func (s *Semantic) Len() int {
 	if s == nil {
 		return 0
