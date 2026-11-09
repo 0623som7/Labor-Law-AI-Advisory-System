@@ -291,6 +291,117 @@ func TestOvertimeFree(t *testing.T) {
 	mustHit(t, r, Contract{HasOvertimePay: boolPtr(true)}, 0)
 }
 
+// clause 造一条带定位信息的条款，用于断言"标在哪"。
+func clause(section string, page int, y0 float64, text string) Clause {
+	return Clause{Section: section, Page: page, BBox: [4]float64{100, y0, 500, y0 + 12}, Text: text}
+}
+
+// TestNoSocialInsuranceLocatesMentioningClause 断言社保风险卡标在提到社保的那一条。
+//
+// 之前的实现只在"模型没抽到字段"时用关键词判断，位置一律取 firstClause，
+// 于是第七条写着"乙方自行缴纳社保"、卡片却压在合同第一行的"合同期限"上。
+func TestNoSocialInsuranceLocatesMentioningClause(t *testing.T) {
+	r := findRule(t, "R-NO-SOCIAL-INS")
+	c := Contract{
+		SocialInsurance: boolPtr(false),
+		Clauses: []Clause{
+			clause("第一条", 0, 100, "第一条 合同期限：本合同为固定期限劳动合同，自 2026 年 1 月 1 日起至 2029 年 1 月 1 日止。"),
+			clause("第六条", 0, 420, "第六条 乙方自行缴纳社会保险费，甲方不代扣代缴。"),
+		},
+	}
+	frags := mustHit(t, r, c, 1)
+	if frags[0].Section != "第六条" {
+		t.Fatalf("社保风险应标在第六条，实际 %s", frags[0].Section)
+	}
+	if frags[0].Page != 0 {
+		t.Fatalf("页码应为 0，实际 %d", frags[0].Page)
+	}
+	if frags[0].BBox[1] != 420 {
+		t.Fatalf("bbox 应取第六条的 y0=420，实际 %v", frags[0].BBox)
+	}
+}
+
+// TestNoSocialInsurancePrefersArrangementClause 工资条款顺带提一句"社保个人缴纳部分"时，
+// 框要落在真正约定参保方式的那一条，而不是更靠前的工资条款。
+func TestNoSocialInsurancePrefersArrangementClause(t *testing.T) {
+	r := findRule(t, "R-NO-SOCIAL-INS")
+	c := Contract{
+		SocialInsurance: boolPtr(false),
+		Clauses: []Clause{
+			clause("第一条", 0, 100, "第一条 合同期限：自 2026 年 1 月 1 日起至 2029 年 1 月 1 日止。"),
+			clause("第五条", 0, 380, "第五条 劳动报酬：工资已包含乙方应缴纳的个人所得税及社会保险个人缴纳部分。"),
+			clause("第六条", 1, 200, "第六条 社会保险与福利待遇：乙方应当自行办理社会保险参保手续并缴纳社会保险费，甲方不再另行承担。"),
+		},
+	}
+	frags := mustHit(t, r, c, 1)
+	if frags[0].Section != "第六条" {
+		t.Fatalf("应标在真正约定参保的第六条，实际 %s", frags[0].Section)
+	}
+	if frags[0].Page != 1 {
+		t.Fatalf("页码应为 1，实际 %d", frags[0].Page)
+	}
+}
+
+// TestNoSocialInsuranceFallsBackToFirstClause 全篇没有社保字样时保留原有兜底：标第一条。
+func TestNoSocialInsuranceFallsBackToFirstClause(t *testing.T) {
+	r := findRule(t, "R-NO-SOCIAL-INS")
+	c := Contract{
+		SocialInsurance: boolPtr(false),
+		Clauses: []Clause{
+			clause("第一条", 0, 100, "第一条 合同期限：自 2026 年 1 月 1 日起至 2029 年 1 月 1 日止。"),
+			clause("第三条", 0, 300, "第三条 工作内容与工作地点：前端开发工程师。"),
+		},
+	}
+	frags := mustHit(t, r, c, 1)
+	if frags[0].Section != "第一条" {
+		t.Fatalf("没有命中条款时应回落到第一条，实际 %s", frags[0].Section)
+	}
+	if frags[0].BBox[1] != 100 {
+		t.Fatalf("bbox 应取第一条的 y0=100，实际 %v", frags[0].BBox)
+	}
+}
+
+// TestOvertimeFreeLocatesOvertimeClause 断言否定式没命中时，标到提到加班的条款而不是第一条。
+func TestOvertimeFreeLocatesOvertimeClause(t *testing.T) {
+	r := findRule(t, "R-OVERTIME-FREE")
+	c := Contract{
+		HasOvertimePay: boolPtr(false),
+		Clauses: []Clause{
+			clause("第一条", 0, 100, "第一条 合同期限：自 2026 年 1 月 1 日起至 2029 年 1 月 1 日止。"),
+			clause("第四条", 0, 360, "第四条 甲方安排乙方延长工作时间的，安排调休，不另计发加班工资。"),
+		},
+	}
+	frags := mustHit(t, r, c, 1)
+	if frags[0].Section != "第四条" {
+		t.Fatalf("加班风险应标在第四条，实际 %s", frags[0].Section)
+	}
+	if frags[0].BBox[1] != 360 {
+		t.Fatalf("bbox 应取第四条的 y0=360，实际 %v", frags[0].BBox)
+	}
+	if !strings.Contains(frags[0].Suggestion.Original, "不另计发加班工资") {
+		t.Fatalf("修改建议应引用第四条原文，实际 %q", frags[0].Suggestion.Original)
+	}
+}
+
+// TestOvertimeFreeNegativeKeywordStillWins 否定式关键词命中时仍取第一条命中项，新分支不得抢优先级。
+func TestOvertimeFreeNegativeKeywordStillWins(t *testing.T) {
+	r := findRule(t, "R-OVERTIME-FREE")
+	c := Contract{
+		HasOvertimePay: boolPtr(false),
+		Clauses: []Clause{
+			clause("第四条", 0, 360, "第四条 甲方安排乙方延长工作时间的，安排调休。"),
+			clause("第七条", 0, 520, "第七条 乙方自愿加班，甲方不支付加班费。"),
+		},
+	}
+	frags := mustHit(t, r, c, 1)
+	if frags[0].Section != "第七条" {
+		t.Fatalf("否定式命中应取第七条，实际 %s", frags[0].Section)
+	}
+	if frags[0].BBox[1] != 520 {
+		t.Fatalf("bbox 应取第七条的 y0=520，实际 %v", frags[0].BBox)
+	}
+}
+
 func TestCheckOrderAndFilter(t *testing.T) {
 	c := Contract{
 		TermStart:       "2024-01-01",

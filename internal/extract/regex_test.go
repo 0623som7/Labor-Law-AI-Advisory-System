@@ -138,6 +138,28 @@ func TestExtractByTextPrefersNegativeOverPositive(t *testing.T) {
 	}
 }
 
+// TestExtractByTextIgnoresProbationSalaryInFallback 兜底档不能把"试用期月工资"当成正式工资。
+//
+// 反例原文没有"转正"二字，兜底档会在"试用期月工资"处首次命中，
+// 于是 salary_monthly 与 salary_probation 都是 5000，试用期工资比例那条规则静默漏报。
+func TestExtractByTextIgnoresProbationSalaryInFallback(t *testing.T) {
+	c, _ := extractByText("乙方试用期月工资为人民币 5000 元，试用期满后月工资为人民币 8000 元。")
+	if c.SalaryMonthly != 8000 {
+		t.Fatalf("salary_monthly = %v, want 8000", c.SalaryMonthly)
+	}
+	if c.SalaryProbation != 5000 {
+		t.Fatalf("salary_probation = %v, want 5000", c.SalaryProbation)
+	}
+}
+
+// TestExtractByTextSalaryFallbackWhenOnlyOneAmount 只有一个金额时兜底档仍然工作（守卫不能把正常情况一起挡掉）。
+func TestExtractByTextSalaryFallbackWhenOnlyOneAmount(t *testing.T) {
+	c, _ := extractByText("甲方每月支付乙方工资，月工资为人民币 8000 元。")
+	if c.SalaryMonthly != 8000 {
+		t.Fatalf("salary_monthly = %v, want 8000", c.SalaryMonthly)
+	}
+}
+
 func TestExtractByTextReportsMissing(t *testing.T) {
 	// 无固定期限合同没有终止日；这正是 R-TERM-NO-END 该豁免的写法。
 	c, missing := extractByText("本合同为无固定期限劳动合同，自2026年1月1日起。")

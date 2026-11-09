@@ -311,10 +311,25 @@ func ruleNoSocialInsurance() Rule {
 			}
 			// 模型没抽到该字段时，用条款原文兜底判断：只要有一处提到社保就不算"未约定"，
 			// 否则每次抽取漏字段都会给用户一条高危误报，误报多了整份报告就没人看。
-			if c.SocialInsurance == nil && len(clausesMentioning(c, "社会保险", "社保", "五险", "公积金")) > 0 {
+			//
+			// 命中结果要留两用：nil 时用来判定"其实提到了"，非 nil 时用来定位。
+			// 字段说"未约定社保"而合同第六条写着"乙方自行缴纳"，
+			// 用户要的框就落在第六条，不是合同第一行。
+			mentions := clausesMentioning(c, "社会保险", "社保", "五险", "公积金")
+			if c.SocialInsurance == nil && len(mentions) > 0 {
 				return nil
 			}
 			at := firstClause(c)
+			if len(mentions) > 0 {
+				at = mentions[0]
+				// 同一个词常在两处出现：工资条款里写"含社保个人缴纳部分"，
+				// 真正约定参保方式的是后面那条"乙方自行办理社会保险、甲方不再承担"。
+				// 只在命中里挑"表述更实"的那一条，判定条件一个字都不动——
+				// 这里只是换个框的位置，不改报不报。
+				if strong := clausesMentioning(c, "缴纳社会保险费", "缴纳社会保险", "办理社会保险", "社会保险费"); len(strong) > 0 {
+					at = strong[0]
+				}
+			}
 			return []Fragment{newFragmentAt(at,
 				"合同中未见用人单位为劳动者缴纳社会保险的约定",
 				port.Suggestion{
@@ -414,12 +429,22 @@ func ruleOvertimeFree() Rule {
 			var at Clause
 			evidence := "合同未约定加班工资的支付方式"
 			original := ""
-			if len(hits) > 0 {
+			switch {
+			case len(hits) > 0:
 				at = hits[0]
 				original = strings.TrimSpace(at.Text)
 				evidence = "合同约定：" + original
-			} else {
-				at = firstClause(c)
+			default:
+				// 字段说"没有加班费"，但条款里没有命中任何一种否定式写法
+				// （合同措辞千变万化，枚举总有漏）。退一步标在提到加班/
+				// 延长工作时间的条款上——总比标在合同第一条有用。
+				if m := clausesMentioning(c, "加班", "延长工作时间"); len(m) > 0 {
+					at = m[0]
+					original = strings.TrimSpace(at.Text)
+					evidence = "合同约定：" + original
+				} else {
+					at = firstClause(c)
+				}
 			}
 			return []Fragment{newFragmentAt(at, evidence,
 				port.Suggestion{

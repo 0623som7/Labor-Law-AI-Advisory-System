@@ -27,11 +27,13 @@ var (
 
 	// 月薪按优先级依次尝试：不这么写的话，"试用期月工资 5000 元，转正后 8000 元"
 	// 会先命中"月工资"把 5000 当成正式工资，直接反过来影响最低工资规则的判定。
+	// 前两档锚点明确（"转正后" / "正式"），不可能出现在试用期句子里。
 	reSalaryMonthly = []*regexp.Regexp{
 		regexp.MustCompile(`转正后[^\n。；;]{0,20}?(\d{3,7}(?:\.\d+)?)\s*元`),
 		regexp.MustCompile(`正式[^\n。；;]{0,20}?(\d{3,7}(?:\.\d+)?)\s*元`),
-		regexp.MustCompile(`(?:月工资|工资标准|月薪)[^\n。；;]{0,20}?(\d{3,7}(?:\.\d+)?)\s*元`),
 	}
+	// 兜底档会命中"试用期月工资"，必须排除试用期语境，见 inProbationContext。
+	reSalaryFallback  = regexp.MustCompile(`(?:月工资|工资标准|月薪)[^\n。；;]{0,20}?(\d{3,7}(?:\.\d+)?)\s*元`)
 	reSalaryProbation = regexp.MustCompile(`试用期[^\n。；;]{0,20}?(?:工资|报酬)[^\n。；;]{0,10}?(\d{3,7}(?:\.\d+)?)\s*元`)
 
 	// 社保：先找"乙方自己交/放弃"，再找"甲方依法缴"。顺序不能反——
@@ -111,6 +113,15 @@ func extractByText(text string) (rules.Contract, []string) {
 	for _, re := range reSalaryMonthly {
 		if m := re.FindStringSubmatch(body); m != nil {
 			c.SalaryMonthly = parseAmount(m[1])
+			break
+		}
+	}
+	if c.SalaryMonthly == 0 {
+		for _, loc := range reSalaryFallback.FindAllStringSubmatchIndex(body, -1) {
+			if inProbationContext(body, loc[0]) {
+				continue
+			}
+			c.SalaryMonthly = parseAmount(body[loc[2]:loc[3]])
 			break
 		}
 	}
@@ -239,6 +250,28 @@ func parseSmallNumber(s string) (int, bool) {
 		return 0, false
 	}
 	return total + current, true
+}
+
+// inProbationContext 判断 pos 所在的这一小句是不是在说试用期工资。
+//
+// 用途只有一个：把"试用期月工资 5000 元，试用期满后 8000 元"这种
+// 没有"转正"二字的写法挡在兜底档之外。否则 salary_monthly 会取到 5000，
+// 与 salary_probation 相等，试用期工资比例那条规则就静默漏报了。
+//
+// 只看"从上一个标点至今"这一小句，不能按固定字节窗口往前扫：
+// 第二处"试用期满后月工资 8000 元"里的"试用期"离匹配点只有 5 个字，
+// 固定窗口一定会把它也挡掉，结果 salary_monthly 变成 0——比取错更糟。
+// 小句里出现"满 / 后 / 结束 / 转正"说明说的是转正之后，不算试用期语境。
+func inProbationContext(body string, pos int) bool {
+	start := 0
+	if idx := strings.LastIndexAny(body[:pos], "。；;\n，,"); idx >= 0 {
+		start = idx + len(string([]rune(body[idx:idx+1])))
+	}
+	segment := body[start:pos]
+	if !strings.Contains(segment, "试用期") {
+		return false
+	}
+	return !strings.ContainsAny(segment, "满后结束转正")
 }
 
 // parseAmount 把 "8,000" / "1.2" 读成数字。
