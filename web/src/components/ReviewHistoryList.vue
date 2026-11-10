@@ -40,6 +40,14 @@ const loadingMore = ref(false)
 const errorText = ref('')
 const more = ref(false)
 const keyword = ref('')
+/**
+ * 轮询到上限时如果还有没跑完的，标记一下。
+ *
+ * 后端 WORKER_TASK_TIMEOUT 是 300 秒，比这里的 3 分钟上限还长：真跑到 4 分钟的
+ * 审查会遇到"我先停了"，那一行就永远停在「审查中」且不再自愈。停可以，
+ * 但要让人知道是我停了、可以手动刷，而不是以为界面卡死。
+ */
+const pollExhausted = ref(false)
 
 const shown = computed(() => filterReviews(rows.value, keyword.value))
 
@@ -58,10 +66,15 @@ function stopPolling(): void {
 function startPollingIfNeeded(): void {
   if (pollTimer !== null || !hasPending(rows.value)) return
   pollCount = 0
+  // 重新开一轮就清掉上一次的"已暂停"：否则用户点了刷新、新的 running 又出现时，
+  // 提示条还挂在那儿不走。
+  pollExhausted.value = false
   pollTimer = setInterval(() => {
     pollCount += 1
     if (pollCount > POLL_MAX || !hasPending(rows.value)) {
       stopPolling()
+      // 到上限时如果还有没跑完的，说清楚"我停了"，别让界面假装还在自动刷新。
+      pollExhausted.value = hasPending(rows.value)
       return
     }
     void refresh()
@@ -85,8 +98,10 @@ async function refresh(): Promise<void> {
     const page = await listReviews(want, 0)
     rows.value = page
     more.value = hasMore(page.length, want)
-  } catch {
+  } catch (err) {
     // 轮询失败保持现状：临时断网不该把已经显示的列表换成错误页。
+    // 但也不能完全无声——否则"列表不动了"这件事没有任何线索可查。
+    console.warn('[history] 轮询失败', err)
   } finally {
     refreshing = false
     if (hasPending(rows.value)) {
@@ -103,6 +118,10 @@ async function load(reset: boolean): Promise<void> {
   if (reset) {
     loading.value = true
     errorText.value = ''
+    // 手动刷新就是"我重新看一次"：先把"已暂停"的提示撤掉。
+    // 只在 startPollingIfNeeded 里清不够——那时如果已经全部到终态，
+    // 早退分支会直接 return，提示条会一直挂着。
+    pollExhausted.value = false
   } else {
     loadingMore.value = true
   }
@@ -183,6 +202,11 @@ onBeforeUnmount(stopPolling)
           </div>
         </li>
       </ul>
+
+      <p v-if="pollExhausted" class="stalled">
+        仍有审查在进行，自动刷新已暂停。
+        <el-button link type="primary" size="small" @click="load(true)">刷新</el-button>
+      </p>
 
       <div v-if="more && keyword === ''" class="more">
         <el-button size="small" :loading="loadingMore" :disabled="loadingMore" @click="load(false)">
@@ -365,5 +389,15 @@ onBeforeUnmount(stopPolling)
   padding: 12px;
   text-align: center;
   border-top: 1px solid #f1f3f5;
+}
+
+.stalled {
+  flex: none;
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #b45309;
+  background: #fffbeb;
+  border-top: 1px solid #fde68a;
 }
 </style>
