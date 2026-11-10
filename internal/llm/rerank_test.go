@@ -213,3 +213,43 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// 重排卡住时必须按自己的超时放弃，而不是陪聊天等满 LLM_TIMEOUT：
+// 失败的正确后果只是退回融合顺序（82.5% 也够用），用户在等的却是首字。
+func TestRerankUsesOwnTimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv, _, _ := rerankServer(t, func(body rerankBody) (int, string) {
+		<-release
+		return http.StatusOK, rerankResults(rerankItem{Index: 0, RelevanceScore: 0.5})
+	})
+	t.Cleanup(func() { close(release) })
+
+	cfg := testRerankConfig()
+	cfg.Timeout = 10 * time.Second // 聊天那条路上的超时，不该被用在这里
+	cfg.RerankTimeout = 200 * time.Millisecond
+	client := NewRerankClient(cfg, srv.URL, WithRerankHTTPClient(srv.Client()))
+
+	start := time.Now()
+	_, err := client.Rerank(context.Background(), "q", []string{"doc-0"})
+	elapsed := time.Since(start)
+
+	if port.CodeOf(err) != port.CodeUpstreamTimeout {
+		t.Fatalf("err = %v, want 50401（重排超时）", err)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("耗时 %v，说明用的是 cfg.Timeout 而不是 RerankTimeout", elapsed)
+	}
+}
+
+// 构造方只填了 Timeout（老配置、测试夹具）时，重排不能退回 60 秒——
+// 那正是要修的症状。
+func TestRerankTimeoutFallsBackToEightSeconds(t *testing.T) {
+	cfg := testRerankConfig()
+	client := NewRerankClient(cfg, "http://127.0.0.1:0")
+	if client.cfg.RerankTimeout != defaultRerankTimeout {
+		t.Fatalf("RerankTimeout = %v, want %v", client.cfg.RerankTimeout, defaultRerankTimeout)
+	}
+	if defaultRerankTimeout != 8*time.Second {
+		t.Fatalf("兜底值应是 8s，实际 %v", defaultRerankTimeout)
+	}
+}

@@ -178,6 +178,12 @@ type LLMConfig struct {
 	// 与带业务空间 ID 的 {WorkspaceId}.cn-beijing.maas.aliyuncs.com），
 	// 换哪条只改环境变量。
 	RerankURL string
+	// RerankTimeout 是重排请求的超时。
+	//
+	// 单独一个键而不是复用 Timeout：重排是可选增强，卡住时应该快速放弃、
+	// 退回融合顺序（82.5% 也够用），而不是让用户对着"正在检索相关法条"
+	// 等满聊天那 60 秒。默认 8s 覆盖冷启动 TLS 握手（实测 2.4s）的余量。
+	RerankTimeout time.Duration
 	// ContextTokens 是单次请求的上下文上限（按汉字数近似估算）。
 	//
 	// 只用于决定"带多少历史"：发请求时并不把它传给上游（port.ChatRequest 没这个
@@ -301,6 +307,7 @@ func LoadFrom(get func(string) string) (Config, error) {
 			ModelEmbedding:   l.str("LLM_EMBEDDING_MODEL", "text-embedding-v3"),
 			RerankModel:      l.str("LLM_RERANK_MODEL", "qwen3-rerank"),
 			RerankURL:        l.str("LLM_RERANK_URL", "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"),
+			RerankTimeout:    l.dur("LLM_RERANK_TIMEOUT", 8*time.Second),
 			Timeout:          l.dur("LLM_TIMEOUT", 60*time.Second),
 			StreamTimeout:    l.dur("LLM_STREAM_TIMEOUT", 300*time.Second),
 			MaxRetries:       l.num("LLM_MAX_RETRIES", 2, 0, 5),

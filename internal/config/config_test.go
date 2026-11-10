@@ -300,3 +300,35 @@ func TestRetrievalSemanticRejectsGarbage(t *testing.T) {
 		t.Fatal("期望 RETRIEVAL_SEMANTIC=yes 报错，实际通过")
 	}
 }
+
+// 重排有自己的超时键：不设时 8s，设了就用设的值。
+// 不能跟着 LLM_TIMEOUT 走——那是聊天的 60 秒。
+func TestRerankTimeoutConfig(t *testing.T) {
+	cfg, err := LoadFrom(envGetter(baseEnv()))
+	if err != nil {
+		t.Fatalf("LoadFrom() 返回错误: %v", err)
+	}
+	if cfg.LLM.RerankTimeout != 8*time.Second {
+		t.Errorf("默认 RerankTimeout = %v, want 8s", cfg.LLM.RerankTimeout)
+	}
+	if cfg.LLM.Timeout == cfg.LLM.RerankTimeout {
+		t.Errorf("两个超时不应相同：Timeout=%v RerankTimeout=%v", cfg.LLM.Timeout, cfg.LLM.RerankTimeout)
+	}
+
+	env := baseEnv()
+	env["LLM_RERANK_TIMEOUT"] = "3s"
+	cfg, err = LoadFrom(envGetter(env))
+	if err != nil {
+		t.Fatalf("LoadFrom() 返回错误: %v", err)
+	}
+	if cfg.LLM.RerankTimeout != 3*time.Second {
+		t.Errorf("RerankTimeout = %v, want 3s", cfg.LLM.RerankTimeout)
+	}
+
+	env["LLM_RERANK_TIMEOUT"] = "8" // 没单位，ParseDuration 会拒绝
+	if _, err := LoadFrom(envGetter(env)); err == nil {
+		t.Error("非法时长应当报错")
+	} else if !strings.Contains(err.Error(), "LLM_RERANK_TIMEOUT") {
+		t.Errorf("错误信息应点名出错项，实际 %v", err)
+	}
+}

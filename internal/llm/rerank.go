@@ -18,6 +18,9 @@ import (
 //
 // 文档给的上限是 500。我们只有 205 条法条，正常永远到不了；写成硬上限是为了
 // 在调用方把全体法条塞进来时立刻报错，而不是让上游按 400 回一句看不懂的话。
+// defaultRerankTimeout 是重排请求的兜底超时，与 config 的默认值一致。
+const defaultRerankTimeout = 8 * time.Second
+
 const maxRerankDocuments = 500
 
 // maxRerankDocRunes 是单条文档的截断长度。
@@ -71,6 +74,11 @@ func NewRerankClient(cfg config.LLMConfig, endpoint string, opts ...RerankOption
 	// 失败又被检索层吃成"降级、保留融合顺序"，线上表现只是"重排好像没生效"。
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 60 * time.Second
+	}
+	// 重排有自己的超时：构造方可能只填了 Timeout（老配置、测试夹具），
+	// 这时不能退回 60 秒——那正是要修的症状。
+	if cfg.RerankTimeout <= 0 {
+		cfg.RerankTimeout = defaultRerankTimeout
 	}
 	r := &RerankClient{
 		cfg:      cfg,
@@ -165,7 +173,7 @@ func (r *RerankClient) Rerank(ctx context.Context, query string, docs []string) 
 		return nil, port.Wrap(port.CodeInvalidArgument, err, "重排请求体无法序列化")
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
+	callCtx, cancel := context.WithTimeout(ctx, r.cfg.RerankTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(callCtx, http.MethodPost, r.endpoint, bytes.NewReader(body))
