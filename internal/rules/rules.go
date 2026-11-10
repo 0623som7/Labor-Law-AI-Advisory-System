@@ -176,12 +176,22 @@ func ruleProbationMatch() Rule {
 			if !ok || c.ProbationMonths <= float64(limit) {
 				return nil
 			}
-			months, _ := contractMonths(c.TermStart, c.TermEnd)
+			months, hasTerm := contractMonths(c.TermStart, c.TermEnd)
 			// 只报月数会被当成算错：2026-01-01 至 2028-12-31 人眼是三年，实际是 35 个月 30 天。
 			// 把起止日期和档位一起摆出来，"差一天"和"为何取这个上限"都能自证。
-			evidence := fmt.Sprintf("约定试用期 %s 个月；合同期限 %s 共 %d 个月，%s，法定上限为 %d 个月",
-				formatMonths(c.ProbationMonths),
-				termRange(c.TermStart, c.TermEnd), months, termBand(months), limit)
+			var evidence string
+			if strings.TrimSpace(c.TermEnd) == "" || !hasTerm || months <= 0 {
+				// 没有终止日就算不出档位，months 是 0；照旧拼 termBand(0) 会得到
+				// "不满三个月，不得约定试用期"，与同一句里的"上限六个月"自相矛盾。
+				// 这种合同的上限来自"只有起始日"这条兜底（按无固定期限取六个月），
+				// 所以只陈述事实、不判档位。
+				evidence = fmt.Sprintf("约定试用期 %s 个月；合同未约定终止日期，无法按期限档位判断上限，但任何情形下试用期不得超过 %d 个月",
+					formatMonths(c.ProbationMonths), limit)
+			} else {
+				evidence = fmt.Sprintf("约定试用期 %s 个月；合同期限 %s 共 %d 个月，%s，法定上限为 %d 个月",
+					formatMonths(c.ProbationMonths),
+					termRange(c.TermStart, c.TermEnd), months, termBand(months), limit)
+			}
 			return []Fragment{newFragment(c, []string{"试用期"},
 				evidence,
 				port.Suggestion{

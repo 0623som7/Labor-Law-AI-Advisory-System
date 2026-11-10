@@ -90,6 +90,36 @@ func TestProbationMatch(t *testing.T) {
 	mustHit(t, r, unknown, 0)
 }
 
+// TestProbationMatchWithoutTermEnd 钉住"合同没写终止日"时证据不能自相矛盾。
+//
+// 线上真实样本（sample-v5.pdf）出现过："约定试用期 7 个月；合同期限 2026-03-01 至
+// 共 0 个月，不满三个月，不得约定试用期，法定上限为 6 个月" —— 同一句话里既说
+// 不得约定试用期、又说上限六个月。根因是没有终止日时 months 算成 0，
+// termBand(0) 落进"不满三个月"档。
+func TestProbationMatchWithoutTermEnd(t *testing.T) {
+	r := findRule(t, "R-PROBATION-MATCH")
+	c := Contract{
+		TermStart:       "2026-03-01",
+		TermEnd:         "",
+		ProbationMonths: 7,
+		Clauses:         []Clause{{Section: "第二条", Text: "试用期为七个月。"}},
+	}
+	frags := mustHit(t, r, c, 1)
+	evidence := frags[0].Evidence
+	if strings.Contains(evidence, "不满三个月") {
+		t.Fatalf("证据不该判档位：%s", evidence)
+	}
+	if !strings.Contains(evidence, "未约定终止日期") {
+		t.Fatalf("证据应说明未约定终止日期：%s", evidence)
+	}
+	if !strings.Contains(evidence, "不得超过 6 个月") {
+		t.Fatalf("证据应写出 6 个月上限：%s", evidence)
+	}
+	if strings.Contains(evidence, "共 0 个月") {
+		t.Fatalf("证据不该出现 0 个月这种拼接痕迹：%s", evidence)
+	}
+}
+
 // TestProbationMatchBoundaries 钉住第十九条的档位边界：三个月、一年、三年这三处
 // 都是"以上"进高档，所以 12 个月上限是 2 个月、36 个月上限是 6 个月。
 func TestProbationMatchBoundaries(t *testing.T) {
