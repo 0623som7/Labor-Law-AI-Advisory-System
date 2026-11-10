@@ -35,4 +35,13 @@
   min-height: 0;
   display: flex;
 }
+
+/* 路由渲染出的页面是 .app-main 的 flex item，默认 flex: 0 1 auto 会收缩到内容宽度，
+   于是只有内容宽、右边一片空白。在这里统一兜底，新页面不必自己记得写 flex: 1。
+   scoped 样式必须用 :deep() 穿透到子组件根元素，直接写 > * 匹配不到。
+   min-width: 0 是给 flex item 的收缩下限兜底，避免宽内容（如 PDF 画布）把容器顶宽。 */
+.app-main > :deep(*) {
+  flex: 1;
+  min-width: 0;
+}
 </style>

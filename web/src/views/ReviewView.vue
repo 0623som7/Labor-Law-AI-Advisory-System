@@ -476,7 +476,9 @@ void load()
 
 <style scoped>
 .review-page {
-  min-height: 100vh;
+  /* 页面在 height:100vh 的 .app-shell 里，上方还有一条 24px 的提示条：
+     min-height:100vh 会让它比容器高 24px，永远多出一条不该有的纵向滚动条。 */
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: #f5f7fa;

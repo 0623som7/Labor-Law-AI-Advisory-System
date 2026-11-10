@@ -138,7 +138,8 @@ onMounted(() => {
 
 <style scoped>
 .reviews-page {
-  min-height: 100vh;
+  /* 同 .review-page：外层 .app-shell 已是 100vh，这里再要 100vh 会多出一条纵向滚动条。 */
+  min-height: 0;
   background: #f5f7fa;
 }
 
