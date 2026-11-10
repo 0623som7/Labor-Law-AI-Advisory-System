@@ -21,8 +21,10 @@ type reviewCountsDTO struct {
 
 // reviewDTO 对应 schema Review。
 type reviewDTO struct {
-	ID             string          `json:"id"`
-	FileID         string          `json:"file_id"`
+	ID     string `json:"id"`
+	FileID string `json:"file_id"`
+	// Filename 只用于列表展示。补不到时是空串，前端自己兜「未命名合同」。
+	Filename       string          `json:"filename"`
 	Status         string          `json:"status"`
 	RiskLevel      string          `json:"risk_level"`
 	Score          int             `json:"score"`

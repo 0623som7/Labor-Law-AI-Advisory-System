@@ -28,13 +28,27 @@ type fakeReviewFileStore struct {
 	file    *port.FileRecord
 	getErr  error
 	loadErr error
+	// getCalls 记 Get 被调了几次。列表补文件名必须按 file_id 去重，
+	// 「同一个文件的多条审查记录只查一次库」只能靠计数断言。
+	mu       sync.Mutex
+	getCalls int
 }
 
 func (f *fakeReviewFileStore) Get(_ context.Context, _, _ string) (*port.FileRecord, error) {
+	f.mu.Lock()
+	f.getCalls++
+	f.mu.Unlock()
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
 	return f.file, nil
+}
+
+// calls 读调用次数，给断言用。
+func (f *fakeReviewFileStore) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.getCalls
 }
 
 func (f *fakeReviewFileStore) LoadPages(_ context.Context, _ string) ([]port.ParsedPage, error) {
@@ -298,7 +312,10 @@ func newReviewFixture(t *testing.T) *reviewFixture {
 	gin.SetMode(gin.TestMode)
 	store := &reviewFakeStore{
 		files: &fakeReviewFileStore{
-			file: &port.FileRecord{ID: "F-1", UserID: "dev-user-0001", PageCount: 1},
+			file: &port.FileRecord{
+				ID: "F-1", UserID: "dev-user-0001", PageCount: 1,
+				Filename: "劳动合同.pdf",
+			},
 		},
 		reviews: newFakeReviewStore(),
 		tasks:   newFakeTaskStore(),
@@ -632,6 +649,66 @@ func TestListReviewsWithoutFileUsesListByUser(t *testing.T) {
 	f.store.reviews.mu.Unlock()
 	if listed != 1 || byFile != 1 {
 		t.Fatalf("带 file_id 后 ListByUser/GetByFile 调用次数 = %d/%d，期望 1/1（不该再走分页）", listed, byFile)
+	}
+}
+
+// 列表必须带出文件名：没有它，前端只能显示 file_id 尾号，用户认不出是哪份合同。
+//
+// 两条记录指向同一个文件是真实场景（失败重试、取消后重发起都会留下旧行），
+// 所以除了断言名字正确，还要断言只查了一次库——去重漏掉的话 Twenty 条一页
+// 就会对同一个主键连查二十遍，而且这个退化管理端完全看不出来。
+func TestListReviewsIncludesFilename(t *testing.T) {
+	f := newReviewFixture(t)
+	ctx := context.Background()
+	for _, id := range []string{"R-OLD", "R-NEW"} {
+		_ = f.store.reviews.Create(ctx, &port.Review{
+			ID: id, FileID: "F-1", UserID: "dev-user-0001", Status: port.TaskSucceeded,
+		})
+	}
+	before := f.store.files.calls()
+
+	rec, env := doRequest(t, f.api, http.MethodGet, "/api/v1/reviews", nil)
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("状态码/业务码 = %d/%d", rec.Code, env.Code)
+	}
+	list, ok := env.Data.([]any)
+	if !ok || len(list) != 2 {
+		t.Fatalf("data = %#v，期望 2 条", env.Data)
+	}
+	for i, raw := range list {
+		item, _ := raw.(map[string]any)
+		if item["filename"] != "劳动合同.pdf" {
+			t.Fatalf("data[%d].filename = %v，期望 劳动合同.pdf", i, item["filename"])
+		}
+	}
+
+	// Create 链路不碰 Files().Get，所以这里就是列表补名字产生的调用数。
+	if got := f.store.files.calls() - before; got != 1 {
+		t.Fatalf("Files().Get 调用 %d 次，期望 1 次（同一 file_id 必须去重）", got)
+	}
+}
+
+// 文件名补不到时降级成空串，列表照常 200。
+// 为了一条展示字段把整页变成 500，用户会连"有哪几份合同"都看不到。
+func TestListReviewsFilenameFailureDegrades(t *testing.T) {
+	f := newReviewFixture(t)
+	ctx := context.Background()
+	_ = f.store.reviews.Create(ctx, &port.Review{
+		ID: "R-1", FileID: "F-1", UserID: "dev-user-0001", Status: port.TaskSucceeded,
+	})
+	f.store.files.getErr = port.New(port.CodeInternal, "读文件失败")
+
+	rec, env := doRequest(t, f.api, http.MethodGet, "/api/v1/reviews", nil)
+	if rec.Code != http.StatusOK || env.Code != 0 {
+		t.Fatalf("状态码/业务码 = %d/%d，期望 200/0", rec.Code, env.Code)
+	}
+	list, ok := env.Data.([]any)
+	if !ok || len(list) != 1 {
+		t.Fatalf("data = %#v，期望 1 条", env.Data)
+	}
+	item, _ := list[0].(map[string]any)
+	if item["filename"] != "" {
+		t.Fatalf("data[0].filename = %v，期望空串", item["filename"])
 	}
 }
 

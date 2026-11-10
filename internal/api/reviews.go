@@ -242,6 +242,41 @@ func (a *API) finishTask(ctx context.Context, taskID string, status port.TaskSta
 	a.log.Warn("任务状态回写失败", "task_id", taskID, "status", status, "err", err.Error())
 }
 
+// fillReviewFilenames 给列表补文件名。
+//
+// 为什么不在 SQL 里 JOIN：文件名住在 files 表，而 port.Review 没有这个字段，
+// 也不想为一个纯展示字段去动冻结的 port 契约。这里用 Files().Get 逐条补，
+// 一页最多 20 条、全是主键点查，代价可以忽略。
+//
+// 去重是必须的：同一个文件可能有多条审查记录（失败重试、取消后重发起），
+// 不去重就会对同一个 ID 连查二十遍。
+//
+// 失败一律降级成空串：补不到名字不能把整个列表变成 500——用户还能靠 file_id
+// 尾号区分，比什么都看不到强。
+func (a *API) fillReviewFilenames(ctx context.Context, userID string, items []port.Review, dtos []reviewDTO) {
+	if len(items) != len(dtos) {
+		return
+	}
+	names := make(map[string]string, len(items))
+	for _, it := range items {
+		if _, done := names[it.FileID]; done {
+			continue
+		}
+		// 任务书里写的是 Files()，但 port.Store 暴露的是单数 File()（与 FileStore 同名），
+		// 这一层没有复数入口，按现有契约写。
+		file, err := a.store.File().Get(ctx, userID, it.FileID)
+		if err != nil {
+			a.log.Warn("list reviews: 读取文件名失败", "file_id", it.FileID, "error", err)
+			names[it.FileID] = ""
+			continue
+		}
+		names[it.FileID] = file.Filename
+	}
+	for i := range dtos {
+		dtos[i].Filename = names[items[i].FileID]
+	}
+}
+
 // listReviews 处理 GET /api/v1/reviews。
 func (a *API) listReviews(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -268,7 +303,10 @@ func (a *API) listReviews(c *gin.Context) {
 			Fail(c, err)
 			return
 		}
-		OK(c, toReviewDTOs([]port.Review{*rv}))
+		items := []port.Review{*rv}
+		dtos := toReviewDTOs(items)
+		a.fillReviewFilenames(ctx, UserID(c), items, dtos)
+		OK(c, dtos)
 		return
 	}
 
@@ -277,7 +315,9 @@ func (a *API) listReviews(c *gin.Context) {
 		Fail(c, err)
 		return
 	}
-	OK(c, toReviewDTOs(items))
+	dtos := toReviewDTOs(items)
+	a.fillReviewFilenames(ctx, UserID(c), items, dtos)
+	OK(c, dtos)
 }
 
 // getReview 处理 GET /api/v1/reviews/{reviewId}。
