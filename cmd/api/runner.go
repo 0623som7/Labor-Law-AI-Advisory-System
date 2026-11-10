@@ -34,6 +34,14 @@ func newSearcher(ctx context.Context, db *sql.DB, rdb *redis.Client, cfg config.
 	statutes := store.NewStatutes(db)
 	keyword := retrieval.New(statutes)
 	if !cfg.Retrieval.Semantic || cfg.LLM.APIKey == "" {
+		// 重排挂在融合检索上：没有向量就没有融合，重排也就没有输入。
+		// 这里必须说话——运维看到 RETRIEVAL_RERANK=true 却什么提示都没有，
+		// 只会去翻检索代码、怀疑索引没灌，最后发现是另一个开关没开。
+		if cfg.Retrieval.Rerank {
+			logger.Warn("RETRIEVAL_RERANK 已开启但重排不会生效",
+				"原因", "RETRIEVAL_SEMANTIC 关闭或 LLM_API_KEY 为空",
+				"影响", "检索将退回纯关键词，命中率低于预期")
+		}
 		return keyword
 	}
 

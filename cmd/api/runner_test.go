@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -129,6 +131,50 @@ func TestNewSearcherDegradesWhenIndexFails(t *testing.T) {
 	got := newSearcher(context.Background(), db, nil, cfg, testLogger())
 	if _, ok := got.(*retrieval.Retriever); !ok {
 		t.Fatalf("索引建不起来时应退回关键词检索，实际 %T", got)
+	}
+}
+
+// 重排开关与语义开关不一致时必须留一行日志：这是运维唯一的线索，
+// 否则只会去翻检索代码、怀疑向量没灌，最后发现是另一个开关没开。
+func TestNewSearcherWarnsRerankWithoutSemantic(t *testing.T) {
+	const msg = "RETRIEVAL_RERANK 已开启但重排不会生效"
+	db := openDeadDB(t)
+	newBufferLogger := func() (*slog.Logger, *bytes.Buffer) {
+		var buf bytes.Buffer
+		return slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})), &buf
+	}
+
+	// 情形一：语义关、重排开。
+	cfg := config.Config{}
+	cfg.Retrieval.Rerank = true
+	logger, buf := newBufferLogger()
+	if got := newSearcher(context.Background(), db, nil, cfg, logger); got == nil {
+		t.Fatal("没有数据库连接时也应先判空返回，这里不应为 nil")
+	}
+	if !strings.Contains(buf.String(), msg) {
+		t.Errorf("语义关闭但重排开启时必须告警，实际日志：%s", buf.String())
+	}
+
+	// 情形二：语义开、但没有 key——同样没有融合检索，重排同样失效。
+	cfg.LLM.APIKey = ""
+	cfg.Retrieval.Semantic = true
+	logger, buf = newBufferLogger()
+	newSearcher(context.Background(), db, nil, cfg, logger)
+	if !strings.Contains(buf.String(), msg) {
+		t.Errorf("没有 API key 时也必须告警，实际日志：%s", buf.String())
+	}
+
+	// 反向：语义真的开起来时不该出现这句（这条分支在死库上会走索引失败降级）。
+	cfg.LLM.APIKey = "test-key"
+	cfg.LLM.BaseURL = "http://127.0.0.1:0"
+	cfg.LLM.ModelEmbedding = "text-embedding-v3"
+	logger, buf = newBufferLogger()
+	newSearcher(context.Background(), db, nil, cfg, logger)
+	if strings.Contains(buf.String(), msg) {
+		t.Errorf("语义已开启时不应告警，实际日志：%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "语义索引构建失败") {
+		t.Errorf("死库上应走索引降级并留日志，实际日志：%s", buf.String())
 	}
 }
 
