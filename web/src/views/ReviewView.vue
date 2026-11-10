@@ -161,7 +161,9 @@ async function renderPdf(): Promise<void> {
     }
     if (!disposed) viewports.value = vps
   } catch (err) {
-    pdfError.value = message(err, 'PDF 渲染失败，请刷新重试')
+    // 走到这里通常是 worker 或字节流没加载起来（如 .mjs 被发成 octet-stream 时
+    // module worker 构造失败），而不是画布画不出来，所以文案说"加载"。
+    pdfError.value = message(err, 'PDF 加载失败，请刷新页面重试')
   }
 }
 
