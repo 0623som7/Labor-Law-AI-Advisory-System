@@ -8,7 +8,6 @@ import { getTokens } from '@/api/client'
 import ChatView from '@/views/ChatView.vue'
 import LoginView from '@/views/LoginView.vue'
 import ReviewView from '@/views/ReviewView.vue'
-import ReviewsView from '@/views/ReviewsView.vue'
 import UploadView from '@/views/UploadView.vue'
 
 const router = createRouter({
@@ -19,7 +18,9 @@ const router = createRouter({
     { path: '/chat', name: 'chat', component: ChatView, meta: { requiresAuth: true } },
     { path: '/upload', name: 'upload', component: UploadView, meta: { requiresAuth: true } },
     { path: '/review/:fileId', name: 'review', component: ReviewView, meta: { requiresAuth: true } },
-    { path: '/reviews', name: 'reviews', component: ReviewsView, meta: { requiresAuth: true } },
+    // 审查历史并进上传工作台的左栏，独立页取消。
+    // 保留这条路由是为了别让旧书签和外部链接 404。
+    { path: '/reviews', redirect: '/upload' },
     // 直接读令牌而不是 store：守卫在 pinia 就绪前也可能被触发（硬刷新深链）。
     { path: '/:pathMatch(.*)*', redirect: '/chat' },
   ],

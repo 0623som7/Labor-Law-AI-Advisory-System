@@ -152,6 +152,8 @@ export type Severity = 'high' | 'medium' | 'low'
 export interface Review {
   id: string
   file_id: string
+  /** 上传时的原文件名，只用于展示。后端补不到时是空串。 */
+  filename?: string
   status: TaskStatus
   risk_level: Severity
   score: number

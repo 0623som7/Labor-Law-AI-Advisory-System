@@ -395,10 +395,6 @@ onBeforeUnmount(() => {
         合同审查
       </router-link>
 
-      <router-link v-if="!collapsed" class="review-link" :to="{ name: 'reviews' }">
-        审查历史
-      </router-link>
-
       <div v-if="!collapsed" class="sidebar-foot">
         <span class="me">{{ auth.user?.nickname || auth.user?.phone_masked || '已登录' }}</span>
         <button type="button" class="logout" :disabled="sending" @click="signOut">退出</button>

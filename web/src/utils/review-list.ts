@@ -62,3 +62,26 @@ export function isClickable(status: string): boolean {
   void status
   return true
 }
+
+/** 列表里还有没有"没跑完"的记录。有就值得轮询。 */
+export function hasPending(items: { status: string }[]): boolean {
+  return items.some((r) => r.status === 'pending' || r.status === 'running')
+}
+
+/**
+ * 按关键字过滤已加载的记录。
+ *
+ * 只匹配文件名与 ULID 尾号：后端 /reviews 没有关键字参数，这是"在这二十条里找"，
+ * 不是全库搜索。关键字为空原样返回（不复制数组，避免每次按键都重建列表）。
+ */
+export function filterReviews<T extends { filename?: string; file_id: string }>(
+  items: T[],
+  keyword: string,
+): T[] {
+  const kw = keyword.trim().toLowerCase()
+  if (kw === '') return items
+  return items.filter((r) => {
+    const name = (r.filename ?? '').toLowerCase()
+    return name.includes(kw) || r.file_id.toLowerCase().endsWith(kw)
+  })
+}

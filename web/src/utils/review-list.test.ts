@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hasMore, isClickable, riskLabel, statusLabel } from './review-list.ts'
+import { filterReviews, hasMore, hasPending, isClickable, riskLabel, statusLabel } from './review-list.ts'
 
 test('statusLabel 覆盖五个后端状态', () => {
   assert.equal(statusLabel('pending'), '排队中')
@@ -57,4 +57,60 @@ test('成功与进行中的记录可点', () => {
   assert.equal(isClickable('succeeded'), true)
   assert.equal(isClickable('running'), true)
   assert.equal(isClickable('pending'), true)
+})
+
+test('hasPending 只把排队中与审查中算作未完成', () => {
+  assert.equal(hasPending([{ status: 'pending' }]), true)
+  assert.equal(hasPending([{ status: 'running' }]), true)
+  assert.equal(hasPending([{ status: 'succeeded' }, { status: 'running' }]), true)
+})
+
+test('hasPending 对终态与空数组都是 false', () => {
+  assert.equal(hasPending([{ status: 'succeeded' }]), false)
+  assert.equal(hasPending([{ status: 'failed' }]), false)
+  assert.equal(hasPending([{ status: 'cancelled' }]), false)
+  assert.equal(hasPending([]), false)
+})
+
+const ROWS = [
+  { file_id: '01M7AAAAAAAAAAAAAAAAAAAAAA', filename: '劳动合同A.pdf' },
+  { file_id: '01M7BBBBBBBBBBBBBBBBBBBB9Q', filename: 'Offer-Letter.pdf' },
+  { file_id: '01M7CCCCCCCCCCCCCCCCCCCC77', filename: '' },
+]
+
+test('filterReviews 关键字为空时返回同一个数组引用', () => {
+  // 引用相等而不是内容相等：列表每次按键都重建的话，滚动位置和 DOM 都会被无谓地丢掉。
+  assert.equal(filterReviews(ROWS, ''), ROWS)
+  assert.equal(filterReviews(ROWS, '   '), ROWS)
+})
+
+test('filterReviews 命中文件名片段', () => {
+  assert.deepEqual(
+    filterReviews(ROWS, '合同A').map((r) => r.file_id),
+    ['01M7AAAAAAAAAAAAAAAAAAAAAA'],
+  )
+})
+
+test('filterReviews 命中 ULID 尾号', () => {
+  assert.deepEqual(
+    filterReviews(ROWS, '9q').map((r) => r.file_id),
+    ['01M7BBBBBBBBBBBBBBBBBBBB9Q'],
+  )
+})
+
+test('filterReviews 大小写不敏感', () => {
+  assert.equal(filterReviews(ROWS, 'offer-letter').length, 1)
+  assert.equal(filterReviews(ROWS, 'OFFER-LETTER').length, 1)
+})
+
+test('filterReviews 无匹配时返回空数组而不是 undefined', () => {
+  const out = filterReviews(ROWS, '不存在的名字')
+  assert.ok(Array.isArray(out))
+  assert.equal(out.length, 0)
+})
+
+test('filterReviews 文件名缺失的记录不会崩，只按 ULID 尾号命中', () => {
+  const rows = [{ file_id: '01M7DDDDDDDDDDDDDDDDDDDDXY' }]
+  assert.equal(filterReviews(rows, 'xy').length, 1)
+  assert.equal(filterReviews(rows, '劳动合同').length, 0)
 })
