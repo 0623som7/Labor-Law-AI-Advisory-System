@@ -230,3 +230,25 @@ test('对账发现别人的令牌也快过期：用它再换一次，成功了�
   assert.equal(tokens?.access_token, 'fresh-access')
   assert.equal(tokens?.refresh_token, 'fresh-other-refresh')
 })
+
+test('完全没有令牌时 ensureFresh 通知一次失效，不静默返回 false', async () => {
+  // 缺陷形态：isStale() 在 readTokens() 为 null 时返回 false，于是走到
+  // resolve(readTokens() !== null) 直接给个 false —— 调用方以为只是"没登录"，
+  // 外层永远收不到失效信号，页面停在原地一动不动。
+  const { state, refresher } = harness(null)
+
+  assert.equal(refresher.isStale(), false)
+  assert.equal(await refresher.ensureFresh(), false)
+  assert.equal(state.unauthorizedCalls, 1)
+  assert.equal(state.refreshCalls, 0)
+})
+
+test('令牌还没到期时 ensureFresh 返回 true 且不通知失效', async () => {
+  // 与上一条成对：补漏不能把正常路径也改成误报，否则每次请求都会弹一次登录框。
+  const { state, refresher } = harness(pair('access-1', 'refresh-1', NOW + 30 * MINUTE))
+
+  assert.equal(refresher.isStale(), false)
+  assert.equal(await refresher.ensureFresh(), true)
+  assert.equal(state.unauthorizedCalls, 0)
+  assert.equal(state.refreshCalls, 0)
+})

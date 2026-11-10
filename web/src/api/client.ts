@@ -11,6 +11,7 @@
 
 import axios, { type AxiosRequestConfig } from 'axios'
 
+import { notifySessionExpired } from './session-expiry.ts'
 import type { AuthResult, Envelope, TokenPair } from './types'
 
 const ACCESS_KEY = 'laborlaw.access_token'
@@ -33,20 +34,14 @@ export class ApiError extends Error {
 }
 
 /**
- * 未登录/令牌过期的回调。
+ * 令牌彻底失效的唯一入口：清本地令牌 + 通知外层弹窗。
  *
- * 用回调而不是在这里 import router：api 层被 store 层引用，router 又引用 store，
- * 直接 import 会绕成环。由 main.ts 在启动时注册一次。
+ * 不在这里跳转：api 层拿不到 router（api → store → router 会成环），
+ * 而且跳转会丢掉用户正在看的页面。
  */
-let unauthorizedHandler: (() => void) | null = null
-
-export function onUnauthorized(handler: () => void): void {
-  unauthorizedHandler = handler
-}
-
 export function notifyUnauthorized(): void {
   clearTokens()
-  unauthorizedHandler?.()
+  notifySessionExpired()
 }
 
 /** 读本地令牌。任一字段缺失都当未登录，避免拿到半个令牌去发请求。 */
@@ -174,7 +169,15 @@ export function createTokenRefresher(deps: TokenRefresherDeps): TokenRefresher {
 
   return {
     ensureFresh(): Promise<boolean> {
-      if (!isStale()) return Promise.resolve(deps.readTokens() !== null)
+      if (!isStale()) {
+        // 没有令牌 = 会话已经失效（可能被另一个标签页清掉了，也可能后端刚回了 40101）。
+        // 必须走一次 onUnauthorized，否则调用方只会拿到一个 false，然后静默失败。
+        if (deps.readTokens() === null) {
+          deps.onUnauthorized()
+          return Promise.resolve(false)
+        }
+        return Promise.resolve(true)
+      }
       if (!refreshing) {
         refreshing = run().finally(() => {
           refreshing = null
@@ -213,9 +216,18 @@ const rawHttp = axios.create({
 })
 
 async function refreshTokensDirect(refreshToken: string): Promise<AuthResult> {
-  const response = await rawHttp.post<Envelope<AuthResult>>('/auth/refresh', {
-    refresh_token: refreshToken,
-  })
+  // 必须把 axios 的 AxiosError 收敛成 ApiError：/auth/refresh 拒绝刷新令牌时回的是
+  // HTTP 401 + 包络 code=40101，而 axios 会因为 401 状态码直接抛错，业务码就丢在
+  // error.response.data 里。markFailure 只认 ApiError(40101)，AxiosError 掉进去会被
+  // 当成"网络没通"，于是心跳静默续期失败后既不弹框也不清令牌——用户卡在原地。
+  let response
+  try {
+    response = await rawHttp.post<Envelope<AuthResult>>('/auth/refresh', {
+      refresh_token: refreshToken,
+    })
+  } catch (error) {
+    throw toApiError(error)
+  }
   const body = response.data
   if (body.code !== 0) {
     throw new ApiError(body.code, body.message || '刷新令牌失败', body.fields, body.retryable ?? false)
@@ -279,7 +291,12 @@ function toApiError(error: unknown): ApiError {
     if (error.code === 'ECONNABORTED') {
       return new ApiError(-1, '请求超时，请重试')
     }
-    return new ApiError(error.response?.status ?? -1, error.message || '网络异常，请检查后端是否在运行')
+    // 没有 response 就是请求根本没发出去（断网、DNS、被插件拦）。axios 在这里给的
+    // 是 "Network Error" 这种英文串，直接抛给视图层等于给用户看控制台术语。
+    if (!error.response) {
+      return new ApiError(-1, '网络连接失败，请检查网络后重试')
+    }
+    return new ApiError(error.response.status, error.message || '请求失败，请重试')
   }
 
   return new ApiError(-1, error instanceof Error ? error.message : '未知错误')

@@ -293,7 +293,8 @@ async function send(): Promise<void> {
     // 已停止或已卸载：不要把错误再糊到气泡上（停止是用户主动的，不是失败）。
     if (current.closed() || !alive) return
     if (error instanceof ApiError && error.code === 40101) {
-      // 拦截器已经把令牌清掉并跳登录页，这里不再往气泡上写错误。
+      // 令牌已失效，main.ts 的全局弹框会提示重新登录；
+      // 这里只管收尾，不往气泡上写第二份错误文案。
       return
     }
     const message = error instanceof Error ? error.message : '发送失败'

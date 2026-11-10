@@ -69,10 +69,12 @@ export async function streamChat(
   const usable = await ensureFreshToken()
   if (!usable) {
     if (signal?.aborted) return { aborted: true, done: false }
-    // 续期失败的原因可能不是"登录失效"（网络断了、网关 502），原样抛出去，
-    // 用户看到"连不上后端"而不是被莫名其妙踢到登录页。
     const cause = ensureFreshTokenFailure()
-    throw cause instanceof ApiError ? cause : new ApiError(40101, MSG_RELOGIN)
+    const err = cause instanceof ApiError ? cause : new ApiError(40101, MSG_RELOGIN)
+    // 40101 必须在这里也通知一次：ensureFresh 返回 false 的两条路径里，
+    // 只有"真的去换了但没换成"会调 onUnauthorized，剩下的不会。
+    if (err.code === 40101) notifyUnauthorized()
+    throw err
   }
 
   const tokens = getTokens()
@@ -92,6 +94,11 @@ export async function streamChat(
     })
   } catch (error) {
     if (signal?.aborted) return { aborted: true, done: false }
+    // fetch 的失败信息是浏览器原话（断网时是 "Failed to fetch"），对用户没有意义。
+    // 能走到这里只有网络层失败——HTTP 状态码不会抛，它在下面按包络解析。
+    if (error instanceof TypeError) {
+      throw new ApiError(-1, '网络连接失败，请检查网络后重试')
+    }
     throw new ApiError(-1, error instanceof Error ? error.message : '网络异常，请检查后端是否在运行')
   }
 

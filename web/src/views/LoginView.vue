@@ -6,13 +6,23 @@
 // 后端返回带 fields 时把字段级提示挂到对应输入框下面，与接口的 fields 字段对齐。
 
 import { computed, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
+import { resetSessionExpired } from '@/api/session-expiry'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
+
+// 只接受站内路径，防 //evil.com 这种协议相对跳转。
+const redirect = computed(() => {
+  const raw = route.query.redirect
+  if (typeof raw !== 'string') return ''
+  if (!raw.startsWith('/') || raw.startsWith('//')) return ''
+  return raw
+})
 
 const mode = ref<'login' | 'register'>('login')
 const form = reactive({ phone: '', password: '', nickname: '' })
@@ -56,7 +66,9 @@ async function submit(): Promise<void> {
       })
     }
     ElMessage.success(mode.value === 'login' ? '登录成功' : '注册成功')
-    await router.replace({ name: 'chat' })
+    // 登录成功要把失效标志位放开，否则下一次会话过期弹不出提示。
+    resetSessionExpired()
+    await router.replace(redirect.value || { name: 'chat' })
   } catch (error) {
     if (error instanceof ApiError) {
       formError.value = error.message
