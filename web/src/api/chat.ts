@@ -71,8 +71,9 @@ export async function streamChat(
     if (signal?.aborted) return { aborted: true, done: false }
     const cause = ensureFreshTokenFailure()
     const err = cause instanceof ApiError ? cause : new ApiError(40101, MSG_RELOGIN)
-    // 40101 必须在这里也通知一次：ensureFresh 返回 false 的两条路径里，
-    // 只有"真的去换了但没换成"会调 onUnauthorized，剩下的不会。
+    // 40101 在这里兜一次底：ensureFresh 的"无令牌"分支补了通知之后，两条失败路径
+    // 都会调 onUnauthorized，但通知本身幂等，多兜一次不会弹出第二个框；而漏掉一次
+    // 就是用户对着一个不动的页面干等。
     if (err.code === 40101) notifyUnauthorized()
     throw err
   }

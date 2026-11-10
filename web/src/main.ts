@@ -46,7 +46,10 @@ onSessionExpired(() => {
 // 静默续期。正常情况下 2 小时过期根本不该被用户察觉：
 // access token 一过期就换新，只要 refresh token 还活着就永远不打断。
 // 5 分钟一次足够——后台标签页的定时器会被浏览器节流到 1 分钟一次，仍然跑得到。
+// 后台标签页直接跳过：每 5 分钟白打一次 /auth/refresh，而用户切回来的那一刻
+// visibilitychange 会立刻补一次，不缺这一跳。
 setInterval(() => {
+  if (document.hidden) return
   if (getTokens()) void ensureFreshToken()
 }, 5 * 60_000)
 

@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { ApiError, createTokenRefresher, REFRESH_LEAD_MS } from './client.ts'
+import { ApiError, createTokenRefresher, REFRESH_LEAD_MS, toApiError } from './client.ts'
 import type { AuthResult, TokenPair } from './types.ts'
 
 const NOW = 1_700_000_000_000
@@ -251,4 +251,103 @@ test('令牌还没到期时 ensureFresh 返回 true 且不通知失效', async (
   assert.equal(await refresher.ensureFresh(), true)
   assert.equal(state.unauthorizedCalls, 0)
   assert.equal(state.refreshCalls, 0)
+})
+
+// ---------------------------------------------------------------------------
+// toApiError 的副作用
+//
+// 这几条测的是上面对账逻辑**挡不住的那一层**：刷新令牌被拒时，真实链路上是
+// refreshTokensDirect → toApiError 先跑，如果它在收敛错误的同时把本地令牌清了，
+// run() 里"读 localStorage 跟刚才那枚对账"就永远读不到赢家写进去的新令牌，
+// 两个标签页一起掉线。上面的用例用的是注入的 deps，根本碰不到 toApiError。
+//
+// node 里没有 localStorage，装一个最小的假货，"有没有清库"才变成可断言的。
+// ---------------------------------------------------------------------------
+
+class FakeStorage {
+  private map = new Map<string, string>()
+
+  get length(): number {
+    return this.map.size
+  }
+
+  clear(): void {
+    this.map.clear()
+  }
+
+  getItem(key: string): string | null {
+    return this.map.has(key) ? (this.map.get(key) as string) : null
+  }
+
+  key(index: number): string | null {
+    return [...this.map.keys()][index] ?? null
+  }
+
+  removeItem(key: string): void {
+    this.map.delete(key)
+  }
+
+  setItem(key: string, value: string): void {
+    this.map.set(key, value)
+  }
+}
+
+const storage = new FakeStorage()
+;(globalThis as { localStorage?: unknown }).localStorage = storage
+
+const ACCESS_KEY = 'laborlaw.access_token'
+const REFRESH_KEY = 'laborlaw.refresh_token'
+const EXPIRES_KEY = 'laborlaw.expires_at'
+
+function seedTokens(): void {
+  storage.clear()
+  storage.setItem(ACCESS_KEY, 'access-1')
+  storage.setItem(REFRESH_KEY, 'refresh-1')
+  storage.setItem(EXPIRES_KEY, String(NOW + 60 * MINUTE))
+}
+
+/** axios 拒绝时的真实形状：status 非 2xx 就抛，业务码藏在 response.data 里。 */
+function axiosRejection(status: number, data: unknown): unknown {
+  return {
+    isAxiosError: true,
+    message: `Request failed with status code ${status}`,
+    response: { status, data },
+  }
+}
+
+test('拒绝刷新的 401 包络：收敛成 ApiError(40101)，但不清本地令牌', () => {
+  // 回归现场：/auth/refresh 被拒时后端回 HTTP 401 + 包络 code=40101。
+  // 这里如果顺手 clearTokens，另一个标签刚换好的令牌就没了。
+  seedTokens()
+
+  const err = toApiError(axiosRejection(401, { code: 40101, message: '登录状态已失效，请重新登录' }), false)
+
+  assert.equal(err.code, 40101)
+  assert.equal(err.message, '登录状态已失效，请重新登录')
+  assert.equal(storage.getItem(REFRESH_KEY), 'refresh-1', '续期路径不许清库')
+  assert.equal(storage.getItem(ACCESS_KEY), 'access-1')
+  assert.equal(storage.getItem(EXPIRES_KEY), String(NOW + 60 * MINUTE))
+})
+
+test('默认路径仍然清令牌：普通的 40101 响应不能被开关顺手放过', () => {
+  // 与上一条成对：notify 的默认值必须是 true，否则 REST 请求收到 40101 时
+  // 只弹框不清库，用户点"去登录"之后旧的坏令牌还在。
+  seedTokens()
+
+  const err = toApiError(axiosRejection(401, { code: 40101, message: '登录状态已失效，请重新登录' }))
+
+  assert.equal(err.code, 40101)
+  assert.equal(storage.getItem(REFRESH_KEY), null)
+  assert.equal(storage.getItem(ACCESS_KEY), null)
+  assert.equal(storage.getItem(EXPIRES_KEY), null)
+})
+
+test('断网：没有 response 时给中文文案，不当成登录失效', () => {
+  seedTokens()
+
+  const err = toApiError({ isAxiosError: true, message: 'Network Error' })
+
+  assert.equal(err.code, -1)
+  assert.equal(err.message, '网络连接失败，请检查网络后重试')
+  assert.equal(storage.getItem(REFRESH_KEY), 'refresh-1')
 })

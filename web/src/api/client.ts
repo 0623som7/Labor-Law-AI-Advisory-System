@@ -226,7 +226,9 @@ async function refreshTokensDirect(refreshToken: string): Promise<AuthResult> {
       refresh_token: refreshToken,
     })
   } catch (error) {
-    throw toApiError(error)
+    // notify=false：这里失败不代表登录失效，run() 还要拿 localStorage 里的新令牌
+    // 跟刚才那枚对账，提前清库会把别的标签页刚换好的登录态一起删掉。
+    throw toApiError(error, false)
   }
   const body = response.data
   if (body.code !== 0) {
@@ -274,15 +276,24 @@ http.interceptors.request.use(async (config) => {
   return config
 })
 
-/** 把任何失败（网络、HTTP 状态、业务码）收敛成 ApiError，视图层只需要 catch 一种。 */
-function toApiError(error: unknown): ApiError {
+/**
+ * 把任何失败（网络、HTTP 状态、业务码）收敛成 ApiError，视图层只需要 catch 一种。
+ *
+ * notify=false 时**不清本地令牌**：续期路径必须用它。那边失败后 run() 还要先跟
+ * localStorage 里的新令牌对账（多标签同时轮换，输家的 refresh_token 必然被拒），
+ * 提前 clearTokens 会把赢家刚写进去的登录态删掉，两个标签一起掉线。
+ *
+ * 导出是为了让上面这条约定能被单测钉住——它的副作用（清库）发生在对账之前，
+ * 一旦写回默认值，两个标签同时轮换就必然一起掉线，而这种回归在浏览器里很难复现。
+ */
+export function toApiError(error: unknown, notify = true): ApiError {
   if (error instanceof ApiError) return error
 
   if (axios.isAxiosError(error)) {
     const body = error.response?.data as Envelope<unknown> | undefined
     if (body && typeof body.code === 'number') {
       // 业务码优先：40101 可能是 200 也可能是 401 回来的，以包络里的 code 为准。
-      if (body.code === 40101) notifyUnauthorized()
+      if (body.code === 40101 && notify) notifyUnauthorized()
       return new ApiError(body.code, body.message || '请求失败', body.fields, body.retryable ?? false)
     }
     // 不看 HTTP 状态码 401：后端所有失败都带包络，业务码才是唯一真相。没有包络
