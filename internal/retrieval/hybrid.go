@@ -97,6 +97,17 @@ func (h *Hybrid) Len() int {
 	return h.semantic.Len()
 }
 
+// candidateK 是两路各自取多少候选。融合与重排都要从候选池里挑，池子必须比
+// 最终 topK 宽得多：只取 topK*2 时，topK=3 只有 6 条候选，融合后约 10 条，
+// 而重排窗口允许 maxRerankCandidates=20 条——排在第 11~20 名的正确条文
+// 根本没机会被重排捞上来。语料从 205 扩到 365 后，这个浪费会直接表现为召回下降。
+func candidateK(topK int) int {
+	if n := topK * 4; n > maxRerankCandidates {
+		return n
+	}
+	return maxRerankCandidates
+}
+
 // Search 先用关键词召回，再叠加语义召回，按 RRF 融合后返回 topK 条。
 //
 // 语义这一侧任何失败都降级成"只用关键词结果"：向量化要过一次公网，
@@ -108,7 +119,7 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 	}
 
 	// 1. 关键词召回是主路，它失败才算真失败。
-	keywordHits, err := h.keyword.Search(ctx, input, topK*2)
+	keywordHits, err := h.keyword.Search(ctx, input, candidateK(topK))
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +160,7 @@ func (h *Hybrid) Search(ctx context.Context, input string, topK int) ([]port.Sta
 
 	// 4. 向量召回。minScore 传 0：语义相似度没有跨模型可比的绝对阈值，
 	//    这一层只负责排序，阈值只在显式调用点给。
-	semanticHits, err := h.semantic.Search(queryVec, topK*2, 0)
+	semanticHits, err := h.semantic.Search(queryVec, candidateK(topK), 0)
 	if err != nil {
 		h.log.Warn("语义检索降级，仅用关键词结果", "err", err.Error())
 		return h.rerankHits(ctx, input, keywordHits, topK), nil

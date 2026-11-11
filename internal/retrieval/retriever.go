@@ -36,7 +36,7 @@ func WithPerQueryTopK(n int) Option {
 
 // New 构造检索器。store 为 nil 时所有检索返回空结果，编排层据此走"没有法条"的分支。
 func New(store Store, opts ...Option) *Retriever {
-	r := &Retriever{store: store, perQueryK: 5, maxKeywords: maxKeywords}
+	r := &Retriever{store: store, perQueryK: 8, maxKeywords: maxKeywords}
 	for _, opt := range opts {
 		opt(r)
 	}
