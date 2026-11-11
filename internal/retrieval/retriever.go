@@ -74,6 +74,19 @@ func (r *Retriever) SearchIn(ctx context.Context, input, law string, topK int) (
 		return []port.StatuteHit{}, nil
 	}
 
+	// 只有泛词时放宽配额：没有专业词让位，收紧只剩副作用。
+	genericK := genericTopK
+	onlyGeneric := true
+	for _, kw := range keywords {
+		if !kw.isGeneric() {
+			onlyGeneric = false
+			break
+		}
+	}
+	if onlyGeneric {
+		genericK = genericOnlyTopK
+	}
+
 	type aggregate struct {
 		hit     port.StatuteHit
 		matched int
@@ -82,7 +95,7 @@ func (r *Retriever) SearchIn(ctx context.Context, input, law string, topK int) (
 	var lastErr error
 
 	for _, kw := range keywords {
-		hits, err := r.store.SearchText(ctx, kw.term, law, kw.topK(r.perQueryK))
+		hits, err := r.store.SearchText(ctx, kw.term, law, kw.topK(r.perQueryK, genericK))
 		if err != nil {
 			// 单个关键词失败不拖垮整次检索：多词本来就是冗余召回，
 			// 只要还有一个词查到了，就值得把结果给用户。

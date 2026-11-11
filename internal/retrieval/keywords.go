@@ -133,6 +133,11 @@ const (
 	genericWeight = 0.4
 	// genericTopK 是泛词最多召回几条，专业词不受此限。
 	genericTopK = 2
+	// genericOnlyTopK 是"整句话一个专业词都没提取到"时的泛词配额。
+	//
+	// genericTopK=2 存在的意义是给专业词让位；没有专业词时它只让候选池缩到 2 条，
+	// topK=3 都凑不满，排在前面的永远是同一两条长条文。
+	genericOnlyTopK = 6
 	// professionalWeight 是法条专门用语的权重。
 	//
 	// 用户问"加班费怎么算"，标准答案是《劳动法》第四十四条，
@@ -166,10 +171,14 @@ type keyword struct {
 	pos    int
 }
 
-// topK 返回这个词应该召回的深度。
-func (k keyword) topK(fallback int) int {
-	if k.weight < 1 {
-		return genericTopK
+// isGeneric 报告这个词是不是泛词（权重低于 1 即 genericWeight）。
+func (k keyword) isGeneric() bool { return k.weight < 1 }
+
+// topK 返回这个词应该召回的深度。generic 参数由调用方按上下文决定，
+// 不在这里硬编码 genericTopK：整句话只有泛词时要放宽，这件事只有 SearchIn 知道。
+func (k keyword) topK(fallback, generic int) int {
+	if k.isGeneric() {
+		return generic
 	}
 	return fallback
 }
