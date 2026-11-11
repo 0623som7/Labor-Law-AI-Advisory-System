@@ -31,10 +31,13 @@ type sourceSpec struct {
 	Expected int
 }
 
-// sources 是当前收录的两部法律。
+// sources 是当前收录的七部法律与行政法规。
 //
 // 《劳动合同法》必须用 2012 年修正版：2007 年原文的劳务派遣条款（第五十七条注册资本、
 // 第六十六条岗位限制、第九十二条罚则）已被修改，抓错版本会把已废止的规定推给用户。
+// 后五部是配套的行政法规与部委规章——劳动合同法只有 98 条，工伤、年休假、劳务派遣比例、
+// 女职工保护这些日常最常见的提问，答案根本不在那两部法律里。
+// 只有第一部带"中华人民共和国"前缀，其余按官方名称写，加了前缀反而是错的。
 var sources = []sourceSpec{
 	{
 		File:      "labor_contract_law.html",
@@ -51,6 +54,48 @@ var sources = []sourceSpec{
 		URL:       "http://www.gd.gov.cn/zwgk/wjk/zcfgk/content/mpost_2532147.html",
 		Effective: "1995-01-01",
 		Expected:  107,
+	},
+	{
+		File:      "labor_contract_law_impl.html",
+		Law:       "中华人民共和国劳动合同法实施条例",
+		IDPrefix:  "LCLR",
+		URL:       "http://www.gov.cn/zwgk/2008-09/19/content_1099470.htm",
+		Effective: "2008-09-18",
+		Expected:  38,
+	},
+	{
+		File:     "work_injury.html",
+		Law:      "工伤保险条例",
+		IDPrefix: "WII",
+		// 桌面版 xzfg.moj.gov.cn/law/detail?LawID=610 是 JS 外壳，直出全文的只有 mobile 地址，
+		// 而这个 URL 要进 citation 卡片给用户点开核对，所以选能真的看到条文的那个。
+		URL:       "https://xzfg.moj.gov.cn/mobile/law/detail?LawID=610",
+		Effective: "2011-01-01",
+		Expected:  67,
+	},
+	{
+		File:      "annual_leave.html",
+		Law:       "职工带薪年休假条例",
+		IDPrefix:  "APL",
+		URL:       "https://www.gov.cn/zhengce/content/2008-03/28/content_6636.htm",
+		Effective: "2008-01-01",
+		Expected:  10,
+	},
+	{
+		File:      "labor_dispatch.html",
+		Law:       "劳务派遣暂行规定",
+		IDPrefix:  "LDT",
+		URL:       "https://www.gov.cn/zhengce/2022-08/31/content_5711309.htm",
+		Effective: "2014-03-01",
+		Expected:  29,
+	},
+	{
+		File:      "female_protection.html",
+		Law:       "女职工劳动保护特别规定",
+		IDPrefix:  "FLP",
+		URL:       "https://www.gov.cn/zhengce/content/2012-05/07/content_6584.htm",
+		Effective: "2012-04-28",
+		Expected:  16,
 	},
 }
 
