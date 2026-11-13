@@ -432,6 +432,124 @@ func TestOvertimeFreeNegativeKeywordStillWins(t *testing.T) {
 	}
 }
 
+// TestTermNoEndOnlyEnd 钉住"只写终止日"的分支：规则应该报缺失起始日，
+// 并且把已有日期放进证据里，方便用户知道是哪一半没写。
+func TestTermNoEndOnlyEnd(t *testing.T) {
+	r := findRule(t, "R-TERM-NO-END")
+	frags := mustHit(t, r, Contract{TermEnd: "2026-01-01"}, 1)
+	if !strings.Contains(frags[0].Evidence, "2026-01-01") {
+		t.Fatalf("证据应写出已有终止日：%s", frags[0].Evidence)
+	}
+	if !strings.Contains(frags[0].Evidence, "未约定起始日") {
+		t.Fatalf("证据应说明缺起始日：%s", frags[0].Evidence)
+	}
+}
+
+// TestChineseMonths 覆盖中文月数解析的分枝：合法写法要转成数字，
+// 不认识的写法必须返回 false，避免把没写清楚的试用期当成一次约定。
+func TestChineseMonths(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want float64
+		ok   bool
+	}{
+		{"单个数字", "一", 1, true},
+		{"两个数字", "两", 2, true},
+		{"单独十", "十", 10, true},
+		{"十一", "十一", 11, true},
+		{"十二", "十二", 12, true},
+		{"二十", "二十", 20, true},
+		{"二十一", "二十一", 21, true},
+		{"连写不支持", "一二", 0, false},
+		{"大写数字不支持", "壹拾贰", 0, false},
+		{"十前多字不支持", "一十", 10, true},
+		{"十后多字不支持", "十二三", 0, false},
+		{"十前多字不支持", "二二三", 0, false},
+		{"十前未知字不支持", "甲十", 0, false},
+		{"十后未知字不支持", "十二甲", 0, false},
+		{"未知数字不支持", "甲", 0, false},
+		{"空串不支持", "", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := chineseMonths(tc.in)
+			if ok != tc.ok || (ok && got != tc.want) {
+				t.Fatalf("chineseMonths(%q)=%v,%v 期望 %v,%v", tc.in, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// TestNormalizeProbationMonths 只测"捕获到的月数怎么变成可比较的字符串"。
+func TestNormalizeProbationMonths(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"0.5", "0.50", true},
+		{"1.5", "1.50", true},
+		{"八", "8", true},
+		{"十二", "12", true},
+		{"二十三", "23", true},
+		{"", "", false},
+		{"一二", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := normalizeProbationMonths(tc.in)
+		if ok != tc.ok || got != tc.want {
+			t.Fatalf("normalizeProbationMonths(%q)=%q,%v 期望 %q,%v", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// TestFormatMoney 钉住金额显示：整数不带 .00，小数保留两位。
+func TestFormatMoney(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{0, "0"},
+		{1980, "1980"},
+		{1980.5, "1980.50"},
+		{2360.25, "2360.25"},
+	}
+	for _, tc := range cases {
+		if got := formatMoney(tc.in); got != tc.want {
+			t.Fatalf("formatMoney(%v)=%q 期望 %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestProbationLimitWithoutDatesOrType 钉住三种兜底：完全缺期限不能判断；
+// 只有起始日按无固定期限处理；明确无固定期限合同上限是六个月。
+func TestProbationLimitWithoutDatesOrType(t *testing.T) {
+	if limit, ok := probationLimit(Contract{ProbationMonths: 0}); ok || limit != 0 {
+		t.Fatalf("试用期为 0 时 probationLimit=%d,%v 期望 0,false", limit, ok)
+	}
+	if limit, ok := probationLimit(Contract{ProbationMonths: -1}); ok || limit != 0 {
+		t.Fatalf("试用期为负数时 probationLimit=%d,%v 期望 0,false", limit, ok)
+	}
+	c := Contract{ProbationMonths: 1, TermStart: "2026-01-01"}
+	if limit, ok := probationLimit(c); !ok || limit != 6 {
+		t.Fatalf("只有起始日时 probationLimit=%d,%v 期望 6,true", limit, ok)
+	}
+	c = Contract{ProbationMonths: 1, ContractType: "无固定期限劳动合同"}
+	if limit, ok := probationLimit(c); !ok || limit != 6 {
+		t.Fatalf("无固定期限合同 probationLimit=%d,%v 期望 6,true", limit, ok)
+	}
+}
+
+// TestClausesAgreeingProbationIgnoresUnrecognizableLength 钉住一个安全行为：
+// 文本里出现了“试用期为一二个月”这类认不出的长度，就当没约定，不做错误统计。
+func TestClausesAgreeingProbationIgnoresUnrecognizableLength(t *testing.T) {
+	c := Contract{Clauses: []Clause{{Section: "第二条", Text: "试用期为一二个月。"}}}
+	if got := clausesAgreeingProbation(c); len(got) != 0 {
+		t.Fatalf("认不出的试用期长度应忽略，实际 %v", got)
+	}
+}
+
 func TestCheckOrderAndFilter(t *testing.T) {
 	c := Contract{
 		TermStart:       "2024-01-01",
