@@ -36,4 +36,17 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // 用函数形式而不是 { 'pdfjs-dist': 'pdfjs' } 这种对象形式：对象形式按包名
+        // 精确匹配，pdfjs-dist/build/pdf.mjs 这类子路径匹配不上，库会漏回主包。
+        manualChunks(id) {
+          if (id.includes('pdfjs-dist')) return 'pdfjs'
+          if (id.includes('node_modules')) return 'vendor'
+          return undefined
+        },
+      },
+    },
+  },
 })
