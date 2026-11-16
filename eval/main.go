@@ -34,6 +34,23 @@ type evalCase struct {
 	ID       string   `json:"id"`
 	Question string   `json:"question"`
 	Expected []string `json:"expected"`
+	// Group 是可选分组标签（new-law / paraphrase / followup / exception /
+	// numeric / long），老 40 条没写，归 base。
+	//
+	// 为什么要拆组：总命中率会把"某一类问法整体失灵"平均掉——90% 的总分
+	// 可能来自"背过的问法全中 + 换种说法全灭"，而这两种情况对答辩的含义
+	// 完全相反。分组是唯一能让那句话变成数字的做法。
+	Group string `json:"group"`
+}
+
+// baseGroup 是老用例的缺省组名：先看老 40 条有没有被新用例带偏。
+const baseGroup = "base"
+
+func (c evalCase) group() string {
+	if g := strings.TrimSpace(c.Group); g != "" {
+		return g
+	}
+	return baseGroup
 }
 
 // topK 固定 5：与线上 consult 的检索深度一致（agent 默认取 5 条）。
@@ -167,6 +184,7 @@ func main() {
 	fmt.Println(strings.Repeat("-", 92))
 
 	var hit3, hit5, empty int
+	results := make([]caseResult, 0, len(cases))
 	for _, c := range cases {
 		hits, err := search(c.Question)
 		if err != nil {
@@ -190,6 +208,7 @@ func main() {
 		if in5 {
 			hit5++
 		}
+		results = append(results, caseResult{c: c, in3: in3, in5: in5})
 
 		top := "-"
 		if len(got) > 0 {
@@ -208,6 +227,7 @@ func main() {
 	fmt.Println(strings.Repeat("-", 92))
 	fmt.Printf("总结：%d 条用例，hit@3 %d/%d = %.1f%%，hit@5 %d/%d = %.1f%%，零召回 %d 条\n",
 		len(cases), hit3, len(cases), total3, hit5, len(cases), total5, empty)
+	printGroupStats(results)
 
 	// 失败不算崩：这是评测，不是断言。低于目标要在评审时被看见，
 	// 但不该让"跑评测"这件事本身变成 CI 里的红灯——检索质量是渐进的。
@@ -236,6 +256,122 @@ func containsAny(got, expected []string, n int) bool {
 		}
 	}
 	return false
+}
+
+// caseResult 是一条用例跑完之后要留下的东西：用例本身 + 两个命中判定。
+// 先收集再统计，而不是边跑边打：分组要等全部跑完才凑得齐。
+type caseResult struct {
+	c   evalCase
+	in3 bool
+	in5 bool
+}
+
+// groupOrder 决定分组的打印顺序：base 打头，其余按用例里出现的先后。
+// 不直接遍历 map——同一份数据两次跑出两种顺序，贴进文档的数字就不可复现了。
+func groupOrder(results []caseResult) []string {
+	seen := make(map[string]bool, 8)
+	rest := make([]string, 0, 8)
+	for _, r := range results {
+		g := r.c.group()
+		if seen[g] {
+			continue
+		}
+		seen[g] = true
+		if g != baseGroup {
+			rest = append(rest, g)
+		}
+	}
+	if seen[baseGroup] {
+		return append([]string{baseGroup}, rest...)
+	}
+	return rest
+}
+
+// printGroupStats 按组各打一行。
+//
+// 分母不同，所以这里只打"组内命中/组内总数"和组内百分比，不给跨组平均值：
+// 把 18 条的 new-law 和 40 条的 base 加在一起算出来的数，谁也不对应。
+func printGroupStats(results []caseResult) {
+	if len(results) == 0 {
+		return
+	}
+	order := groupOrder(results)
+	parts3 := make([]string, 0, len(order))
+	parts5 := make([]string, 0, len(order))
+	for _, g := range order {
+		var n3, n5, total int
+		for _, r := range results {
+			if r.c.group() != g {
+				continue
+			}
+			total++
+			if r.in3 {
+				n3++
+			}
+			if r.in5 {
+				n5++
+			}
+		}
+		parts3 = append(parts3, fmt.Sprintf("%s %d/%d %.1f%%", g, n3, total, percent(n3, total)))
+		parts5 = append(parts5, fmt.Sprintf("%s %d/%d", g, n5, total))
+	}
+	fmt.Printf("按组：%s\n", strings.Join(parts3, " | "))
+	fmt.Printf("按组 hit@5：%s\n", strings.Join(parts5, " | "))
+	printParaphraseGaps(results)
+}
+
+// printParaphraseGaps 把"同一个问题、不同问法、命中不一致"的那几组单独列出来。
+//
+// 总分看不见这件事：三种问法两种命中、一种全灭，组内命中率仍然是 2/3，
+// 但那条全灭的问法说明词表对某种表达有盲区。这比总分更有用——它直接指出
+// 该往哪个方向补同义词，也正好回答"是不是照着测试集调词表"的质疑：
+// 同一语义三种问法，词表只能靠词面匹配，匹配不上的那条就掉出来。
+func printParaphraseGaps(results []caseResult) {
+	type topic struct {
+		key  string
+		hit  []string
+		miss []string
+	}
+	order := make([]string, 0, 4)
+	topics := make(map[string]*topic, 4)
+	for _, r := range results {
+		if r.c.group() != "paraphrase" {
+			continue
+		}
+		key := strings.Join(r.c.Expected, ",")
+		t, ok := topics[key]
+		if !ok {
+			t = &topic{key: key}
+			topics[key] = t
+			order = append(order, key)
+		}
+		if r.in3 {
+			t.hit = append(t.hit, r.c.ID)
+		} else {
+			t.miss = append(t.miss, r.c.ID)
+		}
+	}
+	lines := make([]string, 0, len(order))
+	for _, k := range order {
+		t := topics[k]
+		if len(t.miss) == 0 {
+			continue
+		}
+		if len(t.hit) == 0 {
+			lines = append(lines, fmt.Sprintf("expected=%s 三种问法全部未命中：%s",
+				t.key, strings.Join(t.miss, ",")))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("expected=%s 命中 %s ｜ 未命中 %s",
+			t.key, strings.Join(t.hit, ","), strings.Join(t.miss, ",")))
+	}
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Println("泛化缺口（同题不同问法命中不一致）：")
+	for _, l := range lines {
+		fmt.Println("  " + l)
+	}
 }
 
 func mark(ok bool) string {
