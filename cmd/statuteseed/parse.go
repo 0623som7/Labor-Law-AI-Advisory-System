@@ -37,7 +37,10 @@ type sourceSpec struct {
 // 第六十六条岗位限制、第九十二条罚则）已被修改，抓错版本会把已废止的规定推给用户。
 // 后五部是配套的行政法规与部委规章——劳动合同法只有 98 条，工伤、年休假、劳务派遣比例、
 // 女职工保护这些日常最常见的提问，答案根本不在那两部法律里。
-// 只有第一部带"中华人民共和国"前缀，其余按官方名称写，加了前缀反而是错的。
+// 《劳动争议调解仲裁法》《社会保险法》是 2026-11-16 补的两部法律：前者答"怎么维权"
+// （时效、管辖、一裁终局、先予执行），后者答"社保怎么交、待遇谁付"。
+// 法名一律按官方全称写：法律带"中华人民共和国"前缀，行政法规与部委规章按官方名写，
+// 自己加前缀反而是错的。
 var sources = []sourceSpec{
 	{
 		File:      "labor_contract_law.html",
@@ -96,6 +99,22 @@ var sources = []sourceSpec{
 		URL:       "https://www.gov.cn/zhengce/content/2012-05/07/content_6584.htm",
 		Effective: "2012-04-28",
 		Expected:  16,
+	},
+	{
+		File:      "arbitration.html",
+		Law:       "中华人民共和国劳动争议调解仲裁法",
+		IDPrefix:  "LDA",
+		URL:       "http://www.gd.gov.cn/zwgk/wjk/zcfgk/content/mpost_2722147.html",
+		Effective: "2008-05-01",
+		Expected:  54,
+	},
+	{
+		File:      "social_insurance.html",
+		Law:       "中华人民共和国社会保险法",
+		IDPrefix:  "SIL",
+		URL:       "https://www.gov.cn/guoqing/2021-10/29/content_5647616.htm",
+		Effective: "2011-07-01",
+		Expected:  98,
 	},
 }
 
