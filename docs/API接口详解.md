@@ -174,7 +174,7 @@ data: {"seq":4,"message_id":"01J8Z0K3Q7","finish_reason":"stop","usage":{...}}
 
 | 接口 | 干什么 | 关键点 |
 |---|---|---|
-| `GET /statutes?q=&law=&top_k=` | 关键词检索法条 | `q` 必填、≤100 字；`law` 精确过滤法律名称；`top_k` 1–20，默认 5。205 条规模用 LIKE + 口语归一多路召回（`internal/retrieval`），**不引向量库/ES** |
+| `GET /statutes?q=&law=&top_k=` | 关键词检索法条 | `q` 必填、≤100 字；`law` 精确过滤法律名称；`top_k` 1–20，默认 5。365 条规模：`LIKE` + 口语归一多路召回（`internal/retrieval`）打底，叠加向量融合与交叉编码器重排（`RETRIEVAL_SEMANTIC=on` / `RETRIEVAL_RERANK=true`）；**不引 ES**——理由不是"用不着"，是 2 核 1GB 的单容器装不下 |
 | `GET /statutes/{id}` | 法条详情 | ID 形如 `LCL-38`（劳动合同法第 38 条）；不存在 → 404/40401 |
 
 ---
@@ -270,6 +270,6 @@ curl -i -X PUT http://127.0.0.1:8080/api/v1/sessions
 | 4 | files 四条 | `internal/file` 解析 + 坐标 | ✅ 已完成 `b9c3c77` |
 | 5 | `contracts/review` + tasks | `internal/worker` + `agent.Runner`（review 场景） | ✅ 已完成 `8226608`（审查编排 `4f2f68d`） |
 | 6 | reviews 四条 | `store.Review` 实现 | ✅ 已完成 `8226608` |
-| 7 | statutes 两条 | 205 条法条入库 + 检索归一 | ✅ `8d37755` / `d1902af` |
+| 7 | statutes 两条 | 365 条法条入库（含 1024 维向量）+ 检索归一 | ✅ `8d37755` / `d1902af` |
 
 验收标准写在 openapi 里：前端代码生成读同一份文件，所以**接口一旦定了，前端就能并行开工**——这就是"契约先行"的全部好处。
