@@ -166,3 +166,70 @@ func TestHybridRerankSearchInFiltersFirst(t *testing.T) {
 		t.Errorf("首条 = %s，期望 LCL-4", ids[0])
 	}
 }
+
+// lawHit 造一条指定法律的命中，用于 diversify 的分桶断言。
+func lawHit(id, law string) port.StatuteHit {
+	return port.StatuteHit{Statute: port.Statute{ID: id, Law: law}, Score: 1}
+}
+
+func TestDiversifyCapsSameLaw(t *testing.T) {
+	hits := []port.StatuteHit{lawHit("A-1", "法甲"), lawHit("A-2", "法甲"), lawHit("A-3", "法甲")}
+	got := diversify(hits, 3, 2)
+	if len(got) != len(hits) {
+		t.Fatalf("长度 = %d，期望 %d", len(got), len(hits))
+	}
+	// 只有一部法时回填逃不掉：topK 里同法占三席是预期结果，这里只锁顺序、长度与集合。
+	if ids := idsOf(got); ids[0] != "A-1" || ids[1] != "A-2" || ids[2] != "A-3" {
+		t.Errorf("顺序 = %v，期望回填后仍是 A-1 A-2 A-3", ids)
+	}
+	seen := map[string]bool{}
+	for _, h := range got {
+		seen[h.Statute.ID] = true
+	}
+	if len(seen) != 3 {
+		t.Errorf("集合变了，只剩 %d 条", len(seen))
+	}
+}
+
+func TestDiversifyKeepsMixed(t *testing.T) {
+	hits := []port.StatuteHit{lawHit("A-1", "法甲"), lawHit("B-1", "法乙"), lawHit("C-1", "法丙")}
+	got := diversify(hits, 3, 2)
+	ids := idsOf(got)
+	if len(ids) != 3 || ids[0] != "A-1" || ids[1] != "B-1" || ids[2] != "C-1" {
+		t.Errorf("顺序 = %v，期望与输入一致 [A-1 B-1 C-1]", ids)
+	}
+}
+
+func TestDiversifyBackfills(t *testing.T) {
+	hits := []port.StatuteHit{
+		lawHit("A-1", "法甲"), lawHit("A-2", "法甲"), lawHit("A-3", "法甲"),
+		lawHit("B-1", "法乙"), lawHit("B-2", "法乙"), lawHit("B-3", "法乙"),
+	}
+	got := diversify(hits, 3, 1)
+	if len(got) != 6 {
+		t.Fatalf("长度 = %d，期望 6（回填后与输入等长）", len(got))
+	}
+	ids := idsOf(got)
+	// 前两席必须跨法：这是限流要的效果。
+	if ids[0] != "A-1" || ids[1] != "B-1" {
+		t.Errorf("前两席 = %s %s，期望 A-1 B-1", ids[0], ids[1])
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		seen[id] = true
+	}
+	if len(seen) != 6 {
+		t.Errorf("集合变了，只剩 %d 条：%v", len(seen), ids)
+	}
+}
+
+func TestDiversifyNoCapWhenSparse(t *testing.T) {
+	hits := []port.StatuteHit{lawHit("A-1", "法甲"), lawHit("A-2", "法甲")}
+	got := diversify(hits, 5, 2)
+	if len(got) != 2 {
+		t.Fatalf("长度 = %d，期望 2", len(got))
+	}
+	if ids := idsOf(got); ids[0] != "A-1" || ids[1] != "A-2" {
+		t.Errorf("顺序 = %v，期望原样返回", ids)
+	}
+}

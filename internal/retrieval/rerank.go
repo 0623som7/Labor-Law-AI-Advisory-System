@@ -26,6 +26,12 @@ const (
 	maxRerankCandidates = 20
 )
 
+// perLawCapHits 是同一次结果里同一部法律最多占几席。
+//
+// topK=3 时取 2：允许同法的两条并列出现（很多问题确实要"条文 + 罚则"两条一起看），
+// 但不允许三部法里两张卡来自同一部法的相邻条、把对题的那条挤出去。
+const perLawCapHits = 2
+
 // WithReranker 注入交叉编码器重排。传 nil 等于不重排，行为与之前逐字一致。
 func WithReranker(r Reranker) HybridOption {
 	return func(h *Hybrid) {
@@ -83,5 +89,37 @@ func (h *Hybrid) rerankHits(ctx context.Context, input string, hits []port.Statu
 		// 同分必须有确定的末级比较，否则同一个问题两次提问的引用卡片顺序不一样。
 		return out[i].Statute.ID < out[j].Statute.ID
 	})
-	return clip(out, topK)
+	// 限流必须作用在完整排序上：先 clip 到 topK 再限流，输入已经只剩 topK 条，
+	// 被挤出去的那条根本不在手里，函数只能是空转。
+	return clip(diversify(out, topK, perLawCapHits), topK)
+}
+
+// diversify 限制同一部法律在最终结果里的占比。
+//
+// 为什么需要：交叉编码器给《实施条例》的通则条稳定 0.72~0.82 的分——
+// 这类条文对任何劳动问题都"沾一点"，而同法相邻条之间高度相似，
+// 于是一次结果里四五条都来自同一部法（E66/E75/E98 实测），
+// 真正对题的那条落到 topK 之外。限流是按法律分桶的便宜替代品，
+// 比引入 MMR 少一层距离计算，效果在评测集上可量。
+//
+// 不变量：输出与输入等长、元素集合不变、顺序尽量保持（回填按原顺序）。
+// perLawCap <= 0 视为不限，直接返回。
+func diversify(hits []port.StatuteHit, topK, perLawCap int) []port.StatuteHit {
+	if perLawCap <= 0 || len(hits) <= topK {
+		return hits
+	}
+	kept := make([]port.StatuteHit, 0, len(hits))
+	skipped := make([]port.StatuteHit, 0, len(hits))
+	// 空的 Law 按"同一条空串法律"归组，不特殊放行：库里真有数据缺陷要能看见。
+	count := make(map[string]int, 8)
+	for _, hit := range hits {
+		if len(kept) < topK && count[hit.Statute.Law] < perLawCap {
+			count[hit.Statute.Law]++
+			kept = append(kept, hit)
+			continue
+		}
+		skipped = append(skipped, hit)
+	}
+	// 回填：被跳过的按原顺序接在后面，保证长度与集合不变、下游 clip 仍拿得到 topK。
+	return append(kept, skipped...)
 }
