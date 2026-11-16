@@ -124,11 +124,14 @@ type rerankItem struct {
 	RelevanceScore float64 `json:"relevance_score"`
 }
 
-// rerankInstruct 是官方示例里的任务指令，原样照抄。
+// rerankInstruct 是重排任务指令。
 //
-// 不自己改写：交叉编码器对指令措辞敏感，改一句中文听起来更贴切的话，
-// 分数分布就会变，而我们没有评测集支撑这种改动。
-const rerankInstruct = "Given a web search query, retrieve relevant passages that answer the query."
+// 用中文而不是官方示例里的英文：本库全是中文法条、查询也是中文，
+// 英文指令是"给定网页检索查询，取出能回答它的段落"，与中文法律检索错配。
+// 2026-11-16 用 100 条评测集实测：rerank hit@3 94%→95%，paraphrase 组
+// 11/12→12/12（同题换三种问法的稳健性），救回 E66、E99，掉 E17。
+// 没有评测集支撑就不要改这句话——这是唯一一次拿数据换来的结论。
+const rerankInstruct = "给定一个中文劳动用工问题，检索能够直接回答该问题的法律法规条文。"
 
 // Rerank 返回与 docs 下标一一对应的相关性分数。
 //
