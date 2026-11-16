@@ -5,10 +5,12 @@
 #   -k  保留 laborlaw_restore（默认演练完就删）
 #
 # 判据（任何一条不过退出码 1）：
-#   1. statutes 行数 = 517
-#   2. embeddings 行数（owner_type='statute'）= 517
+#   1. statutes 行数 = deploy/seed/statutes.json 的条数（当前 517）
+#   2. embeddings 行数（owner_type='statute'）= 同一条数
 #   3. LCL-38 正文与 deploy/seed/statutes.json 里的 text 字段逐字一致
 #   4. users / reviews / findings 行数与源库一致
+#
+# 判据 1、2 的期望值不写死：都从种子文件数，加一部法之后不用改脚本。
 #
 # 演练只碰 laborlaw_restore，不碰生产库 laborlaw。
 # 密码一律从容器环境变量取，脚本里不出现真实密码。
@@ -75,12 +77,16 @@ docker compose --env-file ../.env exec -T mysql \
 echo "== 3/4 四条判据"
 
 # 判据 1、2：行数
+# 期望值从种子文件数，不从脚本里写死
+EXP_STATUTES=$(python3 -c 'import json,sys
+print(len(json.load(open(sys.argv[1],encoding="utf-8"))))' "$ROOT_DIR/deploy/seed/statutes.json")
+
 SRC_STATUTES=$(printf 'select count(*) from %s.statutes;\n' "$SRC_DB" | mysql_run | tr -d '\r')
 REST_STATUTES=$(printf 'select count(*) from %s.statutes;\n' "$RESTORE_DB" | mysql_run | tr -d '\r')
-report "statutes 行数" "517" "$REST_STATUTES"
+report "statutes 行数" "$EXP_STATUTES" "$REST_STATUTES"
 
 REST_VECTORS=$(printf "select count(*) from %s.embeddings where owner_type = 'statute';\n" "$RESTORE_DB" | mysql_run | tr -d '\r')
-report "embeddings 行数（statute）" "517" "$REST_VECTORS"
+report "embeddings 行数（statute）" "$EXP_STATUTES" "$REST_VECTORS"
 
 # 判据 3：LCL-38 正文逐字比对（期望值取自种子文件，不取自库）
 EXP_LCL38=$(python3 -c 'import json,sys

@@ -308,7 +308,7 @@ docker compose --env-file ../.env exec -T mysql sh -c \
    ```
 
    判据：文件应是几 MB 而不是几 KB；`INSERT INTO` 语句数应是十几条——mysqldump 默认把每张表
-   合并成一条 extended insert，所以**不要**用 `grep -c 'INSERT INTO `statutes`'` 去数 517 行，
+   合并成一条 extended insert，所以**不要**用 `grep -c 'INSERT INTO `statutes`'` 去数行数，
    那个数只会是 1。真正的行数判据由 5.2 的演练核，这里只做粗筛。
 3. **`--default-character-set=utf8mb4` 不能省**。省掉之后中文法名在客户端侧变成 `????`，
    导出文件看着"成功"，恢复回去就是一片问号。
@@ -322,8 +322,8 @@ docker compose --env-file ../.env exec -T mysql sh -c \
 
 | 判据 | 期望 |
 |---|---|
-| `statutes` 行数 | 517 |
-| `embeddings` 行数（`owner_type='statute'`） | 517 |
+| `statutes` 行数 | 与 `deploy/seed/statutes.json` 的条数一致（当前 517） |
+| `embeddings` 行数（`owner_type='statute'`） | 同一条数 |
 | `LCL-38` 正文 | 与 `deploy/seed/statutes.json` 逐字一致 |
 | `users` / `reviews` / `findings` 行数 | 与源库一致 |
 
@@ -364,6 +364,10 @@ docker compose --env-file ../.env exec -T mysql sh -c \
 任何一条不过退出码 1。
 
 **演练失败时不许改判据去凑通过**：判据是演练的目的，不是演练的障碍。
+
+演练中途失败时临时库会残留半截数据。重跑前先 `DROP DATABASE IF EXISTS laborlaw_restore`；
+不要手工删表——mysqldump 每张表自带 `DROP TABLE IF EXISTS`，重跑本身是幂等的，
+手工介入只会让状态更难判断。
 
 ### 5.3 回滚（镜像 / 数据库）
 

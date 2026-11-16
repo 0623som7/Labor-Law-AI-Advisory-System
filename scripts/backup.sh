@@ -13,9 +13,12 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 OUT_DIR=${1:-$ROOT_DIR}
-OUT_FILE="$OUT_DIR/laborlaw_$(date +%F_%H%M).sql"
 
 mkdir -p "$OUT_DIR"
+# 转成绝对路径：下面会 cd 到 deploy/，相对路径到那时就指向别处了
+OUT_DIR=$(CDPATH= cd -- "$OUT_DIR" && pwd)
+
+OUT_FILE="$OUT_DIR/laborlaw_$(date +%F_%H%M).sql"
 
 # compose 的 --env-file 是相对 deploy/ 的，所以先 cd 过去再执行
 cd "$ROOT_DIR/deploy"
