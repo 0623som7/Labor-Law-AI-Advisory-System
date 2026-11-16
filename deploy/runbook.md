@@ -123,11 +123,21 @@ docker compose -f deploy/docker-compose.yml --env-file .env up -d api
 #       前端一张卡片都不会有——这一步不做，前面全白搭）
 docker compose -f deploy/docker-compose.yml --env-file .env --profile seed run --rm seed
 # 期望输出：
-#   共 205 条法条 → /app/seed/statutes.json
-#   法条表重建完成：0 → 205 行
+#   共 365 条法条 → /app/seed/statutes.json
+#   法条表重建完成：0 → 365 行
 #   逐字复核通过：[LCL-38 LCL-82 LCL-87 LL-44]
 # 必需在 3.3 的迁移之后跑（statutes 表由迁移建）。它执行的是 ReplaceAll
 # （先 DELETE 再批量 INSERT，结果幂等），所以用 profile 隔离、不随 up 自动启动。
+#
+# ★ 重建 statutes 之后必须做两件事，否则库里"有法条、没向量"或"向量比法条多"：
+#   1) 重跑 3.4.3 的 embeddingseed —— 它按缺失补齐，不跑新条号就永远没有向量，
+#      只活在关键词那一路，语义与重排里等于不存在；
+#   2) restart api —— 语义索引是启动时一次性读进内存的（LoadSemanticIndex），
+#      不重启就是"库里 365、内存里 205"，日志里的 vectors= 会停在旧数字。
+#   另外 embeddingseed 是幂等 upsert，**不删孤儿向量**：把语料从 517 退回 365 之后，
+#   embeddings 里会残留 152 条已不存在条号的向量（count 仍是 517），要手工清：
+#     DELETE e FROM embeddings e LEFT JOIN statutes s ON s.id = e.owner_id
+#     WHERE e.owner_type = 'statute' AND s.id IS NULL;
 
 # 3.4.2 确认 MySQL 的配置真的被读到了（改过 my.cnf 就必须重跑这一步）
 #      deploy/mysql/my.cnf 由 deploy/mysql/Dockerfile COPY 进镜像并 chmod 644，
@@ -151,12 +161,12 @@ docker compose -f deploy/docker-compose.yml --env-file .env stop api
 docker compose -f deploy/docker-compose.yml --env-file .env run --rm --entrypoint /app/embeddingseed api
 #   --entrypoint 不能省：镜像的 ENTRYPOINT 是 /app/api，不覆盖会把 embeddingseed 当成参数传给它
 #   期望输出：
-#     完成：205 条，维度 1024，21 批，耗时约 8s
-#     写入 embeddings：205 行（owner_type=statute，model=text-embedding-v3）
+#     完成：365 条，维度 1024，37 批，耗时约 13s
+#     写入 embeddings：365 行（owner_type=statute，model=text-embedding-v3）
 docker compose -f deploy/docker-compose.yml --env-file .env up -d api
 docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql sh -c \
   'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "select count(*) from laborlaw.embeddings"'
-#   期望 205。0 就说明灌失败了：看上一次命令的输出是"向量库为空"还是 API key / 网络报错
+#   期望 365。0 就说明灌失败了：看上一次命令的输出是"向量库为空"还是 API key / 网络报错
 #   换过 LLM_EMBEDDING_MODEL 之后要重灌：索引按 model 分开读，旧向量对不上新模型
 
 # 3.5 自签证书（8443 的 TLS 由 nginx 终止，证书必须先在宿主机生成）
