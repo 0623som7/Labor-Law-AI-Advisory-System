@@ -655,34 +655,44 @@ void load()
   border: 2px solid;
   background: transparent;
   cursor: pointer;
-  /* 默认浅一点：框是压在原文上的，全不透明会把条文盖住看不清。 */
-  opacity: 0.55;
-  transition: opacity 0.15s ease;
+  /* 浅在底色上，不浅在边框上：框要一直看得见，条文也要一直读得清 */
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .mark--high {
-  border-color: #d93026;
-  background: rgba(217, 48, 38, 0.14);
+  border-color: rgba(217, 48, 38, 0.55);
+  background: rgba(217, 48, 38, 0.07);
 }
 
 .mark--medium {
-  border-color: #d97706;
-  background: rgba(217, 119, 6, 0.14);
+  border-color: rgba(217, 119, 6, 0.55);
+  background: rgba(217, 119, 6, 0.07);
 }
 
 .mark--low {
-  border-color: #ca8a04;
-  background: rgba(202, 138, 4, 0.14);
+  border-color: rgba(202, 138, 4, 0.55);
+  background: rgba(202, 138, 4, 0.07);
 }
 
 /* 选中态常驻：不自动灭，点下一条自然切换。描边沿用风险配色（#d93026）。 */
 .mark--active {
-  opacity: 1;
   z-index: 2;
+  border-color: #d93026;
+  background: rgba(217, 48, 38, 0.16);
   outline: 2px solid rgba(217, 48, 38, 0.85);
   outline-offset: 1px;
-  box-shadow: 0 0 0 2px rgba(217, 48, 38, 0.45);
   animation: pulse 1.2s ease-out 2;
+}
+
+/* 描边跟随风险等级：中/低风险点中后仍是自己的橙/黄，不然颜色自相矛盾。 */
+.mark--active.mark--medium {
+  border-color: #d97706;
+  outline-color: rgba(217, 119, 6, 0.85);
+}
+
+.mark--active.mark--low {
+  border-color: #ca8a04;
+  outline-color: rgba(202, 138, 4, 0.85);
 }
 
 @keyframes pulse {
