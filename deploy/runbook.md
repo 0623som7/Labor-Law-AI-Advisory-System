@@ -151,7 +151,7 @@ docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql \
   sh -c 'mysqld --defaults-extra-file=/etc/mysql/conf.d/my.cnf --print-defaults'
 #   期望含 --innodb_buffer_pool_size=512M、--max_connections=50、--performance_schema=OFF，
 #   并且没有 "World-writable config file ... is ignored" 这句 Warning
-docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql mysql -uroot -p -N -e \
+docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql mysql -uroot -p --default-character-set=utf8mb4 -N -e \
   "select @@innodb_buffer_pool_size, @@max_connections, @@performance_schema, @@ngram_token_size, @@global.time_zone, @@innodb_flush_log_at_trx_commit"
 #   期望 536870912  50  0  2  +00:00  2
 
@@ -170,7 +170,7 @@ docker compose -f deploy/docker-compose.yml --env-file .env run --rm --entrypoin
 #     清理孤儿向量：0 条
 docker compose -f deploy/docker-compose.yml --env-file .env up -d api
 docker compose -f deploy/docker-compose.yml --env-file .env exec -T mysql sh -c \
-  'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "select count(*) from laborlaw.embeddings"'
+  'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 -N -e "select count(*) from laborlaw.embeddings"'
 #   期望 517。0 就说明灌失败了：看上一次命令的输出是"向量库为空"还是 API key / 网络报错
 #   换过 LLM_EMBEDDING_MODEL 之后要重灌：索引按 model 分开读，旧向量对不上新模型
 
@@ -282,20 +282,103 @@ curl -k -o /dev/null -w '%{http_code}\n' https://<公网IP>:8443/metrics   # 404
 
 ---
 
-## 5. 回滚
+## 5. 备份、恢复与回滚
+
+### 5.1 备份（每次改动数据前，答辩前必做一次）
+
+命令一律在 `deploy/` 目录下执行，用容器内的 mysql 客户端——宿主机不用装客户端，
+密码从容器环境变量里取，不落命令历史：
+
+```bash
+docker compose --env-file ../.env exec -T mysql sh -c \
+  'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 laborlaw' \
+  > ../backup_$(date +%F_%H%M).sql
+```
+
+三件事必须做：
+
+1. **拉回本地留一份**。服务器只有一块云盘，盘坏了备份和库一起没：
+   `scp ubuntu@<IP>:/opt/laborlaw/backup_*.sql ./`
+2. **导出后复核行数**。不要看到"命令没报错"就当成功——空文件、只导了结构、导到一半断流，
+   退出码都可能是 0：
+
+   ```bash
+   ls -lh ../backup_*.sql
+   grep -c 'INSERT INTO' ../backup_*.sql
+   ```
+
+   判据：文件应是几 MB 而不是几 KB；`INSERT INTO` 语句数应是十几条——mysqldump 默认把每张表
+   合并成一条 extended insert，所以**不要**用 `grep -c 'INSERT INTO `statutes`'` 去数 517 行，
+   那个数只会是 1。真正的行数判据由 5.2 的演练核，这里只做粗筛。
+3. **`--default-character-set=utf8mb4` 不能省**。省掉之后中文法名在客户端侧变成 `????`，
+   导出文件看着"成功"，恢复回去就是一片问号。
+
+`scripts/backup.sh` 是上面这段的封装（打文件大小与前三行自检，失败非 0 退出），
+但它**不替你 scp**：传输是人的决定。
+
+### 5.2 恢复演练（每学期至少一次，答辩前必做一次）
+
+先给判据，再给命令。判据四条，任何一条不过就是演练失败：
+
+| 判据 | 期望 |
+|---|---|
+| `statutes` 行数 | 517 |
+| `embeddings` 行数（`owner_type='statute'`） | 517 |
+| `LCL-38` 正文 | 与 `deploy/seed/statutes.json` 逐字一致 |
+| `users` / `reviews` / `findings` 行数 | 与源库一致 |
+
+演练导进**临时库**，不碰生产库：
+
+```bash
+# 1) 建临时库
+docker compose --env-file ../.env exec -T mysql sh -c \
+  'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 \
+     -e "CREATE DATABASE IF NOT EXISTS laborlaw_restore"'
+
+# 2) 把 dump 灌进去
+docker compose --env-file ../.env exec -T mysql sh -c \
+  'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 laborlaw_restore' \
+  < ../backup_2026-11-16_2130.sql
+
+# 3) 四条判据逐条核（SQL 走 stdin，避免多层引号打架）
+docker compose --env-file ../.env exec -T mysql sh -c \
+  'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 -N -r' <<'SQL'
+select count(*) from laborlaw_restore.statutes;
+select count(*) from laborlaw_restore.embeddings where owner_type = 'statute';
+select left(text, 60) from laborlaw_restore.statutes where id = 'LCL-38';
+select (select count(*) from laborlaw_restore.users),
+       (select count(*) from laborlaw_restore.reviews),
+       (select count(*) from laborlaw_restore.findings);
+SQL
+
+# 4) 演练完删临时库（除非要留着查）
+docker compose --env-file ../.env exec -T mysql sh -c \
+  'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 \
+     -e "DROP DATABASE laborlaw_restore"'
+```
+
+第 3 条判据的"逐字一致"是拿 `deploy/seed/statutes.json` 里 `LCL-38` 的 `text` 字段比，
+不是比条号、不是比前 20 字。`-r`（raw）不能省：批处理模式下 mysql 会把正文里的换行输出成
+字面的反斜杠加 n，拿它跟种子文件比一定"不一致"（实测 798 字节 vs 790 字节，差的就是换行）。
+`scripts/restore-drill.sh` 把上面四步串成一条命令，逐条打 `期望 / 实际 / 通过?`，
+任何一条不过退出码 1。
+
+**演练失败时不许改判据去凑通过**：判据是演练的目的，不是演练的障碍。
+
+### 5.3 回滚（镜像 / 数据库）
 
 ```bash
 # 镜像回滚：compose 里 image 改成上一个 tag，然后
 docker compose -f deploy/docker-compose.yml --env-file .env up -d --force-recreate api
 
-# 数据库回滚：先快照，再手工执行 down 脚本
-mysqldump -h 127.0.0.1 -u root -p laborlaw > backup_$(date +%F_%H%M).sql
+# 数据库回滚：先按 5.1 快照，再手工执行 down 脚本
+docker compose --env-file ../.env exec -T mysql sh -c \
+  'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --default-character-set=utf8mb4 laborlaw' \
+  > ../backup_$(date +%F_%H%M).sql
 ```
 
 **迁移没有自动 down**：`internal/store/migrations/*.down.sql` 要人工执行，
 且执行前必须 mysqldump。这条写在这里是为了防止有人以为 `up` 能撤销。
-
----
 
 ## 6. 已知取舍（答辩被问到要能答）
 
