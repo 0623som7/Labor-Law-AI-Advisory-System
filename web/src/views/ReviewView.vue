@@ -44,7 +44,7 @@ const POLL_INTERVAL = 2000
 // 否则慢任务表现为"失败"，刷新后又出现。
 // 不从后端读这个值——前端拿不到，硬编码加注释比多一次请求好维护。
 const POLL_MAX = 160
-const ACTIVE_MS = 1500
+
 /**
  * 轮询节奏：前几次密、之后退到 2 秒。
  *
@@ -81,7 +81,6 @@ const activeId = ref<string | null>(null)
 
 let pollTimer: number | null = null
 let tickTimer: number | null = null
-let activeTimer: number | null = null
 let disposed = false
 let reviewId: string | null = null
 
@@ -121,21 +120,21 @@ function pageStyle(pageIndex: number): Record<string, string> {
   return { width: `${viewport.width}px`, height: `${viewport.height}px` }
 }
 
-/** 高亮只维持一会儿：一直亮着会盖住原文，而用户点它的目的就是读原文。 */
+/**
+ * 选中一条就常驻高亮，点下一条自然切换。
+ *
+ * 早先是"亮 1.5 秒后自动灭"，结果用户还没看清就闪没了；现在默认浅、
+ * 选中深且不自动灭，取消选中靠点另一条或离开页面。
+ */
 function focusFinding(f: Finding): void {
   activeId.value = f.id
-  if (activeTimer !== null) window.clearTimeout(activeTimer)
-  activeTimer = window.setTimeout(() => {
-    activeId.value = null
-    activeTimer = null
-  }, ACTIVE_MS)
   void nextTick(() => {
     document
       .querySelector(`[data-page="${findingPage(f)}"]`)
       ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     document
       .querySelector(`[data-finding="${f.id}"]`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   })
 }
 
@@ -398,7 +397,6 @@ function retry(): void {
 onBeforeUnmount(() => {
   disposed = true
   if (pollTimer !== null) window.clearTimeout(pollTimer)
-  if (activeTimer !== null) window.clearTimeout(activeTimer)
   stopTicking()
 })
 
@@ -452,10 +450,7 @@ void load()
               :key="f.id"
               type="button"
               class="mark"
-              :class="[
-                `mark--${f.severity}`,
-                { 'mark--active': activeId === f.id, 'mark--dim': activeId !== null && activeId !== f.id },
-              ]"
+              :class="[`mark--${f.severity}`, { 'mark--active': activeId === f.id }]"
               :style="markStyle(f)"
               :title="f.title"
               @click="focusFinding(f)"
@@ -660,6 +655,8 @@ void load()
   border: 2px solid;
   background: transparent;
   cursor: pointer;
+  /* 默认浅一点：框是压在原文上的，全不透明会把条文盖住看不清。 */
+  opacity: 0.55;
   transition: opacity 0.15s ease;
 }
 
@@ -678,13 +675,14 @@ void load()
   background: rgba(202, 138, 4, 0.14);
 }
 
-.mark--dim {
-  opacity: 0.35;
-}
-
+/* 选中态常驻：不自动灭，点下一条自然切换。描边沿用风险配色（#d93026）。 */
 .mark--active {
-  animation: pulse 1.2s ease-out 2;
+  opacity: 1;
   z-index: 2;
+  outline: 2px solid rgba(217, 48, 38, 0.85);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 2px rgba(217, 48, 38, 0.45);
+  animation: pulse 1.2s ease-out 2;
 }
 
 @keyframes pulse {
