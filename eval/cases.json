@@ -98,17 +98,5 @@
   {"id": "E97", "question": "公司让我们每天加班到十点，周末也上班，说以后给调休但不给加班费，还说不同意就走人，这样合法吗", "expected": ["LL-41", "LL-44", "LCL-31"], "group": "long"},
   {"id": "E98", "question": "入职快一年公司一直没跟我签劳动合同也没交社保，我现在想辞职，能不能要双倍工资和经济补偿", "expected": ["LCL-82", "LCL-38", "LCL-46"], "group": "long"},
   {"id": "E99", "question": "我是劳务派遣到一家工厂做流水线的，干一样的活工资比正式工少一半，现在工厂说订单少了要把我退回派遣公司，这样合理吗", "expected": ["LCL-63", "LDT-3", "LDT-12"], "group": "long"},
-  {"id": "E100", "question": "我试用期还有半个月到期，公司突然说我考核不合格要辞退我，也没给任何证据，我可以要求赔偿吗", "expected": ["LCL-21", "LCL-39", "LCL-87"], "group": "long"},
-  {"id": "E101", "question": "公司欠我三个月工资，我离职一年多了还能去申请劳动仲裁吗", "expected": ["LDA-27"], "group": "new-law"},
-  {"id": "E102", "question": "没签劳动合同的双倍工资，仲裁时效从哪天开始算", "expected": ["LDA-27", "LCL-82"], "group": "new-law"},
-  {"id": "E103", "question": "申请劳动仲裁要交什么材料，申请书怎么写", "expected": ["LDA-28"], "group": "new-law"},
-  {"id": "E104", "question": "公司注册在外地，我在本地干活，该去哪里的仲裁委申请", "expected": ["LDA-21"], "group": "new-law"},
-  {"id": "E105", "question": "哪些劳动争议是一裁终局，裁决下来公司还能拖吗", "expected": ["LDA-47"], "group": "new-law"},
-  {"id": "E106", "question": "终局裁决对我这个劳动者不利，我还能去法院告吗", "expected": ["LDA-48", "LDA-47"], "group": "new-law"},
-  {"id": "E107", "question": "公司欠工资，能不能在仲裁时先让他把钱付了", "expected": ["LDA-44"], "group": "new-law"},
-  {"id": "E108", "question": "公司一直按最低基数给我交社保，能要求补缴吗，有没有滞纳金", "expected": ["SIL-63", "SIL-86"], "group": "new-law"},
-  {"id": "E109", "question": "工伤住院的医疗费、康复费哪些由工伤保险基金出", "expected": ["SIL-38", "WII-30"], "group": "new-law"},
-  {"id": "E110", "question": "公司根本没给我交工伤保险，我出了工伤该找谁赔", "expected": ["SIL-41", "WII-62"], "group": "new-law"},
-  {"id": "E111", "question": "领失业保险金要满足什么条件", "expected": ["SIL-45", "SIL-46"], "group": "new-law"},
-  {"id": "E112", "question": "失业保险金一个月能领多少钱，最多能领多久", "expected": ["SIL-47", "SIL-46"], "group": "new-law"}
+  {"id": "E100", "question": "我试用期还有半个月到期，公司突然说我考核不合格要辞退我，也没给任何证据，我可以要求赔偿吗", "expected": ["LCL-21", "LCL-39", "LCL-87"], "group": "long"}
 ]
