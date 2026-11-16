@@ -8,6 +8,7 @@
 //
 //	go run ./cmd/embeddingseed                      # 全量向量化
 //	go run ./cmd/embeddingseed -limit 10 -verbose   # 先拿 10 条试水
+//	go run ./cmd/embeddingseed -prune               # 向量化后清掉语料之外的孤儿向量
 //	go run ./cmd/embeddingseed -query '加班费|二倍工资|拖欠工资'
 package main
 
@@ -48,17 +49,18 @@ func main() {
 		limit    = flag.Int("limit", 0, "只处理前 N 条，0 表示全部")
 		query    = flag.String("query", "", "自检查询，多个用 | 分隔")
 		minScore = flag.Float64("min-score", defaultMinScore, "自检相似度下限，0 表示不过滤")
+		prune    = flag.Bool("prune", false, "写入后清理 statutes 里已不存在的孤儿向量")
 		verbose  = flag.Bool("verbose", false, "打印每条法条的处理进度")
 	)
 	flag.Parse()
 
-	if err := run(*dsn, *model, *batch, *limit, *query, float32(*minScore), *verbose); err != nil {
+	if err := run(*dsn, *model, *batch, *limit, *query, float32(*minScore), *prune, *verbose); err != nil {
 		fmt.Fprintln(os.Stderr, "embeddingseed:", err)
 		os.Exit(1)
 	}
 }
 
-func run(dsn, model string, batch, limit int, query string, minScore float32, verbose bool) error {
+func run(dsn, model string, batch, limit int, query string, minScore float32, prune, verbose bool) error {
 	ctx := context.Background()
 
 	// 与 cmd/api、cmd/statuteseed 同源加载 .env：工具与服务的连接配置只能有一套。
@@ -174,10 +176,39 @@ func run(dsn, model string, batch, limit int, query string, minScore float32, ve
 		written, dim, batches, time.Since(started).Seconds())
 	fmt.Printf("写入 embeddings：%d 行（owner_type=%s，model=%s）\n", written, ownerTypeStatute, model)
 
+	// 先补齐再删孤儿：中途失败时库里只会"该有的没有"，不会"该有的被删掉"。
+	// 孤儿向量的危害不是占空间——retrieval.LoadSemanticIndex 从 embeddings 表读进
+	// 内存索引，孤儿会正常参与打分，只是回表拿不到条文，表现为"检索命中了却渲染不出卡片"。
+	if prune {
+		removed, err := pruneOrphans(ctx, db, model)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("清理孤儿向量：%d 条\n", removed)
+	}
+
 	if query == "" {
 		return nil
 	}
 	return selfCheck(ctx, db, client, model, query, minScore)
+}
+
+// pruneOrphans 删掉 statutes 里已不存在条号的向量，只清当前模型的。
+//
+// 按 model 过滤是必须的：换过 LLM_EMBEDDING_MODEL 之后库里会同时存在两套向量，
+// 不清就把别的模型的存量当孤儿一起删了。
+func pruneOrphans(ctx context.Context, db *sql.DB, model string) (int64, error) {
+	res, err := db.ExecContext(ctx, `DELETE FROM embeddings
+		WHERE owner_type = ? AND model = ?
+		  AND owner_id NOT IN (SELECT id FROM statutes)`, ownerTypeStatute, model)
+	if err != nil {
+		return 0, fmt.Errorf("清理孤儿向量: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("读取清理行数: %w", err)
+	}
+	return n, nil
 }
 
 // countStatutes 先确认库里真有法条：空库跑向量化只会得到一张空表，
