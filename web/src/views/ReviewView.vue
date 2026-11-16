@@ -26,7 +26,7 @@ import {
 } from '@/api/files'
 import type { Finding, ParsedDoc, Review } from '@/api/types'
 import { SEVERITY_LABEL, findingsOnPage, legalBasisTitle, sortBySeverity, summarizeFindings } from '@/utils/findings'
-import { shouldOfferStart } from '@/utils/review-restore'
+import { shouldAutostart, shouldOfferStart } from '@/utils/review-restore'
 import {
   findingPage,
   inflateRect,
@@ -45,6 +45,14 @@ const POLL_INTERVAL = 2000
 // 不从后端读这个值——前端拿不到，硬编码加注释比多一次请求好维护。
 const POLL_MAX = 160
 const ACTIVE_MS = 1500
+/**
+ * 轮询节奏：前几次密、之后退到 2 秒。
+ *
+ * 审查本身实测几十毫秒到一两秒，固定 2 秒跳一次等于"结果早好了，观众还在看骨架屏"——
+ * 自动开审之后这段空等直接决定"上传完多久看到风险卡片"。任务长起来之后再退到 2 秒，
+ * 免得空转几百次。
+ */
+const POLL_BACKOFF = [250, 400, 600, 900, 1200, 1600]
 
 const route = useRoute()
 const router = useRouter()
@@ -209,7 +217,7 @@ async function pollTask(taskId: string): Promise<void> {
       stopTicking()
       return
     }
-    await wait(POLL_INTERVAL)
+    await wait(POLL_BACKOFF[Math.min(i, POLL_BACKOFF.length - 1)] ?? POLL_INTERVAL)
   }
   if (disposed) return
   reviewError.value = '审查用时过长，已停止等待。稍后刷新页面可继续查看结果。'
@@ -248,8 +256,12 @@ async function startReview(): Promise<void> {
   } catch (err) {
     const code = err instanceof ApiError ? err.code : 0
     if (code === 40901) {
-      reviewError.value = '这份合同正在审查中，请稍候'
-    } else if (code === 40401) {
+      // 这份合同已经在跑了（另一台设备、或者自动开审撞上手动点）。这不是错误：
+      // 不闪红条，接上那条任务继续等，用户看到的就是"已在跑"。
+      await adoptRunningReview()
+      return
+    }
+    if (code === 40401) {
       ElMessage.error('合同不存在或无权访问')
       await router.replace({ name: 'upload' })
     } else {
@@ -258,6 +270,26 @@ async function startReview(): Promise<void> {
     running.value = false
     stopTicking()
   }
+}
+
+/** 40901 之后：把界面接到那份正在跑的审查上，而不是报错。 */
+async function adoptRunningReview(): Promise<void> {
+  try {
+    const existing = await findReviewByFile(fileId.value)
+    if (existing && (existing.status === 'pending' || existing.status === 'running') && existing.task_id) {
+      reviewId = existing.id
+      running.value = true
+      stage.value = '这份合同正在审查中，继续等待结果'
+      startTicking()
+      await pollTask(existing.task_id)
+      return
+    }
+  } catch {
+    // 查不到就当没接上，下面按"没结果"处理，不把内部错误抛给用户。
+  }
+  // 接不上任务：不报错，回到"还没结果"的状态，用户可以再点一次。
+  running.value = false
+  stopTicking()
 }
 
 /**
@@ -293,6 +325,21 @@ async function restoreExisting(): Promise<void> {
   } catch (err) {
     reviewError.value = message(err, '读取已审查结果失败')
   }
+}
+
+/**
+ * 上传页带 `?autostart=1` 跳过来时自动开跑一次。
+ *
+ * 先抹掉标记再发请求：不抹的话用户刷新页面会二次触发，把刚跑完的结果又当成"要开审"。
+ * 已有结果时 shouldAutostart 返回 false，不重复开审（后端会复用旧结果，用户白等两秒）。
+ */
+async function maybeAutostart(): Promise<void> {
+  const marked = route.query.autostart !== undefined
+  const start = shouldAutostart(route.query, review.value !== null)
+  // 标记一律抹掉（哪怕这次不开审）：留着它，用户刷新页面会二次触发。
+  if (marked) await router.replace({ query: {} })
+  if (!start) return
+  await startReview()
 }
 
 async function load(): Promise<void> {
@@ -332,8 +379,13 @@ async function load(): Promise<void> {
     pageCount.value = doc.value?.page_count ?? 0
     loading.value = false
     await nextTick()
-    await renderPdf()
+    // PDF 渲染和"开审/接上已审"互不依赖：串着等的话，四页 PDF 画完（dev 下两秒多）
+    // 才开始提交审查，观众看到风险卡片的时刻被白白推迟。高亮框是绝对定位的 div，
+    // viewports 晚到只是框先没有坐标、拿到后自动补上，不影响画布。
+    const rendering = renderPdf()
     await restoreExisting()
+    await maybeAutostart()
+    await rendering
   } else {
     loading.value = false
   }

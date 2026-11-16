@@ -27,3 +27,26 @@ export function shouldOfferStart(state: StartButtonState): boolean {
   if (state.loadError !== '') return false
   return state.restored === null
 }
+
+/**
+ * 上传页跳过来时带 `?autostart=1`，审查页据此自动开跑一次。
+ *
+ * 三个前提缺一不可：带了标记、这份合同还没有结果、而且（调用方保证）先把标记抹掉——
+ * 不抹的话刷新页面会二次触发，把已经跑完的结果又当成"要开审"。
+ * 已有结果时返回 false 是有意的：后端会复用旧结果，自动开审只会让用户白等两秒。
+ */
+export function shouldAutostart(
+  query: Record<string, unknown> | string | null,
+  hasReview: boolean,
+): boolean {
+  if (hasReview) return false
+  if (query === null) return false
+  if (typeof query === 'string') {
+    const params = new URLSearchParams(query.startsWith('?') ? query.slice(1) : query)
+    return params.get('autostart') === '1'
+  }
+  const raw = query.autostart
+  if (raw === null || raw === undefined) return false
+  if (Array.isArray(raw)) return raw.some((v) => String(v) === '1')
+  return String(raw) === '1'
+}

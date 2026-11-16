@@ -70,7 +70,13 @@ async function start(): Promise<void> {
       percent.value = p
     })
     // 同内容文件会命中后端缓存、拿回同一个 id，这不是错误，照常跳转。
-    await router.push({ name: 'review', params: { fileId: record.id } })
+    // autostart=1 让审查页自己开跑：不带上它，用户传完不点按钮就走人，
+    // files 表有行、reviews 没有行，文件在左栏（读 GET /reviews）里就消失了。
+    await router.push({
+      name: 'review',
+      params: { fileId: record.id },
+      query: { autostart: '1' },
+    })
   } catch (err) {
     const message = err instanceof ApiError ? err.message : '上传失败，请重试'
     errorText.value = message

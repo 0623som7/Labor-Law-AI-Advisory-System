@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { pickExistingReview, shouldOfferStart } from '../utils/review-restore.ts'
+import { pickExistingReview, shouldAutostart, shouldOfferStart } from '../utils/review-restore.ts'
 import type { Review } from '../api/types.ts'
 
 const review: Review = {
@@ -36,4 +36,30 @@ test('运行中、扫描件、加载失败都不给按钮', () => {
   assert.equal(shouldOfferStart({ restored: null, running: true, scanned: false, loadError: '' }), false)
   assert.equal(shouldOfferStart({ restored: null, running: false, scanned: true, loadError: '' }), false)
   assert.equal(shouldOfferStart({ restored: null, running: false, scanned: false, loadError: '解析失败' }), false)
+})
+
+test('带 autostart 标记且没有结果时自动开审', () => {
+  assert.equal(shouldAutostart({ autostart: '1' }, false), true)
+})
+
+test('带 autostart 标记但已有结果时不开审（后端会复用旧结果，白等两秒）', () => {
+  assert.equal(shouldAutostart({ autostart: '1' }, true), false)
+})
+
+test('没有 query、空 query、标记值不对都不开审', () => {
+  assert.equal(shouldAutostart(null, false), false)
+  assert.equal(shouldAutostart({}, false), false)
+  assert.equal(shouldAutostart({ autostart: '0' }, false), false)
+  assert.equal(shouldAutostart({ autostart: '' }, false), false)
+})
+
+test('query 传字符串（整条查询串）也能认出来', () => {
+  assert.equal(shouldAutostart('?autostart=1', false), true)
+  assert.equal(shouldAutostart('autostart=1', false), true)
+  assert.equal(shouldAutostart('?file=abc', false), false)
+})
+
+test('query 值是数组时任一为 1 即可', () => {
+  assert.equal(shouldAutostart({ autostart: ['1', '0'] }, false), true)
+  assert.equal(shouldAutostart({ autostart: ['0'] }, false), false)
 })
