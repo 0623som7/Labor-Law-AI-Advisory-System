@@ -137,9 +137,12 @@ function pageStyle(pageIndex: number): Record<string, string> {
 /** 抽屉开关与「这次问什么」。seed 每次点都换新值，子组件据此判断要不要发。 */
 const chatOpen = ref(false)
 const chatSeed = ref('')
+/** 第几次点「就问这条」。连点同一张卡时 seed 文本不变，靠序号触发重发。 */
+const chatSeedSeq = ref(0)
 
 function askThis(f: Finding): void {
   chatSeed.value = buildAskQuestion(f)
+  chatSeedSeq.value += 1
   chatOpen.value = true
 }
 
@@ -572,22 +575,23 @@ void load()
             </div>
           </li>
         </ul>
+
+        <!-- 抽屉放在 panel 里而不是盖在它上面：同一个 flex 列里上下分，
+             卡片列表（flex:1）自动让位，被压住的内容也就不会滚不出来。 -->
+        <InlineChat
+          v-if="chatOpen"
+          :file-id="fileId"
+          :seed="chatSeed"
+          :seed-seq="chatSeedSeq"
+          @close="chatOpen = false"
+        />
       </aside>
     </main>
-
-    <InlineChat
-      v-if="chatOpen"
-      :file-id="fileId"
-      :seed="chatSeed"
-      @close="chatOpen = false"
-    />
   </div>
 </template>
 
 <style scoped>
 .review-page {
-  /* 内联对话抽屉用绝对定位贴右下，所以这里必须是它的定位父级。 */
-  position: relative;
   /* 页面在 height:100vh 的 .app-shell 里，上方还有一条 24px 的提示条：
      min-height:100vh 会让它比容器高 24px，永远多出一条不该有的纵向滚动条。 */
   min-height: 0;

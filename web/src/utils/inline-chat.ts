@@ -68,3 +68,17 @@ export function setSession(s: InlineState, sessionId: string): InlineState {
   if (s.sessionId !== '' || sessionId === '') return s
   return { ...s, sessionId }
 }
+
+/**
+ * 最后一条用户提问。
+ *
+ * 「在对话页继续」要把人带过去时不能空手走：抽屉里问过的话在下一层
+ * 得能接着问，否则等于让他把问题重打一遍。
+ */
+export function lastUserTextOf(s: InlineState): string {
+  for (let i = s.turns.length - 1; i >= 0; i -= 1) {
+    const turn = s.turns[i]
+    if (turn.role === 'user') return turn.content
+  }
+  return ''
+}

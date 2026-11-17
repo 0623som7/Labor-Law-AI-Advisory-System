@@ -24,11 +24,12 @@ import {
   beginTurn,
   finishTurn,
   initialInlineState,
+  lastUserTextOf,
   setSession,
 } from '@/utils/inline-chat'
 import type { InlineState } from '@/utils/inline-chat'
 
-const props = defineProps<{ fileId: string; seed: string }>()
+const props = defineProps<{ fileId: string; seed: string; seedSeq: number }>()
 const emit = defineEmits<{ close: [] }>()
 
 const state = ref<InlineState>(initialInlineState())
@@ -40,9 +41,6 @@ const activeIndex = ref(-1)
 
 /** 这一轮之后还能不能带 file_id：只有第一问带。 */
 const attachedOnce = ref(false)
-
-/** 已经发过的 seed，避免同一条被重复发（父组件重渲染会再触发 watch）。 */
-const usedSeed = ref('')
 
 let controller: AbortController | null = null
 
@@ -126,12 +124,13 @@ function onKeydown(evt: KeyboardEvent): void {
   void send(input.value)
 }
 
+// 看的是「第几次点击」而不是 seed 文本：连点同一张卡时 seed 一个字都不变，
+// 拿文本判重会把第二次点击吞掉。序号变一次就发一次。
 watch(
-  () => props.seed,
-  (seed) => {
-    if (seed === '' || seed === usedSeed.value) return
-    usedSeed.value = seed
-    void send(seed)
+  () => props.seedSeq,
+  () => {
+    if (props.seed === '') return
+    void send(props.seed)
   },
   { immediate: true },
 )
@@ -143,6 +142,9 @@ onBeforeUnmount(() => {
 })
 
 const sessionLabel = computed(() => state.value.sessionId.slice(0, 8))
+
+/** 带过去的那一句：有问过就带上，没问过就不带（空 ask 会被对话页忽略）。 */
+const lastUserText = computed(() => lastUserTextOf(state.value))
 </script>
 
 <template>
@@ -152,7 +154,17 @@ const sessionLabel = computed(() => state.value.sessionId.slice(0, 8))
       <span v-if="sessionLabel !== ''" class="ic-session" :title="state.sessionId">
         会话 {{ sessionLabel }}
       </span>
-      <RouterLink class="ic-link" :to="{ name: 'chat' }">在对话页继续</RouterLink>
+      <RouterLink
+        class="ic-link"
+        :to="{
+          name: 'chat',
+          query: {
+            ...(lastUserText !== '' ? { ask: lastUserText } : {}),
+            from: 'review',
+            file: props.fileId,
+          },
+        }"
+      >在对话页继续</RouterLink>
       <button type="button" class="ic-close" title="关闭" @click="emit('close')">×</button>
     </header>
 
@@ -188,30 +200,16 @@ const sessionLabel = computed(() => state.value.sessionId.slice(0, 8))
 </template>
 
 <style scoped>
+/* 抽屉是 .panel 的普通 flex 子项：卡片列表（.cards, flex:1, overflow:auto）
+   自己让位，而不是被一层绝对定位盖住——盖住时往上滚也翻不出被压在下面的卡片。 */
 .inline-chat {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  z-index: 20;
+  flex: none;
+  width: 100%;
+  height: min(40vh, 360px);
+  border-top: 1px solid #e5e7eb;
   display: flex;
   flex-direction: column;
-  width: 420px;
-  max-height: 60vh;
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-right: none;
-  border-bottom: none;
-  border-radius: 12px 0 0 0;
-  box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.08);
-}
-
-/* 窄屏：抽屉满宽。审查页是纵向布局，「开始审查」在 .panel 顶部、
-   抽屉贴底，两者不重叠；这里只改宽度，不改定位，避免把按钮盖住。 */
-@media (max-width: 1100px) {
-  .inline-chat {
-    width: 100%;
-    border-radius: 12px 12px 0 0;
-  }
 }
 
 .ic-head {

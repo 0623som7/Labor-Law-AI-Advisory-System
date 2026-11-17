@@ -7,6 +7,7 @@ import {
   beginTurn,
   finishTurn,
   initialInlineState,
+  lastUserTextOf,
   setSession,
 } from './inline-chat.ts'
 import type { Citation } from '@/utils/sse'
@@ -112,4 +113,25 @@ test('setSession 不改入参', () => {
   const s0 = initialInlineState()
   setSession(s0, 'sess-1')
   assert.equal(s0.sessionId, '')
+})
+
+test('lastUserTextOf 取最后一条用户提问', () => {
+  const first = beginTurn(initialInlineState(), '第一问')
+  const second = beginTurn(first.state, '第二问')
+  assert.equal(lastUserTextOf(second.state), '第二问')
+})
+
+test('lastUserTextOf 只有 assistant 时返回空串', () => {
+  const { state, index } = beginTurn(initialInlineState(), '问')
+  // 把用户那条改掉：只留 assistant 的情形（理论上不该出现，但不能抛）
+  const onlyAssistant = {
+    ...state,
+    turns: state.turns.map((t, i) => (i === 0 ? { ...t, role: 'assistant' as const } : t)),
+  }
+  assert.equal(onlyAssistant.turns[index].role, 'assistant')
+  assert.equal(lastUserTextOf(onlyAssistant), '')
+})
+
+test('lastUserTextOf 空 state 返回空串', () => {
+  assert.equal(lastUserTextOf(initialInlineState()), '')
 })
