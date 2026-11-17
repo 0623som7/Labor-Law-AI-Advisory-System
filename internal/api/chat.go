@@ -99,6 +99,10 @@ type chatRequest struct {
 	SessionID string `json:"session_id"`
 	// Input 是用户原话，后端不做清洗与改写（改写是 B 的编排职责）。
 	Input string `json:"input"`
+	// FileID 可选，把这轮咨询与某份已上传合同关联。
+	//
+	// 只落库与展示：Runner 不感知附件，编排行为与不传时完全一样。
+	FileID string `json:"file_id"`
 	// Options 是透传业务选项，A 不解释含义。
 	Options map[string]any `json:"options"`
 }
@@ -176,7 +180,17 @@ func (a *API) chatCompletions(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	messageID := id.New()
-	// 会话解析必须发生在 Attach 之前：一旦写了 SSE 响应头，
+
+	// 附件校验放在最前：它是纯只读校验，而 resolveSession 在没带
+	// session_id 时会建会话。顺序反了的话，一个失效的 file_id 会先留下
+	// 一条空会话再报 40401，侧栏就多一条点进去什么都没有的记录。
+	attachments, err := a.resolveAttachment(c, strings.TrimSpace(req.FileID))
+	if err != nil {
+		Fail(c, err)
+		return
+	}
+
+	// 会话解析也必须发生在 Attach 之前：一旦写了 SSE 响应头，
 	// "会话不存在"就只能变成流内 error 帧，前端拿到的不是 404。
 	sessionID, err := a.resolveSession(c, strings.TrimSpace(req.SessionID), req.Input)
 	if err != nil {
@@ -233,7 +247,7 @@ func (a *API) chatCompletions(c *gin.Context) {
 		a.publishRunError(messageID, runErr)
 		// 提问必须留下来：会话标题就是这句话生成的，只丢历史会让侧边栏
 		// 有一条"标题有、正文没有"的会话，刷新一次就自相矛盾。
-		a.persistUserTurn(ctx, UserID(c), sessionID, req.Input)
+		a.persistUserTurn(ctx, UserID(c), sessionID, req.Input, attachments)
 		return
 	}
 
@@ -246,7 +260,7 @@ func (a *API) chatCompletions(c *gin.Context) {
 	// 落库放在最后：它不影响用户看到答案的时机（done 已经发出），
 	// 而放在 Run 之前会让本轮提问被 loadHistory 读成"上一轮"，
 	// 模型就会看到两条一模一样的用户消息。
-	a.persistTurn(ctx, UserID(c), sessionID, messageID, req.Input, result, citations)
+	a.persistTurn(ctx, UserID(c), sessionID, messageID, req.Input, result, citations, attachments)
 }
 
 // resolveSession 解析本轮要挂载的会话。
@@ -280,6 +294,29 @@ func (a *API) resolveSession(c *gin.Context, sessionID, input string) (string, e
 	return sn.ID, nil
 }
 
+// resolveAttachment 校验 file_id 归属，并取出卡片要展示的三项。
+//
+// 存在性与归属一律返回 40401（File().Get 的语义就是"查不到"），与 resolveSession
+// 同一个错误码：让前端能区分"文件不存在"和"不是你的"，等于把别人的文件 ID
+// 是否有效变成可探测的信息。
+//
+// 未传 file_id、或没装配 store（单测/无库部署）时返回 nil：这条链路是可选的，
+// 缺它不该让咨询发不出去。
+func (a *API) resolveAttachment(c *gin.Context, fileID string) ([]port.Attachment, error) {
+	if fileID == "" || a.store == nil {
+		return nil, nil
+	}
+	rec, err := a.store.File().Get(c.Request.Context(), UserID(c), fileID)
+	if err != nil {
+		return nil, err
+	}
+	return []port.Attachment{{
+		FileID:    rec.ID,
+		Filename:  rec.Filename,
+		PageCount: rec.PageCount,
+	}}, nil
+}
+
 // sessionTitleFromInput 把用户第一句话压成会话标题。
 //
 // 按 rune 截断再而不是按字节：汉字 3 字节，按字节切会切出半个字符，
@@ -299,7 +336,7 @@ func sessionTitleFromInput(input string) string {
 // 三条消息必须在一个事务里：只写进 user 而不写 assistant 会留下一条
 // 永远没有回答的提问，用户刷新页面就会看到一个卡住的对话。
 // 落库失败只记 Warn 不报错：答案是用户真正要的东西，写库失败不该把它吞掉。
-func (a *API) persistTurn(parent context.Context, userID, sessionID, messageID, input string, result port.Result, citations []port.Citation) {
+func (a *API) persistTurn(parent context.Context, userID, sessionID, messageID, input string, result port.Result, citations []port.Citation, attachments []port.Attachment) {
 	if a.store == nil || sessionID == "" {
 		return
 	}
@@ -310,10 +347,12 @@ func (a *API) persistTurn(parent context.Context, userID, sessionID, messageID, 
 	answer := strings.TrimSpace(result.Content)
 
 	fn := func(st port.Store) error {
+		// 附件只挂在 user 消息上：卡片问的是"这份合同"，回答本身不带文件。
 		if err := st.Message().Append(ctx, &port.ChatMessage{
-			SessionID: sessionID,
-			Role:      port.RoleUser,
-			Content:   input,
+			SessionID:   sessionID,
+			Role:        port.RoleUser,
+			Content:     input,
+			Attachments: attachments,
 		}); err != nil {
 			return err
 		}
@@ -349,7 +388,7 @@ func (a *API) persistTurn(parent context.Context, userID, sessionID, messageID, 
 //
 // 不写 assistant 消息：失败时没有答案，占位内容会被下一轮的 loadHistory
 // 当成"模型说过这句话"回放给上游，污染上下文。
-func (a *API) persistUserTurn(parent context.Context, userID, sessionID, input string) {
+func (a *API) persistUserTurn(parent context.Context, userID, sessionID, input string, attachments []port.Attachment) {
 	if a.store == nil || sessionID == "" {
 		return
 	}
@@ -359,9 +398,10 @@ func (a *API) persistUserTurn(parent context.Context, userID, sessionID, input s
 
 	fn := func(st port.Store) error {
 		if err := st.Message().Append(ctx, &port.ChatMessage{
-			SessionID: sessionID,
-			Role:      port.RoleUser,
-			Content:   input,
+			SessionID:   sessionID,
+			Role:        port.RoleUser,
+			Content:     input,
+			Attachments: attachments,
 		}); err != nil {
 			return err
 		}

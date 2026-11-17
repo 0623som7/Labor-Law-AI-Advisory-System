@@ -31,7 +31,20 @@ type chatMessageDTO struct {
 	// Citations 是这条 assistant 消息引用的法条。omitempty：user 消息没有引用，
 	// 输出 "citations": null 会让前端多一次判空。
 	Citations []citationDTO `json:"citations,omitempty"`
-	CreatedAt time.Time     `json:"created_at"`
+	// Attachments 是这条 user 消息附带的合同文件，同样 omitempty：
+	// assistant 消息恒为空，输出 "attachments": null 只是噪声。
+	Attachments []attachmentDTO `json:"attachments,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+// attachmentDTO 对应 schema Attachment，字段名与前端 fileCardLabel 的入参一致。
+//
+// page_count 用 int 而不是 *int：0 表示"还没解析完"，前端据此显示"页数待解析"，
+// 与"没有这个字段"是两件事，契约里也写的是 required。
+type attachmentDTO struct {
+	FileID    string `json:"file_id"`
+	Filename  string `json:"filename"`
+	PageCount int    `json:"page_count"`
 }
 
 // citationDTO 对应 schema Citation，字段名与 SSE citation 帧的 wireCitation 保持一致。
@@ -59,6 +72,22 @@ func toCitationDTOs(items []port.Citation) []citationDTO {
 			Article:   c.Article,
 			Text:      c.Text,
 			URL:       c.URL,
+		})
+	}
+	return out
+}
+
+// toAttachmentDTOs 把附件映射成契约形状；空切片返回 nil，配合 omitempty 省掉该字段。
+func toAttachmentDTOs(items []port.Attachment) []attachmentDTO {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]attachmentDTO, 0, len(items))
+	for _, a := range items {
+		out = append(out, attachmentDTO{
+			FileID:    a.FileID,
+			Filename:  a.Filename,
+			PageCount: a.PageCount,
 		})
 	}
 	return out
@@ -95,12 +124,13 @@ func toChatMessageDTOs(items []port.ChatMessage) []chatMessageDTO {
 	out := make([]chatMessageDTO, 0, len(items))
 	for _, m := range items {
 		out = append(out, chatMessageDTO{
-			ID:        m.ID,
-			SessionID: m.SessionID,
-			Role:      string(m.Role),
-			Content:   m.Content,
-			Citations: toCitationDTOs(m.Citations),
-			CreatedAt: m.CreatedAt,
+			ID:          m.ID,
+			SessionID:   m.SessionID,
+			Role:        string(m.Role),
+			Content:     m.Content,
+			Citations:   toCitationDTOs(m.Citations),
+			Attachments: toAttachmentDTOs(m.Attachments),
+			CreatedAt:   m.CreatedAt,
 		})
 	}
 	return out

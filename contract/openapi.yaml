@@ -1027,9 +1027,35 @@ components:
           description: 该条 assistant 消息引用的法条；刷新历史后据此重建卡片。user 消息不带该字段。
           items:
             $ref: '#/components/schemas/Citation'
+        attachments:
+          type: array
+          description: >-
+            这条 user 消息附带的合同文件，用于刷新后重建文件卡片；
+            assistant 消息不带该字段。只存展示所需的三项，不存正文。
+          items:
+            $ref: '#/components/schemas/Attachment'
         created_at:
           type: string
           format: date-time
+
+    Attachment:
+      type: object
+      description: >-
+        消息附带的文件引用（对话里的合同卡片）。字段是展示所需的最小集合：
+        page_count 在解析完成前可能是 0，前端据此显示「页数待解析」而不是「0 页」。
+      required: [file_id, filename, page_count]
+      properties:
+        file_id:
+          type: string
+          example: 01J9Z0K7Q2X3M4N5P6R7S8T9V0
+        filename:
+          type: string
+          description: 上传时的原文件名，仅展示；点击卡片跳 /review/{file_id}
+          example: 劳动合同.pdf
+        page_count:
+          type: integer
+          description: 页数，解析完成后回填；0 表示尚未解析
+          example: 4
 
     ChatRequest:
       type: object
@@ -1043,6 +1069,12 @@ components:
           minLength: 1
           maxLength: 4000
           description: 用户原话，后端不做清洗
+        file_id:
+          type: string
+          description: >-
+            可选。把这轮咨询与某份已上传合同关联，该 ID 会作为附件写进这轮
+            user 消息，刷新后据此重建文件卡片。不属于本人或不存在的 ID 一律
+            返回 40401（与越权访问会话同一个码）。只落库与展示，不改变编排行为。
         options:
           type: object
           additionalProperties: true

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -27,7 +28,7 @@ func isDuplicate(err error) bool {
 const sessionColumns = `id, user_id, title, scene, created_at, updated_at`
 
 // messageColumns 是 messages 表的读取列序，与扫描顺序一一对应。
-const messageColumns = `id, session_id, role, content, prompt_tokens, completion_tokens, trace_id, citations, created_at`
+const messageColumns = `id, session_id, role, content, prompt_tokens, completion_tokens, trace_id, citations, attachments, created_at`
 
 // 会话列表的分页默认值与上限。
 //
@@ -188,13 +189,20 @@ func (s *Sessions) Delete(ctx context.Context, userID, sessionID string) error {
 }
 
 // Messages 是 port.MessageStore 的 MySQL 实现。
-type Messages struct{ db querier }
+//
+// log 用 slog.Default() 兜底而不是构造参数：store 聚合体（DB）没有 logger 通道，
+// 为一条"脏数据留痕"的 Warn 去改 cmd 的装配与三处构造调用不划算。
+// 生产上它写进进程的 stderr，docker logs 里能捞到。
+type Messages struct {
+	db  querier
+	log *slog.Logger
+}
 
 // NewMessages 构造消息域 DAL。
-func NewMessages(db *sql.DB) *Messages { return &Messages{db: db} }
+func NewMessages(db *sql.DB) *Messages { return &Messages{db: db, log: slog.Default()} }
 
 // newMessagesOn 构造绑定在任意连接（连接池或事务）上的消息域 DAL。
-func newMessagesOn(q querier) *Messages { return &Messages{db: q} }
+func newMessagesOn(q querier) *Messages { return &Messages{db: q, log: slog.Default()} }
 
 var _ port.MessageStore = (*Messages)(nil)
 
@@ -218,11 +226,20 @@ func (m *Messages) Append(ctx context.Context, msg *port.ChatMessage) error {
 		}
 		citations = string(raw)
 	}
+	// 附件同理：NULL 才是"这条消息没有附件"的语义。
+	var attachments any
+	if len(msg.Attachments) > 0 {
+		raw, err := json.Marshal(msg.Attachments)
+		if err != nil {
+			return port.Wrap(port.CodeInternal, err, "序列化附件失败")
+		}
+		attachments = string(raw)
+	}
 	_, err := m.db.ExecContext(ctx, `INSERT INTO messages
-		(id, session_id, role, content, prompt_tokens, completion_tokens, trace_id, citations)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, session_id, role, content, prompt_tokens, completion_tokens, trace_id, citations, attachments)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		msg.ID, msg.SessionID, string(msg.Role), msg.Content,
-		msg.PromptTokens, msg.CompletionTokens, msg.TraceID, citations)
+		msg.PromptTokens, msg.CompletionTokens, msg.TraceID, citations, attachments)
 	if err != nil {
 		if isDuplicate(err) {
 			return port.Wrap(port.CodeConflict, err, "消息已存在")
@@ -252,13 +269,14 @@ func (m *Messages) ListBySession(ctx context.Context, sessionID string, limit in
 	out := make([]port.ChatMessage, 0, limit)
 	for rows.Next() {
 		var (
-			msg       port.ChatMessage
-			role      string
-			citations sql.NullString
-			createdAt time.Time
+			msg         port.ChatMessage
+			role        string
+			citations   sql.NullString
+			attachments sql.NullString
+			createdAt   time.Time
 		)
 		if err := rows.Scan(&msg.ID, &msg.SessionID, &role, &msg.Content,
-			&msg.PromptTokens, &msg.CompletionTokens, &msg.TraceID, &citations, &createdAt); err != nil {
+			&msg.PromptTokens, &msg.CompletionTokens, &msg.TraceID, &citations, &attachments, &createdAt); err != nil {
 			return nil, port.Wrap(port.CodeInternal, err, "读取消息行失败")
 		}
 		msg.Role = port.Role(role)
@@ -269,6 +287,17 @@ func (m *Messages) ListBySession(ctx context.Context, sessionID string, limit in
 			var parsed []port.Citation
 			if err := json.Unmarshal([]byte(citations.String), &parsed); err == nil {
 				msg.Citations = parsed
+			}
+		}
+		// 附件同理，但这里多一条 Warn：附件解析失败意味着用户点不回审查页，
+		// 而正文照样能看，界面上完全看不出来，不留日志就永远查不到。
+		if attachments.Valid && attachments.String != "" {
+			var parsed []port.Attachment
+			if err := json.Unmarshal([]byte(attachments.String), &parsed); err == nil {
+				msg.Attachments = parsed
+			} else {
+				m.log.Warn("消息附件解析失败，按无附件处理",
+					"message_id", msg.ID, "err", err.Error())
 			}
 		}
 		out = append(out, msg)

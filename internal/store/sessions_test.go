@@ -349,3 +349,62 @@ func TestMessageCitationsRoundTrip(t *testing.T) {
 		t.Fatalf("token 计量丢了: %+v", assistant)
 	}
 }
+
+// TestMessageAttachmentsRoundTrip 守住"附件能存进去、能原样读回来"。
+//
+// 缺陷形态：附件只在前端内存里，刷新后消息流里的合同卡片消失；
+// 或者三个字段漏存一个，卡片变成"未命名文件 · 页数待解析"。
+// 另一条同样重要：没有附件的消息读回来长度必须是 0，
+// 不是一条 file_id 为空的假附件——那会让每条历史消息都长出一张空卡片。
+func TestMessageAttachmentsRoundTrip(t *testing.T) {
+	db := testDB(t)
+	s := newSession(id.New())
+	cleanupSessions(t, db, s.ID)
+
+	ctx := context.Background()
+	if err := NewSessions(db).Create(ctx, s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	attachments := []port.Attachment{
+		{FileID: id.New(), Filename: "劳动合同.pdf", PageCount: 4},
+	}
+	m := NewMessages(db)
+	if err := m.Append(ctx, &port.ChatMessage{
+		SessionID:   s.ID,
+		Role:        port.RoleUser,
+		Content:     "帮我看看这份合同有没有风险",
+		Attachments: attachments,
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	// 再来一条不带附件的 assistant 消息。
+	if err := m.Append(ctx, &port.ChatMessage{SessionID: s.ID, Role: port.RoleAssistant, Content: "第三条有问题。"}); err != nil {
+		t.Fatalf("Append assistant: %v", err)
+	}
+
+	got, err := m.ListBySession(ctx, s.ID, 10)
+	if err != nil {
+		t.Fatalf("ListBySession: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("应返回 2 条，实际 %d", len(got))
+	}
+	var user, assistant *port.ChatMessage
+	for i := range got {
+		if got[i].Role == port.RoleUser {
+			user = &got[i]
+		} else {
+			assistant = &got[i]
+		}
+	}
+	if user == nil || assistant == nil {
+		t.Fatalf("role 不符合预期: %+v", got)
+	}
+	if !reflect.DeepEqual(user.Attachments, attachments) {
+		t.Fatalf("附件往返不一致:\n got %+v\nwant %+v", user.Attachments, attachments)
+	}
+	if len(assistant.Attachments) != 0 {
+		t.Fatalf("assistant 消息不该有附件，实际 %+v", assistant.Attachments)
+	}
+}

@@ -27,23 +27,51 @@ type chatStore struct {
 	port.Store
 	sessions *fakeSessionStore
 	messages *fakeMessageStore
+	files    port.FileStore
 }
 
 func (s chatStore) Session() port.SessionStore { return s.sessions }
 func (s chatStore) Message() port.MessageStore { return s.messages }
+func (s chatStore) File() port.FileStore       { return s.files }
 
 func (s chatStore) Tx(_ context.Context, fn func(port.Store) error) error {
 	return fn(s)
 }
 
+// fakeAttachFiles 只实现 FileStore.Get：附件校验只走这一条路。
+//
+// 归属过滤照真实现的语义写在假实现里（userID 不匹配就当查不到），
+// 这样"文件属于别人"那条分支测的是 handler 挑的错误码，不是 SQL。
+type fakeAttachFiles struct {
+	port.FileStore
+	rec    *port.FileRecord
+	getErr error
+}
+
+func (f *fakeAttachFiles) Get(_ context.Context, userID, fileID string) (*port.FileRecord, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	if f.rec == nil || f.rec.ID != fileID || f.rec.UserID != userID {
+		return nil, port.New(port.CodeNotFound, "文件不存在")
+	}
+	return f.rec, nil
+}
+
 func newChatFixture(t *testing.T, r port.Runner) *chatFixture {
+	t.Helper()
+	return newChatFixtureWithFiles(t, r, &fakeAttachFiles{})
+}
+
+// newChatFixtureWithFiles 让用例能指定假 FileStore（附件用例要控制"这份文件属于谁"）。
+func newChatFixtureWithFiles(t *testing.T, r port.Runner, files port.FileStore) *chatFixture {
 	t.Helper()
 	sessions := newFakeSessions()
 	messages := &fakeMessageStore{}
 	h := New(testConfig("dev-user-0001"), discardLogger(),
 		WithRunner(r),
 		WithHub(stream.NewHub(stream.Options{HeartbeatInterval: time.Hour}, time.Minute, discardLogger())),
-		WithStore(chatStore{sessions: sessions, messages: messages}),
+		WithStore(chatStore{sessions: sessions, messages: messages, files: files}),
 	).Handler()
 	return &chatFixture{h: h, sessions: sessions, messages: messages}
 }
@@ -217,5 +245,60 @@ func TestChatPersistsCitations(t *testing.T) {
 	// user 消息不该被塞引用：卡片只属于回答。
 	if len(f.messages.appended[0].Citations) != 0 {
 		t.Fatalf("user 消息带了引用: %+v", f.messages.appended[0].Citations)
+	}
+}
+
+// TestChatPersistsAttachment 守住"这轮问题带了合同，附件随 user 消息落库"。
+//
+// 缺陷形态：附件只活在前端内存里，刷新后卡片消失，用户点不回审查页；
+// 而 assistant 消息带上附件更糟——历史里会出现"回答也带一份合同"的假象。
+func TestChatPersistsAttachment(t *testing.T) {
+	file := &port.FileRecord{ID: "01J9Z0K7Q2X3M4N5P6R7S8T9V0", UserID: "dev-user-0001", Filename: "劳动合同.pdf", PageCount: 4}
+	f := newChatFixtureWithFiles(t, &fakeRunner{chunks: []string{"第三条有问题。"}}, &fakeAttachFiles{rec: file})
+
+	rec := postChat(t, f.h, `{"input":"帮我看看这份合同有没有风险","file_id":"`+file.ID+`"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if len(f.messages.appended) != 2 {
+		t.Fatalf("落库消息数 = %d, want 2（user + assistant）", len(f.messages.appended))
+	}
+
+	user, assistant := f.messages.appended[0], f.messages.appended[1]
+	if len(user.Attachments) != 1 {
+		t.Fatalf("user 消息附件数 = %d, want 1（%+v）", len(user.Attachments), user.Attachments)
+	}
+	want := port.Attachment{FileID: file.ID, Filename: file.Filename, PageCount: file.PageCount}
+	if user.Attachments[0] != want {
+		t.Fatalf("附件 = %+v, want %+v", user.Attachments[0], want)
+	}
+	if len(assistant.Attachments) != 0 {
+		t.Fatalf("assistant 消息不该带附件: %+v", assistant.Attachments)
+	}
+}
+
+// TestChatRejectsOthersAttachment 守住"文件不属于你"与"会话不属于你"同一个错误码。
+//
+// 两种错误必须不可区分：能分辨的话，别人的 file_id 是否有效就成了可探测信息。
+// 同时一条消息都不许落库——否则越权请求会在会话里留下一条带别人文件的卡片。
+func TestChatRejectsOthersAttachment(t *testing.T) {
+	file := &port.FileRecord{ID: "01J9Z0K7Q2X3M4N5P6R7S8T9V1", UserID: "someone-else", Filename: "别人的合同.pdf", PageCount: 2}
+	f := newChatFixtureWithFiles(t, &fakeRunner{chunks: []string{"不该出现"}}, &fakeAttachFiles{rec: file})
+
+	rec := postChat(t, f.h, `{"input":"看看这份","file_id":"`+file.ID+`"}`, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body=%s", rec.Code, rec.Body.String())
+	}
+	env := decodeEnvelope(t, rec.Body.Bytes())
+	if env.Code != int(port.CodeNotFound) {
+		t.Fatalf("code = %d, want 40401", env.Code)
+	}
+	if len(f.messages.appended) != 0 {
+		t.Fatalf("越权附件不该落库，写入了 %d 条", len(f.messages.appended))
+	}
+	// 会话也不许建：resolveSession 在没有 session_id 时会 Create，
+	// 附件校验排在它后面的话，侧栏就会多一条点进去什么都没有的空会话。
+	if f.sessions.created != nil {
+		t.Fatal("附件校验失败时不应创建会话")
 	}
 }

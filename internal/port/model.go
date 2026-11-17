@@ -46,8 +46,27 @@ type ChatMessage struct {
 	// json:"-" 是刻意的：ChatMessage 有别的直接序列化路径，不希望这个字段
 	// 在那些地方悄悄出现，对外形状由 api 层的 DTO 决定。
 	Citations []Citation `json:"-"`
+	// Attachments 是这条 user 消息附带的合同文件，用于刷新后重建文件卡片。
+	// assistant 消息恒为空。
+	//
+	// json:"-" 的理由与 Citations 相同：ChatMessage 有别的直接序列化路径，
+	// 不希望这个字段在那些地方悄悄出现，对外形状由 api 层的 DTO 决定。
+	Attachments []Attachment `json:"-"`
 	// CreatedAt 是写入时间。
 	CreatedAt time.Time
+}
+
+// Attachment 是消息附带的文件引用。只存展示所需的最小集合，不存正文。
+//
+// 为什么不存正文：正文在 files/file_pages/text_blocks 里各有一份权威副本，
+// 消息里再存一份，两处一改就再也说不清哪份是对的；而卡片只需要"点进去看哪份文件"。
+type Attachment struct {
+	// FileID 是 files 表的 CHAR(26) ULID。点击卡片跳审查页要用它。
+	FileID string
+	// Filename 是上传时的原文件名，仅展示。
+	Filename string
+	// PageCount 是页数，解析完成前为 0。
+	PageCount int
 }
 
 // FileRecord 是上传文件元数据。正文不进这张表，也不进任何 TEXT 字段。
