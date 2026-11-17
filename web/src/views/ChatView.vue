@@ -27,7 +27,7 @@ import {
 } from '@/utils/chat-progress'
 import { historyBubbles } from '@/utils/chat-history'
 import { fileCardLabel } from '@/utils/file-card'
-import { shouldPrefill } from '@/utils/ask-this'
+import { contextFileId, contextLabel, shouldPrefill } from '@/utils/ask-this'
 import { formatRelative } from '@/utils/format-relative'
 import type { Session } from '@/api/types'
 import CitationCard from '@/components/CitationCard.vue'
@@ -121,6 +121,9 @@ const canSend = computed(
 // 带着上一份合同去问，用户完全看不出来。
 const pendingFile = ref<Attachment | null>(null)
 const uploading = ref(false)
+// 从审查页带过来的上下文：只用来在输入框上方显示「我在追问哪一条」，
+// 不跟着消息走、不落库——它是这次追问的入口凭据，不是会话的一部分。
+const askCtx = ref<{ label: string; fileId: string } | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 
 /** 只挂了合同没打字时的默认问法。空 input 后端会回 40001，不能发出去。 */
@@ -404,6 +407,12 @@ onMounted(async () => {
   // 预填只在进入时做一次：先把 query 抹掉，刷新就不会反复塞同一句话。
   // 不自动发送——审查页那边只负责把"哪一条、什么毛病"带过来，
   // 发不发、要不要补自己的情况由用户决定。
+  // 来源条与预填同源，一起读：query 抹掉之后就再也取不到了。
+  const ctxLabel = contextLabel(route.query)
+  const ctxFile = contextFileId(route.query)
+  if (ctxLabel !== '') {
+    askCtx.value = { label: ctxLabel, fileId: ctxFile }
+  }
   if (shouldPrefill(route.query)) {
     input.value = String(route.query.ask)
     void router.replace({ query: {} })
@@ -566,6 +575,22 @@ onBeforeUnmount(() => {
       </div>
 
       <footer class="composer">
+        <div v-if="askCtx" class="ask-ctx">
+          <span class="ask-ctx-text">{{ askCtx.label }}</span>
+          <router-link
+            v-if="askCtx.fileId"
+            class="ask-ctx-link"
+            :to="{ name: 'review', params: { fileId: askCtx.fileId } }"
+          >查看原文</router-link>
+          <button
+            type="button"
+            class="ask-ctx-close"
+            title="不用这条上下文"
+            @click="askCtx = null"
+          >
+            ×
+          </button>
+        </div>
         <div v-if="pendingFile || uploading" class="pending-file">
           <span class="pending-name">
             {{ uploading ? '正在上传合同…' : fileCardLabel(pendingFile!) }}
@@ -1008,6 +1033,46 @@ onBeforeUnmount(() => {
 }
 
 /* 待发送芯片：让用户在按发送之前就知道"这一轮带了一份合同"。 */
+.ask-ctx {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.ask-ctx-text {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  color: #4b5563;
+}
+
+.ask-ctx-link {
+  font-size: 12px;
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.ask-ctx-link:hover {
+  text-decoration: underline;
+}
+
+.ask-ctx-close {
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.ask-ctx-close:hover {
+  color: #4b5563;
+}
+
 .pending-file {
   display: flex;
   gap: 8px;

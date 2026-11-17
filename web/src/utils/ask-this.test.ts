@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { buildAskQuestion, shouldPrefill } from './ask-this.ts'
+import { buildAskQuestion, contextFileId, contextLabel, shouldPrefill } from './ask-this.ts'
 import type { Finding } from '@/api/types'
 
 function finding(over: Partial<Finding> = {}): Finding {
@@ -44,4 +44,25 @@ test('只有非空字符串 ask 才预填', () => {
   assert.equal(shouldPrefill({}), false)
   assert.equal(shouldPrefill({ ask: '' }), false)
   assert.equal(shouldPrefill({ ask: 123 }), false)
+})
+
+test('来源条带条款号', () => {
+  const label = contextLabel({ from: 'review', section: '第二条' })
+  assert.ok(label.includes('第二条'), `应含条款号：${label}`)
+})
+
+test('没有条款号时给整份合同的措辞，不留空引号', () => {
+  const label = contextLabel({ from: 'review' })
+  assert.notEqual(label, '')
+  assert.ok(!label.includes('「」'), `不该出现空引号：${label}`)
+})
+
+test('不是从审查页来的就没有来源条', () => {
+  assert.equal(contextLabel({}), '')
+  assert.equal(contextLabel({ from: 'x' }), '')
+})
+
+test('只有 file 才给回原文的地址', () => {
+  assert.equal(contextFileId({ file: 'abc' }), 'abc')
+  assert.equal(contextFileId({}), '')
 })

@@ -134,7 +134,16 @@ function pageStyle(pageIndex: number): Record<string, string> {
  * 发不发、要不要补一句自己的情况，由他自己决定。
  */
 function askThis(f: Finding): void {
-  void router.push({ name: 'chat', query: { ask: buildAskQuestion(f) } })
+  void router.push({
+    name: 'chat',
+    query: {
+      ask: buildAskQuestion(f),
+      // 带回去的是"这条结论出自哪"：对话页据此显示来源条并给一条回原文的路。
+      from: 'review',
+      file: fileId.value,
+      section: f.clause_ref?.section ?? '',
+    },
+  })
 }
 
 function focusFinding(f: Finding): void {

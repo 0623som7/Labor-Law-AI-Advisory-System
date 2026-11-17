@@ -34,3 +34,24 @@ export function shouldPrefill(query: Record<string, unknown>): boolean {
   const ask = query?.ask
   return typeof ask === 'string' && ask.trim() !== ''
 }
+
+/** 来源条里条款号最多显示多少字。
+ *
+ *  `clause_ref.section` 是规则引擎从合同正文里截出来的，正常是「第四条」这种；
+ *  真遇到奇怪的解析结果，宁可截断也不让一条来源把输入框顶下去。 */
+const SECTION_MAX = 20
+
+/** 对话页顶部来源条文案；没有来源时返回空串，调用方据此决定是否渲染。 */
+export function contextLabel(query: Record<string, unknown>): string {
+  if (query?.from !== 'review') return ''
+  const section = typeof query.section === 'string' ? query.section.trim() : ''
+  if (section === '') return '正在追问：这份合同的审查结论'
+  const shown = section.length > SECTION_MAX ? `${section.slice(0, SECTION_MAX)}…` : section
+  return `正在追问：合同「${shown}」`
+}
+
+/** 「查看原文」能不能给：必须有 file，否则点到 /review/ 空参数。 */
+export function contextFileId(query: Record<string, unknown>): string {
+  const file = query?.file
+  return typeof file === 'string' ? file.trim() : ''
+}
