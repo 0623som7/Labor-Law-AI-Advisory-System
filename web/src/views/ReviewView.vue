@@ -577,9 +577,14 @@ void load()
         </ul>
 
         <!-- 抽屉放在 panel 里而不是盖在它上面：同一个 flex 列里上下分，
-             卡片列表（flex:1）自动让位，被压住的内容也就不会滚不出来。 -->
+             卡片列表（flex:1）自动让位，被压住的内容也就不会滚不出来。
+
+             用 v-show 不用 v-if：关闭只是 display:none，组件不销毁，state 与
+             sessionId 都留着——关掉再打开接着问，一份合同的多次追问落在同一个
+             会话里。v-if 会在每次关闭时把会话打回初始态，下一次追问又新建一条
+             会话（侧栏多一条、多一次完整模型调用、彼此没有上下文）。 -->
         <InlineChat
-          v-if="chatOpen"
+          v-show="chatOpen"
           :file-id="fileId"
           :seed="chatSeed"
           :seed-seq="chatSeedSeq"
