@@ -29,7 +29,7 @@ import {
 } from '@/utils/inline-chat'
 import type { InlineState } from '@/utils/inline-chat'
 
-const props = defineProps<{ fileId: string; seed: string; seedSeq: number }>()
+const props = defineProps<{ fileId: string; seed: string; seedSeq: number; section: string }>()
 const emit = defineEmits<{ close: [] }>()
 
 const state = ref<InlineState>(initialInlineState())
@@ -160,6 +160,8 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
           name: 'chat',
           query: {
             ...(lastUserText !== '' ? { ask: lastUserText } : {}),
+            // 空串不传：ChatView 收到 section= 会拼出「合同「」」这种残句。
+            ...(props.section !== '' ? { section: props.section } : {}),
             from: 'review',
             file: props.fileId,
           },

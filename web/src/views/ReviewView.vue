@@ -139,9 +139,12 @@ const chatOpen = ref(false)
 const chatSeed = ref('')
 /** 第几次点「就问这条」。连点同一张卡时 seed 文本不变，靠序号触发重发。 */
 const chatSeedSeq = ref(0)
+/** 这次追问针对哪一条，交给抽屉拼进「在对话页继续」的 query（空串表示无条款号）。 */
+const chatSection = ref('')
 
 function askThis(f: Finding): void {
   chatSeed.value = buildAskQuestion(f)
+  chatSection.value = (f.clause_ref?.section ?? '').trim()
   chatSeedSeq.value += 1
   chatOpen.value = true
 }
@@ -588,6 +591,7 @@ void load()
           :file-id="fileId"
           :seed="chatSeed"
           :seed-seq="chatSeedSeq"
+          :section="chatSection"
           @close="chatOpen = false"
         />
       </aside>
