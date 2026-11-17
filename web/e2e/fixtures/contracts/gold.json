@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "generated_at": "2026-11-17",
+  "purpose": "D3 合同审查定位评测的 gold 输入。每份 PDF 都埋了指定规则的违法条款，同时夹了若干完全合法的条款——只埋违法条款的样本测不出误报，评测会奖励见谁都报的模型。",
+  "how_generated": "写 .dev/contract-{A..E}.html（条款号自动编号）→ chrome --headless=new --disable-pdf-header-footer --print-to-pdf。导出后逐份调 POST /api/v1/files 复核 page_count 与 confidence（confidence 必须 1.0，低于 1 说明没有文本层，作废重做）。",
+  "corpus": {
+    "statutes": 517,
+    "laws": 9,
+    "note": "规则引擎与语料无关，这里记一下是为了让「跑分那天用的是哪套语料」可复现。"
+  },
+  "verified_at": "2026-11-17T08:30+08:00",
+  "verified_by": "POST /api/v1/contracts/review 后取 /api/v1/reviews/{id}/findings",
+  "files": [
+    {
+      "file": "A.pdf",
+      "page_count": 1,
+      "confidence": 1.0,
+      "ocr_used": false,
+      "planted": [
+        {
+          "clause": "第二条",
+          "quote": "本合同试用期三个月，自用工之日起计算。",
+          "rule_id": "R-PROBATION-MATCH",
+          "expected_evidence": "约定试用期 3 个月；合同期限 2026-01-01 至 2027-12-31 共 23 个月，一年以上不满三年，法定上限为 2 个月",
+          "reason": "合同期限两年，属于「一年以上不满三年」这一档，法定试用期上限两个月；约定三个月超限一个月。"
+        }
+      ],
+      "legal_clauses": [
+        "第一条 固定期限两年，起止日期齐全",
+        "第五条 转正后月工资 12000 元，高于最低工资",
+        "第六条 甲方依法缴纳五险",
+        "第七条 加班依法支付加班工资"
+      ],
+      "verified_findings": ["R-PROBATION-MATCH"]
+    },
+    {
+      "file": "B.pdf",
+      "page_count": 1,
+      "confidence": 1.0,
+      "ocr_used": false,
+      "planted": [
+        {
+          "clause": "第四条",
+          "quote": "乙方试用期工资 4000 元，转正后月工资 8000 元。",
+          "rule_id": "R-PROBATION-SALARY",
+          "expected_evidence": "试用期工资 4000 元/月，低于转正工资 8000 元/月的 80%（6400 元/月）",
+          "reason": "劳动合同法第二十条要求试用期工资不低于约定工资的 80%，4000 元只有转正工资的 50%。"
+        }
+      ],
+      "legal_clauses": [
+        "第一条 固定期限两年，起止日期齐全",
+        "第二条 试用期两个月，两年期限下未超上限",
+        "第六条 甲方依法缴纳社会保险",
+        "第七条 加班依法支付加班工资"
+      ],
+      "verified_findings": ["R-PROBATION-SALARY"]
+    },
+    {
+      "file": "C.pdf",
+      "page_count": 2,
+      "confidence": 1.0,
+      "ocr_used": false,
+      "planted": [
+        {
+          "clause": "第四条",
+          "quote": "乙方入职时须向甲方交纳押金 500 元，用于配发工作服与仓储作业设备。",
+          "rule_id": "R-DEPOSIT",
+          "expected_evidence": "合同约定：第四条乙方入职时须向甲方交纳押金500元……",
+          "reason": "劳动合同法第九条禁止用人单位以任何名义向劳动者收取财物，押金 500 元即属收取财物。"
+        },
+        {
+          "clause": "第五条",
+          "quote": "该复印件由甲方扣押保管，用于办理用工备案与门禁登记。",
+          "rule_id": "R-DEPOSIT",
+          "expected_evidence": "同一规则命中第四条，第五条是同一规则的第二个违规点",
+          "reason": "第九条同时禁止扣押居民身份证和其他证件；身份证复印件同属扣押证件行为，与第四条同属 R-DEPOSIT，规则按第一条命中位置出框。"
+        }
+      ],
+      "legal_clauses": [
+        "第一条 固定期限两年，起止日期齐全",
+        "第六条 转正后月工资 6500 元",
+        "第七条 标准工时",
+        "第八条 甲方依法缴纳社会保险",
+        "第九条 加班依法支付加班工资"
+      ],
+      "verified_findings": ["R-DEPOSIT"]
+    },
+    {
+      "file": "D.pdf",
+      "page_count": 3,
+      "confidence": 1.0,
+      "ocr_used": false,
+      "planted": [
+        {
+          "clause": "第四条",
+          "quote": "乙方自行缴纳社会保险费，甲方不再承担相应费用。",
+          "rule_id": "R-NO-SOCIAL-INS",
+          "expected_evidence": "合同中未见用人单位为劳动者缴纳社会保险的约定",
+          "reason": "劳动法第七十二条把缴费义务放在用人单位，约定由劳动者自缴等于排除法定义务，社保条款实质缺失。"
+        },
+        {
+          "clause": "第五条",
+          "quote": "甲方安排乙方休息日加班的，另行安排调休，不另计发加班工资。",
+          "rule_id": "R-OVERTIME-FREE",
+          "expected_evidence": "合同约定：第五条甲方安排乙方休息日加班的，另行安排调休，不另计发加班工资。",
+          "reason": "劳动法第四十四条规定休息日加班不能补休时应支付不低于 200% 的工资；约定「一律调休、不另计发」把法定的二选一改成只能调休。"
+        }
+      ],
+      "legal_clauses": [
+        "第一条 固定期限三年，起止日期齐全",
+        "第二条 试用期两个月，三年期限下未超上限",
+        "第六条 转正后月工资 9000 元",
+        "第七条 标准工时",
+        "第十三条 培训所需费用由甲方承担"
+      ],
+      "verified_findings": ["R-NO-SOCIAL-INS", "R-OVERTIME-FREE"]
+    },
+    {
+      "file": "E.pdf",
+      "page_count": 4,
+      "confidence": 1.0,
+      "ocr_used": false,
+      "planted": [
+        {
+          "clause": "第三条",
+          "quote": "本合同试用期二个月，自用工之日起计算。",
+          "rule_id": "R-PROBATION-ONCE",
+          "expected_evidence": "合同中有 2 处互不相同的试用期约定：2 个月、3 个月",
+          "reason": "劳动合同法第十九条规定同一用人单位与同一劳动者只能约定一次试用期；本合同第三条约定两个月、第十四条岗位调整后「重新约定试用期三个月」，同一份合同出现两次不同长度的试用期约定。"
+        },
+        {
+          "clause": "第一条",
+          "quote": "本合同为固定期限劳动合同，自 2026 年 7 月 1 日起生效。",
+          "rule_id": "R-TERM-NO-END",
+          "expected_evidence": "合同只约定了起始日（2026-07-01），未约定终止日",
+          "reason": "劳动合同法第十二条把期限列为必备条款；写了固定期限却只有起始日，争议时会被认定为期限约定不明。"
+        },
+        {
+          "clause": "第四条",
+          "quote": "乙方月工资 1800 元。",
+          "rule_id": "R-WAGE-UNDER-MIN",
+          "expected_evidence": "约定月工资 1800 元，低于最低工资标准 1900 元/月",
+          "reason": "劳动法第四十八条实行最低工资保障，约定工资低于当地最低工资标准即无效。规则用的是代码里的默认标准 1900 元/月。"
+        }
+      ],
+      "legal_clauses": [
+        "第二条 岗位与工作地点明确",
+        "第五条 甲方依法缴纳社会保险",
+        "第六条 标准工时",
+        "第八条 加班依法支付加班工资",
+        "第十条 培训所需费用由甲方承担"
+      ],
+      "verified_findings": ["R-PROBATION-ONCE", "R-WAGE-UNDER-MIN", "R-TERM-NO-END"]
+    }
+  ],
+  "coverage": {
+    "rules_covered": [
+      "R-PROBATION-MATCH",
+      "R-PROBATION-SALARY",
+      "R-PROBATION-ONCE",
+      "R-DEPOSIT",
+      "R-NO-SOCIAL-INS",
+      "R-WAGE-UNDER-MIN",
+      "R-TERM-NO-END",
+      "R-OVERTIME-FREE"
+    ],
+    "note": "八条规则全覆盖，且每份样本的命中集合与 planted 逐条相等——多报一条就是误报，少报一条就是漏报，两种都能被这张表判出来。"
+  }
+}
