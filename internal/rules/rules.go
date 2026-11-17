@@ -221,8 +221,24 @@ func ruleProbationSalary() Rule {
 			}
 			evidence := fmt.Sprintf("试用期工资 %s 元/月，低于转正工资 %s 元/月的 80%%（%s 元/月）",
 				formatMoney(c.SalaryProbation), formatMoney(c.SalaryMonthly), formatMoney(floor))
-			return []Fragment{newFragment(c, []string{"试用期"},
-				evidence,
+			// 定位必须落在"写了试用期工资"的那一条，而不是最先提到"试用期"的那条。
+			// 反例（评测样本 B.pdf 实测）：第二条"试用期二个月"完全合法，第四条才是
+			// "试用期工资 4000 元"，按 []string{"试用期"} 取第一条会把红框压到合法条款上，
+			// 用户看到的就是"报告指错了地方"。
+			at := firstClause(c)
+			probation := clausesMentioning(c, "试用期")
+			if len(probation) > 0 {
+				at = probation[0]
+				for _, cl := range probation {
+					t := cl.Text
+					if strings.Contains(t, "工资") || strings.Contains(t, "薪资") ||
+						strings.Contains(t, "月薪") || strings.Contains(t, "报酬") {
+						at = cl
+						break
+					}
+				}
+			}
+			return []Fragment{newFragmentAt(at, evidence,
 				port.Suggestion{
 					Type:     "rewrite",
 					Original: clauseText(c, "试用期", "工资", "薪资"),

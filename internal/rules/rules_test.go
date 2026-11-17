@@ -166,6 +166,27 @@ func TestProbationSalary(t *testing.T) {
 	mustHit(t, r, Contract{SalaryMonthly: 10000, SalaryProbation: 0}, 0)
 }
 
+// 定位回归：先出现的"试用期"条款合法、后出现的才是工资条款时，框必须落在工资条款上。
+// 原型是评测样本 B.pdf：第二条"试用期二个月"合法，第四条"试用期工资 4000 元"违规。
+func TestProbationSalaryLocatesSalaryClause(t *testing.T) {
+	r := findRule(t, "R-PROBATION-SALARY")
+	c := Contract{
+		SalaryMonthly:   8000,
+		SalaryProbation: 4000,
+		Clauses: []Clause{
+			{Section: "第二条", Page: 0, BBox: [4]float64{57, 550, 524, 561}, Text: "本合同试用期二个月，自用工之日起计算。"},
+			{Section: "第四条", Page: 0, BBox: [4]float64{57, 571, 310, 582}, Text: "乙方试用期工资 4000 元，转正后月工资 8000 元。"},
+		},
+	}
+	frags := mustHit(t, r, c, 1)
+	if frags[0].Section != "第四条" {
+		t.Fatalf("框应落在写试用期工资的第四条，实际 %s", frags[0].Section)
+	}
+	if frags[0].BBox != [4]float64{57, 571, 310, 582} {
+		t.Fatalf("bbox 应取自第四条，实际 %v", frags[0].BBox)
+	}
+}
+
 func TestProbationOnce(t *testing.T) {
 	r := findRule(t, "R-PROBATION-ONCE")
 
