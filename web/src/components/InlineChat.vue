@@ -26,6 +26,7 @@ import {
   initialInlineState,
   lastUserTextOf,
   setSession,
+  takePending,
 } from '@/utils/inline-chat'
 import type { InlineState } from '@/utils/inline-chat'
 
@@ -44,6 +45,10 @@ const attachedOnce = ref(false)
 
 let controller: AbortController | null = null
 
+// 排队位：只存最后一问。答案还在流时点另一张卡，不丢这一问，也不并发第二条
+// 模型调用——等这一轮结束再发。连点三次只答最后一句。
+const pending = ref('')
+
 const busy = computed(() => state.value.sending)
 
 async function scrollToBottom(): Promise<void> {
@@ -56,7 +61,12 @@ async function scrollToBottom(): Promise<void> {
 
 async function send(raw: string): Promise<void> {
   const text = raw.trim()
-  if (text === '' || busy.value) return
+  if (text === '') return
+  // busy 分支必须留在最前：watch 回调里再进 send 时若还能塞回队列，就会自激。
+  if (busy.value) {
+    pending.value = text
+    return
+  }
 
   const started = beginTurn(state.value, text)
   state.value = started.state
@@ -135,10 +145,21 @@ watch(
   { immediate: true },
 )
 
+// 一轮结束后把排队的那一句发出去。不 abort 当前请求：中断会留一句「已停止」，
+// 看着像系统出错，改成等它答完再接力。
+watch(busy, (sending) => {
+  const next = takePending(pending.value, sending)
+  if (next === '') return
+  pending.value = ''
+  void send(next)
+})
+
 onBeforeUnmount(() => {
   // 离开页面必须断开：SSE 挂着会一直占着连接与后端的一条 goroutine。
   controller?.abort()
   controller = null
+  // 排队位也要清：卸载后 watch 若再触发，会把早已离开的页面又发一问。
+  pending.value = ''
 })
 
 const sessionLabel = computed(() => state.value.sessionId.slice(0, 8))

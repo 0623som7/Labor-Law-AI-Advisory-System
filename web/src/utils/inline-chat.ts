@@ -82,3 +82,16 @@ export function lastUserTextOf(s: InlineState): string {
   }
   return ''
 }
+
+/**
+ * 排队位能不能出队。
+ *
+ * 回答还在流时点了另一张卡：那一问不能丢，也不能并发第二条模型调用，
+ * 只能先存着（只存最后一个，连点三次也只答最后一句）。流结束后再问这里
+ * 「现在能发吗、发哪一句」。拆成纯函数是为了让"什么情况下出队"能被单测，
+ * 而不是埋在 watch 回调里只能靠手点。
+ */
+export function takePending(pending: string, sending: boolean): string {
+  if (sending || pending === '') return ''
+  return pending
+}

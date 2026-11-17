@@ -9,6 +9,7 @@ import {
   initialInlineState,
   lastUserTextOf,
   setSession,
+  takePending,
 } from './inline-chat.ts'
 import type { Citation } from '@/utils/sse'
 
@@ -134,4 +135,16 @@ test('lastUserTextOf 只有 assistant 时返回空串', () => {
 
 test('lastUserTextOf 空 state 返回空串', () => {
   assert.equal(lastUserTextOf(initialInlineState()), '')
+})
+
+test('takePending 正在回答时不出队', () => {
+  assert.equal(takePending('问题A', true), '')
+})
+
+test('takePending 空闲时出队', () => {
+  assert.equal(takePending('问题A', false), '问题A')
+})
+
+test('takePending 队列为空返回空串', () => {
+  assert.equal(takePending('', false), '')
 })
