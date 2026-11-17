@@ -15,8 +15,9 @@ import { useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
 import { streamChat } from '@/api/chat'
+import { uploadFile } from '@/api/files'
 import * as sessionApi from '@/api/session'
-import type { ChatMessage, Citation } from '@/api/types'
+import type { Attachment, ChatMessage, Citation } from '@/api/types'
 import {
   applyProgress,
   startProgress,
@@ -25,6 +26,7 @@ import {
   type ProgressEvent,
 } from '@/utils/chat-progress'
 import { historyBubbles } from '@/utils/chat-history'
+import { fileCardLabel } from '@/utils/file-card'
 import { formatRelative } from '@/utils/format-relative'
 import type { Session } from '@/api/types'
 import CitationCard from '@/components/CitationCard.vue'
@@ -38,6 +40,8 @@ interface UiMessage {
   content: string
   /** 只有本轮实时生成的消息会有；历史消息恒为空数组 */
   citations: Citation[]
+  /** user 消息附带的合同文件；assistant 消息恒为空数组。刷新后来自 messages.attachments。 */
+  attachments: Attachment[]
   /**
    * 本轮流式回答的进度（纯函数状态机，见 utils/chat-progress.ts）。
    * 历史消息为 null，因为历史消息本来就没有"等待"这件事。
@@ -104,7 +108,57 @@ const currentTitle = computed(() => {
   return hit?.title || '对话'
 })
 
-const canSend = computed(() => !sending.value && input.value.trim() !== '')
+const canSend = computed(
+  () => !sending.value && (input.value.trim() !== '' || pendingFile.value !== null),
+)
+
+// ---- 合同附件 ----
+//
+// 附件只在"这一轮"有意义：它是给模型的问题配的一份材料，不是会话级设置。
+// 所以发送成功就清空，不做"记住上次选的合同"这种贴心——那会让第二轮悄悄
+// 带着上一份合同去问，用户完全看不出来。
+const pendingFile = ref<Attachment | null>(null)
+const uploading = ref(false)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+/** 只挂了合同没打字时的默认问法。空 input 后端会回 40001，不能发出去。 */
+const DEFAULT_ATTACH_INPUT = '帮我看看这份合同有没有风险'
+
+function pickFile(): void {
+  if (sending.value || uploading.value) return
+  fileInput.value?.click()
+}
+
+async function onFilePicked(evt: Event): Promise<void> {
+  const el = evt.target as HTMLInputElement
+  const file = el.files?.[0]
+  // 立刻清空选择：不清的话第二次选同一个文件不会触发 change，用户会以为按钮坏了。
+  el.value = ''
+  if (!file) return
+  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    ElMessage.error('目前只支持 PDF 合同')
+    return
+  }
+  uploading.value = true
+  try {
+    const rec = await uploadFile(file)
+    pendingFile.value = { file_id: rec.id, filename: rec.filename, page_count: rec.page_count }
+  } catch (error) {
+    // 上传失败必须出声：静默失败时用户会以为附件挂上了，发出去却什么都没有。
+    ElMessage.error(error instanceof Error ? error.message : '合同上传失败')
+  } finally {
+    uploading.value = false
+  }
+}
+
+function dropPendingFile(): void {
+  pendingFile.value = null
+}
+
+/** 点卡片进审查页，并带 autostart=1 让它自动开审（与上传页同一个入口语义）。 */
+function openReview(fileId: string): void {
+  void router.push({ name: 'review', params: { fileId }, query: { autostart: '1' } })
+}
 
 function nextKey(prefix: string): string {
   keySeed += 1
@@ -122,6 +176,7 @@ function toUiMessages(items: readonly ChatMessage[]): UiMessage[] {
   return historyBubbles(items).map((b) => {
     const msg = newMessage(b.role, b.content, true)
     msg.citations = b.citations
+    msg.attachments = b.attachments
     return msg
   })
 }
@@ -132,6 +187,7 @@ function newMessage(role: 'user' | 'assistant', content: string, fromHistory = f
     role,
     content,
     citations: [],
+    attachments: [],
     progress: null,
     error: '',
     interrupted: false,
@@ -211,14 +267,21 @@ function addCitation(target: UiMessage, citation: Citation): void {
 }
 
 async function send(): Promise<void> {
-  const text = input.value.trim()
+  const attached = pendingFile.value
+  const typed = input.value.trim()
+  // 只挂了合同没打字：补一句默认问法，而不是把空 input 发给后端换一个 40001。
+  const text = typed !== '' ? typed : attached ? DEFAULT_ATTACH_INPUT : ''
   if (text === '' || sending.value) return
 
   banner.value = ''
   input.value = ''
+  pendingFile.value = null
   const startedNew = currentSessionId.value === ''
 
-  messages.value.push(newMessage('user', text))
+  const bubble = newMessage('user', text)
+  // 卡片跟着这条消息走：刷新后从 messages.attachments 重建，所以本地也要填。
+  if (attached) bubble.attachments = [attached]
+  messages.value.push(bubble)
   const assistant = reactive(newMessage('assistant', '')) as UiMessage
   // 等待态从"点击发送"就开始计时，而不是从 meta 到齐开始：
   // 用户感受到的等待就是从按下发送那一刻起的。
@@ -245,6 +308,8 @@ async function send(): Promise<void> {
       {
         input: text,
         ...(currentSessionId.value === '' ? {} : { session_id: currentSessionId.value }),
+        // 附件只影响落库与展示，编排行为不变（B 侧不感知这个字段）。
+        ...(attached ? { file_id: attached.file_id } : {}),
       },
       {
         // 每个处理器第一行都判一次：页面卸载或用户点了停止之后，
@@ -436,7 +501,45 @@ onBeforeUnmount(() => {
           class="row"
           :class="m.role === 'user' ? 'row-user' : 'row-assistant'"
         >
-          <div class="bubble" :class="m.role === 'user' ? 'bubble-user' : 'bubble-assistant'">
+          <div
+            class="bubble"
+            :class="[
+              m.role === 'user' ? 'bubble-user' : 'bubble-assistant',
+              // 只挂了合同没打字时正文是空的：不要一个装着空气泡的深色块。
+              m.content === '' && m.attachments.length > 0 ? 'bubble-plain' : '',
+            ]"
+          >
+            <div
+              v-for="a in m.attachments"
+              :key="a.file_id"
+              class="file-card"
+              role="button"
+              tabindex="0"
+              :title="`查看 ${a.filename} 的审查结果`"
+              @click="openReview(a.file_id)"
+              @keydown.enter.prevent="openReview(a.file_id)"
+            >
+              <svg class="file-card-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M6 2h7l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linejoin="round"
+                />
+                <path d="M13 2v5h5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <text x="12" y="17" text-anchor="middle" font-size="6" fill="currentColor">PDF</text>
+              </svg>
+              <span class="file-card-label">{{ fileCardLabel(a) }}</span>
+              <button
+                type="button"
+                class="file-card-more"
+                @click.stop="openReview(a.file_id)"
+              >
+                查看风险
+              </button>
+            </div>
+
             <div v-if="statusOf(m).visible" class="status-row">
               <span class="status-dot" aria-hidden="true" />
               <span class="status-text">{{ statusOf(m).text }}</span>
@@ -454,6 +557,37 @@ onBeforeUnmount(() => {
       </div>
 
       <footer class="composer">
+        <div v-if="pendingFile || uploading" class="pending-file">
+          <span class="pending-name">
+            {{ uploading ? '正在上传合同…' : fileCardLabel(pendingFile!) }}
+          </span>
+          <button
+            v-if="!uploading"
+            type="button"
+            class="pending-remove"
+            title="不附这份合同"
+            @click="dropPendingFile"
+          >
+            ×
+          </button>
+        </div>
+        <div class="composer-tools">
+          <button
+            type="button"
+            class="attach-btn"
+            :disabled="sending || uploading"
+            @click="pickFile"
+          >
+            附合同
+          </button>
+          <input
+            ref="fileInput"
+            class="attach-input"
+            type="file"
+            accept="application/pdf"
+            @change="onFilePicked"
+          />
+        </div>
         <el-input
           v-model="input"
           type="textarea"
@@ -830,5 +964,132 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 8px;
+}
+
+.composer-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.attach-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--ll-text-weak);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--ll-border);
+  border-radius: 6px;
+}
+
+.attach-btn:hover:not(:disabled) {
+  color: var(--ll-primary);
+  border-color: var(--ll-primary);
+}
+
+.attach-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 真正的 file input 藏起来，按钮只是它的把手：原生控件在各浏览器长得都不一样。 */
+.attach-input {
+  display: none;
+}
+
+/* 待发送芯片：让用户在按发送之前就知道"这一轮带了一份合同"。 */
+.pending-file {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--ll-text);
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 6px;
+}
+
+.pending-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-remove {
+  flex: none;
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ll-text-weak);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.pending-remove:hover {
+  color: #d93026;
+}
+
+/*
+ * 消息里的合同卡片。
+ *
+ * 气泡本身是深蓝底，卡片用白底压上去：深底上的白色卡片刻意做成"文件"的样子，
+ * 与引用卡片（CitationCard）视觉语言一致，但不复用它的组件——
+ * 那张卡是法条、可点开原文，这张是文件、点进审查页，交互目标不同。
+ */
+.file-card {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  color: var(--ll-text);
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid var(--ll-border);
+  border-radius: 8px;
+}
+
+.file-card:hover {
+  border-color: var(--ll-primary);
+}
+
+.file-card-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  color: #d93026;
+}
+
+.file-card-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-card-more {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--ll-primary);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--ll-border);
+  border-radius: 6px;
+}
+
+.file-card-more:hover {
+  border-color: var(--ll-primary);
+}
+
+/* 只有卡片、没有正文的 user 气泡：去掉深色底与内边距，别画一个空盒子。 */
+.bubble-plain {
+  padding: 0;
+  background: transparent;
 }
 </style>

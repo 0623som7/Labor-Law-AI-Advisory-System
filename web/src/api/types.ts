@@ -52,6 +52,19 @@ export interface Session {
 
 export type MessageRole = 'user' | 'assistant'
 
+/**
+ * components.schemas.Attachment。
+ *
+ * 消息附带的合同文件，只够画一张卡片：文件名给人看，页数给人判断厚薄，
+ * file_id 用来点进去看审查。正文不在这里，也不该在这里。
+ */
+export interface Attachment {
+  file_id: string
+  filename: string
+  /** 解析完成前是 0，前端据此显示「页数待解析」而不是「0 页」。 */
+  page_count: number
+}
+
 /** components.schemas.ChatMessage */
 export interface ChatMessage {
   id: string
@@ -60,6 +73,8 @@ export interface ChatMessage {
   content: string
   /** assistant 消息引用的法条；user 消息没有该字段。刷新历史后据此重建卡片。 */
   citations?: Citation[]
+  /** user 消息附带的合同文件；assistant 消息没有该字段。 */
+  attachments?: Attachment[]
   created_at: string
 }
 
@@ -67,6 +82,8 @@ export interface ChatMessage {
 export interface ChatRequest {
   input: string
   session_id?: string
+  /** 可选。把这轮咨询与某份已上传合同关联，后端会写进这轮 user 消息的附件。 */
+  file_id?: string
 }
 
 /** 本地存的令牌。expires_at 是绝对毫秒时间戳，方便算是否过期。 */

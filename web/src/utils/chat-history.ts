@@ -1,3 +1,4 @@
+import type { Attachment } from '@/api/types'
 import type { Citation } from '@/utils/sse'
 
 /** 历史消息里我们关心的字段。 */
@@ -6,6 +7,8 @@ export interface HistoryMessage {
   content: string
   /** assistant 消息引用的法条；user 消息与老数据都没有这个字段。 */
   citations?: Citation[]
+  /** user 消息附带的合同文件；assistant 消息与老数据都没有这个字段。 */
+  attachments?: Attachment[]
 }
 
 /** 由历史消息还原出来的气泡数据。 */
@@ -13,6 +16,7 @@ export interface HistoryBubble {
   role: 'user' | 'assistant'
   content: string
   citations: Citation[]
+  attachments: Attachment[]
   fromHistory: true
 }
 
@@ -33,6 +37,9 @@ export function historyBubbles(items: readonly HistoryMessage[]): HistoryBubble[
     role: m.role,
     content: m.content,
     citations: m.citations ? [...m.citations] : [],
+    // 迁移前写入的消息没有 attachments 字段（NULL），缺失就是空数组：
+    // 不给默认附件，那等于凭空造出一张指向不存在文件的卡片。
+    attachments: m.attachments ? [...m.attachments] : [],
     fromHistory: true as const,
   }))
 }
