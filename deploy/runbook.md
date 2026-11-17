@@ -198,6 +198,23 @@ curl -sk https://127.0.0.1:8443/ | grep -o 'assets/index-[a-zA-Z0-9]*\.js'
 ls web/dist/assets/*.js
 #   两边 hash 必须一致；不一致说明这次没传 dist
 
+# 3.6.2 只换前端也要检查迁移（2026-11-17 的事故，别再来一次）
+#   1) 只改前端时 --build api 可以省，但只要合并进来过新的
+#      internal/store/migrations/*.up.sql，就必须单独跑一次迁移——新二进制认新列，
+#      旧库没有那一列，写库会静默失败（进程不崩、接口照回 200，数据全丢）：
+docker compose -f deploy/docker-compose.yml --env-file .env exec -T api /app/api -migrate
+#      期望 {"msg":"迁移完成","applied":N}；applied=0 且下面第 2 步仍查不到列，
+#      说明容器镜像早于那个迁移文件，要先 up -d --build api 再跑一次。
+#   2) 验证方式是查该列在不在，不要只看 -migrate 的输出（applied=0 也可能是"已经跑过"）：
+docker exec deploy-mysql-1 sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "select count(*) from information_schema.columns where table_schema=0x6c61626f726c6177 and table_name=0x6d65737361676573 and column_name=0x6174746163686d656e7473;"'
+#      期望 1（0 = 没跑）。十六进制是为了绕开 sh -c 里再套单引号的转义地狱，
+#      换别的表/列就把最后两段 0x... 换成对应字符串的十六进制。
+#   3) 症状对照：日志里出现 persist chat turn failed / history load degraded，
+#      且原因带 Error 1054 (42S22): Unknown column 'xxx' in 'field list'，
+#      一律先怀疑漏跑迁移，不要去改 SQL 或手工 ALTER TABLE。
+#      2026-11-17 那次：线上 messages 缺 attachments 列，messages 停在 11-16 14:37，
+#      而会话数照涨（resolveSession 先建会话再写消息），一夜多了 12 条空会话。
+
 # 3.7 起 TLS 层 + 前端站点（api 的端口已改成 127.0.0.1:8080，公网只看得到 8443）
 docker compose -f deploy/docker-compose.yml --env-file .env up -d nginx
 # 配置改动（bind mount 进来的 default.conf）up -d 不会重读：容器没变就 Running 跳过。
