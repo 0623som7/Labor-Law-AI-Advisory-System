@@ -146,6 +146,31 @@ function askThis(f: Finding): void {
   })
 }
 
+/**
+ * 「复制改法」：把改好的那一段放进剪贴板。
+ *
+ * 审查结果最常见的用法是把建议条款贴回 Word 里改，让人用鼠标拖选一段中文
+ * 再 Ctrl+C 是白费劲。复制成功给 1.5 秒反馈，之后复原——按钮文字不该
+ * 一直停在「已复制」，那会让人以为再点一次是「取消复制」。
+ */
+const copiedId = ref('')
+
+async function copySuggestion(f: Finding): Promise<void> {
+  const text = f.suggestion.revised?.trim() ?? ''
+  if (text === '') return
+  try {
+    await navigator.clipboard.writeText(text)
+    copiedId.value = f.id
+    window.setTimeout(() => {
+      if (copiedId.value === f.id) copiedId.value = ''
+    }, 1500)
+  } catch {
+    // 非安全上下文（http 局域网演示）没有 clipboard API：把改法摊出来让人自己复制，
+    // 比弹一句「复制失败」更接近他要做的事。
+    window.prompt('复制这段改法：', text)
+  }
+}
+
 function focusFinding(f: Finding): void {
   activeId.value = f.id
   void nextTick(() => {
@@ -537,7 +562,17 @@ void load()
               <p v-if="f.suggestion.reason" class="sug-reason">{{ f.suggestion.reason }}</p>
             </details>
 
-            <button type="button" class="ask-this" @click.stop="askThis(f)">就问这条</button>
+            <div class="card-actions">
+              <button
+                v-if="f.suggestion.revised"
+                type="button"
+                class="copy-sug"
+                @click.stop="copySuggestion(f)"
+              >
+                {{ copiedId === f.id ? '已复制' : '复制改法' }}
+              </button>
+              <button type="button" class="ask-this" @click.stop="askThis(f)">就问这条</button>
+            </div>
           </li>
         </ul>
       </aside>
@@ -872,6 +907,28 @@ void load()
 }
 
 .ask-this:hover {
+  border-color: #2f6feb;
+  color: #2f6feb;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.copy-sug {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #fff;
+  color: #475467;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.copy-sug:hover {
   border-color: #2f6feb;
   color: #2f6feb;
 }
