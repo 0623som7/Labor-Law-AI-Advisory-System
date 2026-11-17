@@ -17,6 +17,17 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REMOTE = process.argv.includes('--remote')
+
+// --remote 是「检查线上」的意图声明，地址却可能是本机默认值——两者矛盾时
+// 最坏的结果是看着像线上挂了、实际只是打错了地方。缺一个地址就别说自己在查线上。
+if (REMOTE && (!process.env.API_BASE || !process.env.WEB_BASE)) {
+  console.error('--remote 需要同时给出 API_BASE 与 WEB_BASE，例如：')
+  console.error(
+    '  API_BASE=https://111.230.152.155:8443 WEB_BASE=https://111.230.152.155:8443 node web/e2e/preflight.mjs --remote',
+  )
+  process.exit(2)
+}
+
 const API = (process.env.API_BASE || 'http://127.0.0.1:8080').replace(/\/+$/, '')
 const WEB = (process.env.WEB_BASE || 'http://127.0.0.1:5173').replace(/\/+$/, '')
 
