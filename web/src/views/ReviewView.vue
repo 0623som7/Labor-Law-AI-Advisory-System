@@ -26,6 +26,7 @@ import {
 } from '@/api/files'
 import type { Finding, ParsedDoc, Review } from '@/api/types'
 import { SEVERITY_LABEL, findingsOnPage, legalBasisTitle, sortBySeverity, summarizeFindings } from '@/utils/findings'
+import { buildAskQuestion } from '@/utils/ask-this'
 import { shouldAutostart, shouldOfferStart } from '@/utils/review-restore'
 import {
   findingPage,
@@ -126,6 +127,16 @@ function pageStyle(pageIndex: number): Record<string, string> {
  * 早先是"亮 1.5 秒后自动灭"，结果用户还没看清就闪没了；现在默认浅、
  * 选中深且不自动灭，取消选中靠点另一条或离开页面。
  */
+/**
+ * 「就问这条」：把这条结论原样带进对话页的输入框。
+ *
+ * 不自动发送——预填只是省掉用户复述"哪一条、什么毛病"的力气，
+ * 发不发、要不要补一句自己的情况，由他自己决定。
+ */
+function askThis(f: Finding): void {
+  void router.push({ name: 'chat', query: { ask: buildAskQuestion(f) } })
+}
+
 function focusFinding(f: Finding): void {
   activeId.value = f.id
   void nextTick(() => {
@@ -516,6 +527,8 @@ void load()
               <p v-if="f.suggestion.revised" class="sug-revised">{{ f.suggestion.revised }}</p>
               <p v-if="f.suggestion.reason" class="sug-reason">{{ f.suggestion.reason }}</p>
             </details>
+
+            <button type="button" class="ask-this" @click.stop="askThis(f)">就问这条</button>
           </li>
         </ul>
       </aside>
@@ -836,6 +849,22 @@ void load()
   color: #374151;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.ask-this {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #fff;
+  color: #475467;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ask-this:hover {
+  border-color: #2f6feb;
+  color: #2f6feb;
 }
 
 .fold {

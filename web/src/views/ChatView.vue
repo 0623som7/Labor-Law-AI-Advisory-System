@@ -11,7 +11,7 @@
 // 三者在界面上长得不一样，否则用户分不清"答完了"和"断线了"。
 
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
 import { streamChat } from '@/api/chat'
@@ -27,6 +27,7 @@ import {
 } from '@/utils/chat-progress'
 import { historyBubbles } from '@/utils/chat-history'
 import { fileCardLabel } from '@/utils/file-card'
+import { shouldPrefill } from '@/utils/ask-this'
 import { formatRelative } from '@/utils/format-relative'
 import type { Session } from '@/api/types'
 import CitationCard from '@/components/CitationCard.vue'
@@ -54,6 +55,7 @@ interface UiMessage {
 }
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 
 const sessions = ref<Session[]>([])
@@ -399,6 +401,13 @@ async function signOut(): Promise<void> {
 }
 
 onMounted(async () => {
+  // 预填只在进入时做一次：先把 query 抹掉，刷新就不会反复塞同一句话。
+  // 不自动发送——审查页那边只负责把"哪一条、什么毛病"带过来，
+  // 发不发、要不要补自己的情况由用户决定。
+  if (shouldPrefill(route.query)) {
+    input.value = String(route.query.ask)
+    void router.replace({ query: {} })
+  }
   await auth.loadMe()
   await refreshSessions()
 })
