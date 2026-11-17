@@ -26,6 +26,7 @@ import {
 } from '@/api/files'
 import type { Finding, ParsedDoc, Review } from '@/api/types'
 import { SEVERITY_LABEL, findingsOnPage, legalBasisTitle, sortBySeverity, summarizeFindings } from '@/utils/findings'
+import InlineChat from '@/components/InlineChat.vue'
 import { buildAskQuestion } from '@/utils/ask-this'
 import { shouldAutostart, shouldOfferStart } from '@/utils/review-restore'
 import {
@@ -133,17 +134,13 @@ function pageStyle(pageIndex: number): Record<string, string> {
  * 不自动发送——预填只是省掉用户复述"哪一条、什么毛病"的力气，
  * 发不发、要不要补一句自己的情况，由他自己决定。
  */
+/** 抽屉开关与「这次问什么」。seed 每次点都换新值，子组件据此判断要不要发。 */
+const chatOpen = ref(false)
+const chatSeed = ref('')
+
 function askThis(f: Finding): void {
-  void router.push({
-    name: 'chat',
-    query: {
-      ask: buildAskQuestion(f),
-      // 带回去的是"这条结论出自哪"：对话页据此显示来源条并给一条回原文的路。
-      from: 'review',
-      file: fileId.value,
-      section: f.clause_ref?.section ?? '',
-    },
-  })
+  chatSeed.value = buildAskQuestion(f)
+  chatOpen.value = true
 }
 
 /**
@@ -577,11 +574,20 @@ void load()
         </ul>
       </aside>
     </main>
+
+    <InlineChat
+      v-if="chatOpen"
+      :file-id="fileId"
+      :seed="chatSeed"
+      @close="chatOpen = false"
+    />
   </div>
 </template>
 
 <style scoped>
 .review-page {
+  /* 内联对话抽屉用绝对定位贴右下，所以这里必须是它的定位父级。 */
+  position: relative;
   /* 页面在 height:100vh 的 .app-shell 里，上方还有一条 24px 的提示条：
      min-height:100vh 会让它比容器高 24px，永远多出一条不该有的纵向滚动条。 */
   min-height: 0;
