@@ -235,10 +235,11 @@ func (c *Client) doChat(ctx context.Context, body []byte, traceID string) (port.
 
 	choice := parsed.Choices[0]
 	return port.ChatResponse{
-		Content:   choice.Message.Content,
-		ToolCalls: choice.Message.ToolCalls,
-		Usage:     toUsage(parsed.Usage),
-		LatencyMS: int(c.now().Sub(start).Milliseconds()),
+		Content:      choice.Message.Content,
+		ToolCalls:    choice.Message.ToolCalls,
+		FinishReason: choice.FinishReason,
+		Usage:        toUsage(parsed.Usage),
+		LatencyMS:    int(c.now().Sub(start).Milliseconds()),
 	}, nil
 }
 

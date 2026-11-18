@@ -164,7 +164,12 @@ func runReview(ctx context.Context, deps ReviewDeps, payload json.RawMessage, pr
 	// "看起来正常、其实只分析了前 8 页"的结论——比直接报错更危险。
 	// 通道选 stage：任务进度本来就展示在审查页上，不需要为此改契约和表结构
 	// （contract_extracts 目前没有任何写入方，Review 的 DTO 里也没有抽取载荷）。
-	if doc.Truncated {
+	if doc.ModelTruncated {
+		if deps.Logger != nil {
+			deps.Logger.Warn("模型输出被截断，已降级为版面+正则结果", "review_id", p.ReviewID)
+		}
+		notify(progress, 30, "合同过长，模型只抽取了部分要素，结论可能不完整")
+	} else if doc.Truncated {
 		if deps.Logger != nil {
 			deps.Logger.Warn("合同正文超长，只抽取了前面一部分",
 				"review_id", p.ReviewID, "truncated_at", doc.TruncatedAt)

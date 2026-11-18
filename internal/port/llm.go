@@ -141,6 +141,11 @@ type ChatResponse struct {
 	ToolCalls []ToolCall
 	// Usage 是本轮计量，A 已异步落库。
 	Usage Usage
+	// FinishReason 是上游给出的终止原因，"stop" / "length" / …。
+	//
+	// 必须在响应里透出来：length 表示输出被 max_tokens 截断，此时 Content 是半截
+	// JSON，调用方要据此走修复或降级，而不是当普通格式错误重试。
+	FinishReason string
 	// LatencyMS 是上游耗时，不含本层重试的等待。
 	LatencyMS int
 }

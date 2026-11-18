@@ -13,6 +13,7 @@ package extract
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -32,9 +33,13 @@ const Scene = "review.extract"
 // 输入截断：整份合同塞进 prompt 会顶爆上下文，而审查需要的条款集中在正文前中部；
 // 12000 个字符约等于 8 页 A4，超过这个长度说明用户上传的不是一份普通劳动合同。
 // 输出上限与 15 个字段 + 若干条 raw_clauses 的规模匹配，给多了模型只会开始编。
+//
+// 4000 而不是 2000：40 页合同光条款数组就能写到 2000 token 以上，到顶后上游
+// 会把 JSON 切在半截（`"social_insurance": tr`），整份结果一个字段都用不上。
+// 同时把抽取拆成"标量"与"条款"两次调用，每次的输出都远低于这个上限。
 const (
 	maxInputRunes   = 12000
-	maxOutputTokens = 2000
+	maxOutputTokens = 4096
 )
 
 // trackedFields 参与 confidence 计算的字段数（14 个标量要素）。
@@ -63,6 +68,11 @@ type Document struct {
 	Truncated bool `json:"truncated"`
 	// TruncatedAt 是实际参与抽取的字符数（rune）；未截断时等于原文长度。
 	TruncatedAt int `json:"truncated_at"`
+	// ModelTruncated 表示模型的输出被 max_tokens 截断，已降级成"版面+正则"的结果。
+	//
+	// 与 Truncated 分开：Truncated 说的是"原文没看全"，这一条说的是"模型没答全"。
+	// 两种都要让用户在阶段文案里看见，否则他拿到的是一份看起来完整、其实缺项的报告。
+	ModelTruncated bool `json:"model_truncated"`
 	// Confidence 是命中字段数 / 14，用于前端提示"识别可能不完整"。
 	Confidence float64 `json:"confidence"`
 }
@@ -169,6 +179,66 @@ func (e *Extractor) Extract(ctx context.Context, text string, blocks []port.Text
 	}
 
 	// 4) 兜底：走模型，但只采信正则没抽到的字段。
+	if err := e.fillWithModel(ctx, text, doc, clauseSource); err != nil {
+		// 只有"模型输出不可用"才降级：上游报错、ctx 取消必须原样上抛，
+		// 否则一次断网会被伪装成"审查已完成、只是没识别出条款"。
+		var parseFail *modelParseFailure
+		if clauseSource == ClauseSourceLayout && errors.As(err, &parseFail) {
+			doc.Source = SourceRule
+			doc.ModelTruncated = parseFail.truncated
+			return doc, nil
+		}
+		return nil, err
+	}
+	return doc, nil
+}
+
+// fillWithModel 用模型补正则抽不到的字段。
+//
+// 为什么拆两次调用：一份 40 页合同的"14 个标量要素 + 全部条款"在同一个 schema 里
+// 输出必然超过 max_tokens，上游会静默截断，结果整单失败且 0 张卡。拆开之后
+// 每次请求的输出都只有几百 token，标量那一次失败也不影响条款那一次。
+//
+// clauseSource 为 layout 时不问条款：版面块给的坐标是真值，模型给的坐标一律丢弃。
+func (e *Extractor) fillWithModel(ctx context.Context, text string, doc *Document, clauseSource string) error {
+	scalars, err := e.callModel(ctx, text, "contract_extract_scalars", schemaScalarsJSON)
+	if err != nil {
+		return err
+	}
+	modelDoc, err := Parse(scalars.Content)
+	if err != nil {
+		return wrapParseFailure(scalars, err)
+	}
+
+	// 修好也一样要标记：正文是被截断的，救回来的只是前半截字段。
+	if scalars.FinishReason == "length" {
+		doc.ModelTruncated = true
+	}
+	doc.Contract = mergeMissing(doc.Contract, modelDoc.Contract, doc.Missing)
+	doc.Missing = missingFields(doc)
+	doc.Confidence = confidence(doc.Missing)
+	doc.Source = SourceRuleLLM
+
+	if clauseSource == ClauseSourceLayout {
+		return nil
+	}
+	clauses, err := e.callModel(ctx, text, "contract_extract_clauses", schemaClausesJSON)
+	if err != nil {
+		return err
+	}
+	clauseDoc, err := Parse(clauses.Content)
+	if err != nil {
+		return wrapParseFailure(clauses, err)
+	}
+	if clauses.FinishReason == "length" {
+		doc.ModelTruncated = true
+	}
+	doc.Clauses = clauseDoc.Clauses
+	return nil
+}
+
+// callModel 发起一次抽取调用。
+func (e *Extractor) callModel(ctx context.Context, text, schemaName, schema string) (port.ChatResponse, error) {
 	resp, err := e.client.Chat(ctx, port.ChatRequest{
 		Scene: Scene,
 		Messages: []port.Message{
@@ -176,28 +246,46 @@ func (e *Extractor) Extract(ctx context.Context, text string, blocks []port.Text
 			{Role: port.RoleUser, Content: text},
 		},
 		MaxTokens:  maxOutputTokens,
-		JSONSchema: &port.JSONSchema{Name: "contract_extract", Schema: json.RawMessage(schemaJSON), Strict: true},
+		JSONSchema: &port.JSONSchema{Name: schemaName, Schema: json.RawMessage(schema), Strict: true},
 	})
 	if err != nil {
-		return nil, wrapUpstream(err)
+		return port.ChatResponse{}, wrapUpstream(err)
 	}
+	return resp, nil
+}
 
-	modelDoc, err := Parse(resp.Content)
-	if err != nil {
-		return nil, err
-	}
+// modelParseFailure 标记"模型输出了、但输出不可用"这一类失败。
+//
+// 单独成类型是为了让 Extract 能精确地只在这一类上降级：上游超时、ctx 取消、
+// 限流都必须上抛（worker 要按码重试），只有"模型这次给的 JSON 残缺"才值得
+// 用版面+正则的结果继续跑完整条审查。
+type modelParseFailure struct {
+	err       error
+	truncated bool
+}
 
-	doc.Contract = mergeMissing(contract, modelDoc.Contract, missing)
-	doc.Missing = missingFields(doc)
-	doc.Confidence = confidence(doc.Missing)
-	doc.Source = SourceRuleLLM
-	if clauseSource == ClauseSourceLayout {
-		// 模型给的坐标一律丢弃：它对版面的猜测会覆盖掉真实并集。
-		doc.Clauses = layoutClauses
-	} else {
-		doc.Clauses = modelDoc.Clauses
+// Error 透出底层解析错误。
+func (e *modelParseFailure) Error() string { return e.err.Error() }
+
+// Unwrap 保留 cause，日志里能看到原始解析原因。
+func (e *modelParseFailure) Unwrap() error { return e.err }
+
+// wrapParseFailure 把"模型输出不可用"分类成用户看得懂的失败。
+//
+// 必须分类：worker 的 failureMessage 只认 port.AppError，未分类的 error 会被
+// 折成"服务内部错误"，用户在页面上拿不到任何下一步动作。
+// 码选 CodeInvalidArgument 而不是 CodeUpstream：同一个输入再问一次还是截断，
+// 重试只会再烧一次 token。
+func wrapParseFailure(resp port.ChatResponse, err error) error {
+	truncated := resp.FinishReason == "length"
+	message := "模型抽取结果无法解析，请稍后重试"
+	if truncated {
+		message = "合同过长，模型抽取被截断，请拆分合同或稍后重试"
 	}
-	return doc, nil
+	return &modelParseFailure{
+		err:       port.Wrap(port.CodeInvalidArgument, err, message),
+		truncated: truncated,
+	}
 }
 
 // confidence 是命中字段数 / 14。
@@ -217,7 +305,15 @@ func Parse(content string) (*Document, error) {
 
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(body), &top); err != nil {
-		return nil, &ParseError{Reason: "不是合法的 JSON 对象", Raw: head(content)}
+		// 被 max_tokens 截断的正文在这里补救：截到最后一个完整字段再补齐括号，
+		// 能救回几个字段就救几个，剩下的进 Missing，由规则层保守处理。
+		repaired, ok := repairTruncatedObject(body)
+		if !ok || repaired == body {
+			return nil, &ParseError{Reason: "不是合法的 JSON 对象", Raw: head(content)}
+		}
+		if err2 := json.Unmarshal([]byte(repaired), &top); err2 != nil {
+			return nil, &ParseError{Reason: "不是合法的 JSON 对象", Raw: head(content)}
+		}
 	}
 	if top == nil {
 		return nil, &ParseError{Reason: "顶层不是 JSON 对象", Raw: head(content)}
@@ -555,11 +651,11 @@ social_insurance 是否约定缴纳社保（true/false）；work_location 工作
 working_hours 工作时间制度；has_overtime_pay 是否约定加班费（true/false）；
 deposit 是否约定押金/扣押证件（true/false）；raw_clauses 条款数组。`
 
-// schemaJSON 是给上游的结构化输出约束。
+// schemaScalarsJSON 是标量要素那一次调用的结构化输出约束。
 //
-// 与 prompt 重复不是冗余：prompt 管语义，schema 管形状。
-// 只有 schema 能保证"字段名不变、类型不变"，而语义仍然要靠 prompt 约束。
-const schemaJSON = `{
+// 与 schemaJSON 的唯一区别是不含 raw_clauses：条款单独一次调用。
+// 这样两次的输出都能完整落进 max_tokens，不会互相挤到截断。
+const schemaScalarsJSON = `{
   "type": "object",
   "properties": {
     "party_a": {"type": "string"},
@@ -575,9 +671,20 @@ const schemaJSON = `{
     "position": {"type": "string"},
     "working_hours": {"type": "string"},
     "has_overtime_pay": {"type": ["boolean", "null"]},
-    "deposit": {"type": ["boolean", "null"]},
+    "deposit": {"type": ["boolean", "null"]}
+  }
+}`
+
+// schemaClausesJSON 是条款那一次调用的结构化输出约束。
+//
+// maxItems 40 是有意的上限：条款再多，前 40 条已经覆盖了审查要用的范围，
+// 放开会让输出重新逼近 max_tokens，把"不再截断"这件事又推回原点。
+const schemaClausesJSON = `{
+  "type": "object",
+  "properties": {
     "raw_clauses": {
       "type": "array",
+      "maxItems": 40,
       "items": {
         "type": "object",
         "properties": {

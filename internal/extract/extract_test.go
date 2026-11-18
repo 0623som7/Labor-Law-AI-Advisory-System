@@ -205,7 +205,8 @@ func TestExtractSendsPromptAndSchema(t *testing.T) {
 	if client.got.Scene != Scene || Scene != "review.extract" {
 		t.Fatalf("场景错误：%q", client.got.Scene)
 	}
-	if client.got.JSONSchema == nil || client.got.JSONSchema.Name != "contract_extract" || !client.got.JSONSchema.Strict {
+	// 抽取已拆成"标量"与"条款"两次调用，schema 名带后缀；这里只要求同前缀。
+	if client.got.JSONSchema == nil || !strings.HasPrefix(client.got.JSONSchema.Name, "contract_extract") || !client.got.JSONSchema.Strict {
 		t.Fatalf("未携带结构化输出约束：%+v", client.got.JSONSchema)
 	}
 	if len(client.got.Messages) != 2 {
