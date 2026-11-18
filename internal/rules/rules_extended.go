@@ -23,8 +23,9 @@ const (
 //
 // 文本规则天然有边界，宁可少报也不把“依法办理”“不得安排”这类保护性表述误判成风险。
 var (
-	penaltyRe       = regexp.MustCompile(`违约金`)
-	servicePeriodRe = regexp.MustCompile(`服务期|竞业限制|保密`)
+	penaltyRe         = regexp.MustCompile(`违约金`)
+	servicePeriodRe   = regexp.MustCompile(`服务期|竞业限制|保密`)
+	employeePenaltyRe = regexp.MustCompile(`(?:乙方|劳动者)[^。；]{0,6}(?:应当?|须|有义务)?(?:向甲方)?(?:支付|承担|赔偿)违约金`)
 
 	invalidExemptionRes = []*regexp.Regexp{
 		regexp.MustCompile(`工伤[^。；]{0,12}概不负责`),
@@ -102,7 +103,8 @@ func rulePenaltyUnlawful() Rule {
 		Check: func(c Contract) []Fragment {
 			var frags []Fragment
 			for _, cl := range c.Clauses {
-				if !penaltyRe.MatchString(cl.Text) || servicePeriodRe.MatchString(cl.Text) {
+				if !penaltyRe.MatchString(cl.Text) || servicePeriodRe.MatchString(cl.Text) ||
+					isEmployerPenaltyClause(cl.Text) || !employeePenaltyRe.MatchString(cl.Text) {
 					continue
 				}
 				frags = append(frags, newFragmentAt(cl, "合同约定："+strings.TrimSpace(cl.Text),
@@ -116,6 +118,15 @@ func rulePenaltyUnlawful() Rule {
 			return frags
 		},
 	}
+}
+
+// isEmployerPenaltyClause 判断违约金是否约定由用人单位向劳动者支付。
+//
+// “甲方违约……向乙方支付违约金”不是 R-PENALTY-UNLAWFUL 要管的劳动者违约金。
+func isEmployerPenaltyClause(text string) bool {
+	return strings.Contains(text, "甲方违约") ||
+		strings.Contains(text, "向乙方支付违约金") ||
+		strings.Contains(text, "向劳动者支付违约金")
 }
 
 // ruleInvalidExemption 检查免除工伤/人身责任或排除仲裁、诉讼权利的无效条款。
@@ -394,7 +405,9 @@ func matchesAny(patterns []*regexp.Regexp, text string) bool {
 //
 // 这里是粗粒度的安全阀：宁可少报，也不把法律明确要求的写法判成风险。
 func isProtectiveStatement(text string) bool {
-	if strings.Contains(text, "不得安排") || strings.Contains(text, "应当安排") {
+	if strings.Contains(text, "不得安排") || strings.Contains(text, "应当安排") ||
+		strings.Contains(text, "不得延长") || strings.Contains(text, "不得从事") ||
+		strings.Contains(text, "禁止从事") {
 		return true
 	}
 	if strings.Contains(text, "依法") && (strings.Contains(text, "不支付") || strings.Contains(text, "不给予")) {
