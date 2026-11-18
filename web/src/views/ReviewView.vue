@@ -149,6 +149,23 @@ const chatSeedSeq = ref(0)
 /** 这次追问针对哪一条，交给抽屉拼进「在对话页继续」的 query（空串表示无条款号）。 */
 const chatSection = ref('')
 
+/** 最近一次点「就问这条」的条目 id，用于关闭抽屉后把焦点还回去。 */
+const askedFromId = ref('')
+
+/**
+ * 关闭抽屉：面板是 v-show 常驻的，这里只切可见性并把焦点还给触发它的按钮。
+ * 生成中的流不掐断——Esc 的意思是"我先看合同"，不是"别答了"。
+ */
+function closeChat(): void {
+  chatOpen.value = false
+  const id = askedFromId.value
+  if (id === '') return
+  void nextTick(() => {
+    const btn = document.querySelector<HTMLElement>(`.cards [data-finding="${id}"] .ask-this`)
+    btn?.focus()
+  })
+}
+
 function askThis(f: Finding): void {
   // 点按钮是 @click.stop，不会走 focusFinding；这一条既然是被追问的对象，
   // 就把它设成当前条目——左边原文的高亮与右边卡的选中态才跟得上。
@@ -157,6 +174,9 @@ function askThis(f: Finding): void {
   chatSection.value = (f.clause_ref?.section ?? '').trim()
   chatSeedSeq.value += 1
   chatOpen.value = true
+  // 记住是谁打开的：Esc 关掉抽屉之后焦点要回到这个按钮上，
+  // 否则键盘用户被扔回文档开头，得重新 Tab 一遍。
+  askedFromId.value = f.id
   // 抽屉占掉下方 40vh，卡片列表被挤矮——这张卡的「复制改法 / 就问这条」很可能
   // 正好落在抽屉后面。等抽屉进 DOM 后再滚一次，让它整排留在抽屉上方。
   void nextTick(() => revealCardIntoView(f.id))
@@ -581,11 +601,17 @@ void load()
         </div>
 
         <div v-if="running" class="running">
-          <p v-if="progressLine.visible" class="running-line">{{ progressLine.text }}</p>
+          <p
+            v-if="progressLine.visible"
+            class="running-line"
+            role="status"
+            aria-live="polite"
+            aria-atomic="false"
+          >{{ progressLine.text }}</p>
           <el-skeleton :rows="6" animated />
         </div>
 
-        <div v-else-if="reviewError" class="review-error">
+        <div v-else-if="reviewError" class="review-error" role="alert">
           <p class="review-error-text">{{ reviewError }}</p>
           <span v-if="reviewReason" class="review-reason">{{ reviewReason }}</span>
           <!-- 失败之后用户只有两条路：换一份合同，或者原地再试一次。都给成按钮，别让人回去翻页。 -->
@@ -659,7 +685,7 @@ void load()
           :seed="chatSeed"
           :seed-seq="chatSeedSeq"
           :section="chatSection"
-          @close="chatOpen = false"
+          @close="closeChat"
         />
       </aside>
     </main>

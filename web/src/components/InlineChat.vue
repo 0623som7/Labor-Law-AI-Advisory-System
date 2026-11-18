@@ -145,6 +145,14 @@ function onSendClick(): void {
 }
 
 function onKeydown(evt: KeyboardEvent): void {
+  // Esc 关面板：正在生成时也只关面板、不掐流。
+  // 掐流会留下"已中断"的半句话，而用户按 Esc 的意思通常是"我先看看合同"。
+  // 组件是 v-show 常驻的，关掉只是 display:none，state 与 session_id 都留着。
+  if (evt.key === 'Escape') {
+    evt.preventDefault()
+    emit('close')
+    return
+  }
   // 规则在 utils/send-key.ts 里，与对话页共用一个函数：Enter 发、Shift+Enter 换行，
   // 输入法组字期间不拦（打拼音按回车选词不该把半句话发出去）。
   if (!shouldSendOnKey(evt)) return
@@ -219,13 +227,22 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
       </p>
 
       <div v-for="(turn, i) in state.turns" :key="i" class="ic-turn" :class="`ic-${turn.role}`">
-        <p class="ic-text">{{ turn.content }}</p>
+        <!--
+          助手那一轮在生成期间 aria-live=off、答完切 polite：逐字播报只是噪音，
+          用户要听的是"整段答案"，而不是每个 token 都念一遍。
+        -->
+        <p
+          class="ic-text"
+          :aria-live="turn.role === 'assistant'
+            ? (busy && i === state.turns.length - 1 ? 'off' : 'polite')
+            : undefined"
+        >{{ turn.content }}</p>
         <div v-if="turn.citations.length" class="ic-citations">
           <CitationCard v-for="c in turn.citations" :key="c.statute_id" :citation="c" />
         </div>
       </div>
 
-      <p v-if="state.error !== ''" class="ic-error">{{ state.error }}</p>
+      <p v-if="state.error !== ''" class="ic-error" role="alert">{{ state.error }}</p>
     </div>
 
     <footer class="ic-composer">

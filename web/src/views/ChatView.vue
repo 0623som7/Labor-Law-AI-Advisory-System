@@ -812,10 +812,18 @@ onBeforeUnmount(() => {
               <span class="status-dot" aria-hidden="true" />
               <span class="status-text">{{ statusOf(m).text }}</span>
             </div>
-            <p v-if="m.content !== ''" class="content ll-pre-wrap">{{ m.content }}</p>
+            <!--
+              流式期间挂 aria-live="off"，答完切回 polite：
+              逐字播报会把屏幕阅读器刷成噪音，而"一次性念完整段"才是用户要的。
+            -->
+            <p
+              v-if="m.content !== ''"
+              class="content ll-pre-wrap"
+              :aria-live="sending && m === streamingMessage ? 'off' : 'polite'"
+            >{{ m.content }}</p>
 
             <p v-if="m.interrupted" class="meta-line">已中断</p>
-            <p v-if="m.error" class="error-line">{{ m.error }}</p>
+            <p v-if="m.error" class="error-line" role="alert">{{ m.error }}</p>
 
             <div v-if="m.citations.length > 0" class="citations">
               <CitationCard v-for="c in m.citations" :key="c.statute_id" :citation="c" />
