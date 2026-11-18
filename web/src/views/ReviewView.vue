@@ -587,6 +587,7 @@ void load()
              会话里。v-if 会在每次关闭时把会话打回初始态，下一次追问又新建一条
              会话（侧栏多一条、多一次完整模型调用、彼此没有上下文）。 -->
         <InlineChat
+          :key="fileId"
           v-show="chatOpen"
           :file-id="fileId"
           :seed="chatSeed"
