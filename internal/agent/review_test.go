@@ -668,7 +668,13 @@ func TestStatuteLookup(t *testing.T) {
 		{rules.LawLaborContract, "第十九条", "LCL-19", true},
 		{rules.LawLabor, "第七十二条", "LL-72", true},
 		{rules.LawLabor, "第四十八条", "LL-48", true},
-		{rules.LawSocialInsure, "第五十八条", "", false},
+		{rules.LawAnnualLeave, "第五条", "APL-5", true},
+		{rules.LawFemaleWorker, "第六条", "FLP-6", true},
+		{rules.LawWorkInjury, "第十四条", "WII-14", true},
+		{rules.LawLaborContractImpl, "第二十七条", "LCLR-27", true},
+		{rules.LawLaborDispute, "第二十七条", "LDA-27", true},
+		{rules.LawDispatch, "第三条", "LDT-3", true},
+		{rules.LawSocialInsure, "第五十八条", "SIL-58", true},
 		{rules.LawLabor, "第条", "", false},
 	}
 	for _, tc := range cases {

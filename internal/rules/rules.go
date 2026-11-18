@@ -110,7 +110,7 @@ type Rule struct {
 // 顺序固定是为了让 findings 的落库顺序稳定：同一次审查重试两次，
 // 数据库里的行序应当一致，前端 diff 才不会闪。
 func All() []Rule {
-	return []Rule{
+	out := []Rule{
 		ruleProbationMatch(),
 		ruleProbationSalary(),
 		ruleProbationOnce(),
@@ -120,6 +120,7 @@ func All() []Rule {
 		ruleTermNoEnd(),
 		ruleOvertimeFree(),
 	}
+	return append(out, AllExtended()...)
 }
 
 // RuleIDs 返回全部规则 ID，装配与文档用。

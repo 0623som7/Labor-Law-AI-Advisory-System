@@ -387,7 +387,7 @@ func (l *statuteLookup) fetch(ctx context.Context, ref rules.ArticleRef) []port.
 // statuteID 把 (法律名, 中文条号) 映射成种子数据的主键。
 //
 // 前缀来自 cmd/statuteseed 的导入规则：劳动合同法 LCL-、劳动法 LL-。
-// 未入库的法律（如社会保险法）返回 ok=false，调用方据此留空 legal_basis。
+// 扩展规则引用的专门法规也必须能取到原文；未入库的法律返回 ok=false。
 func statuteID(law, article string) (string, bool) {
 	var prefix string
 	switch law {
@@ -395,6 +395,20 @@ func statuteID(law, article string) (string, bool) {
 		prefix = "LCL-"
 	case rules.LawLabor:
 		prefix = "LL-"
+	case rules.LawSocialInsure:
+		prefix = "SIL-"
+	case rules.LawWorkInjury:
+		prefix = "WII-"
+	case rules.LawDispatch:
+		prefix = "LDT-"
+	case rules.LawAnnualLeave:
+		prefix = "APL-"
+	case rules.LawFemaleWorker:
+		prefix = "FLP-"
+	case rules.LawLaborContractImpl:
+		prefix = "LCLR-"
+	case rules.LawLaborDispute:
+		prefix = "LDA-"
 	default:
 		return "", false
 	}
