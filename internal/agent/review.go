@@ -157,7 +157,8 @@ func runReview(ctx context.Context, deps ReviewDeps, payload json.RawMessage, pr
 	}
 	if deps.Logger != nil {
 		deps.Logger.Info("合同要素抽取完成", "review_id", p.ReviewID,
-			"source", doc.Source, "clause_source", doc.ClausesSource, "missing", len(doc.Missing))
+			"source", doc.Source, "clause_source", doc.ClausesSource,
+			"missing", doc.Missing, "missing_count", len(doc.Missing))
 	}
 	// 截断必须让用户看见：只写日志等于把它埋进运维视野，而用户拿到的是一份
 	// "看起来正常、其实只分析了前 8 页"的结论——比直接报错更危险。
