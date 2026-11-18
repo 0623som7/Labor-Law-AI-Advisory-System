@@ -16,7 +16,9 @@ const router = createRouter({
   routes: [
     { path: '/', redirect: '/chat' },
     { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { requiresAuth: false } },
-    { path: '/chat', name: 'chat', component: () => import('@/views/ChatView.vue'), meta: { requiresAuth: true } },
+    // 会话 ID 放进路由而不是 localStorage：F5、后退、分享链接三件事要同时成立。
+    // 前者要能重建正在看的那条会话，后者要能一步一步退回去，分享要能直接把链接发给别人。
+    { path: '/chat/:sessionId?', name: 'chat', component: () => import('@/views/ChatView.vue'), meta: { requiresAuth: true } },
     { path: '/upload', name: 'upload', component: () => import('@/views/UploadView.vue'), meta: { requiresAuth: true } },
     { path: '/review/:fileId', name: 'review', component: () => import('@/views/ReviewView.vue'), meta: { requiresAuth: true } },
     // 审查历史并进上传工作台的左栏，独立页取消。

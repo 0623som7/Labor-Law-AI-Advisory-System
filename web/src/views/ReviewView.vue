@@ -148,10 +148,16 @@ const chatSeedSeq = ref(0)
 const chatSection = ref('')
 
 function askThis(f: Finding): void {
+  // 点按钮是 @click.stop，不会走 focusFinding；这一条既然是被追问的对象，
+  // 就把它设成当前条目——左边原文的高亮与右边卡的选中态才跟得上。
+  activeId.value = f.id
   chatSeed.value = buildAskContext(f)
   chatSection.value = (f.clause_ref?.section ?? '').trim()
   chatSeedSeq.value += 1
   chatOpen.value = true
+  // 抽屉占掉下方 40vh，卡片列表被挤矮——这张卡的「复制改法 / 就问这条」很可能
+  // 正好落在抽屉后面。等抽屉进 DOM 后再滚一次，让它整排留在抽屉上方。
+  void nextTick(() => revealCardIntoView(f.id))
 }
 
 /**
@@ -189,6 +195,47 @@ function focusFinding(f: Finding): void {
       .querySelector(`[data-finding="${f.id}"]`)
       ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   })
+}
+
+/** 卡片底边与卡片容器底边之间留的空，比「就问这条」那一排按钮略高一点。 */
+const REVEAL_GAP = 12
+
+/**
+ * 把某张卡滚进右侧可视区，并且保证它的操作按钮不被抽屉压住。
+ *
+ * 抽屉是 .panel 这个 flex 列的最后一个子项，卡片容器（.cards）的底边就是抽屉的顶边——
+ * 所以这里只用 .cards 的实时 rect，不写死 40vh 的像素值，也不去读抽屉内部结构。
+ *
+ * 为什么按"底边对齐"算而不是 scrollIntoView({block:'nearest'})：卡片展开法条后会
+ * 比可视区还高，nearest 在那种情况下只保证"露出来一点"，操作按钮仍然落在抽屉后面。
+ * 用户下一步要点按钮，所以必须保证底边可见。
+ */
+function revealCardIntoView(id: string): void {
+  const card = document.querySelector<HTMLElement>(`.cards [data-finding="${id}"]`)
+  if (!card) return
+  const scroller = card.closest<HTMLElement>('.cards')
+  if (!scroller) return
+  const box = card.getBoundingClientRect()
+  const view = scroller.getBoundingClientRect()
+  // 底边越界：往下滚，让按钮整排落在抽屉上方。
+  const down = box.bottom - (view.bottom - REVEAL_GAP)
+  if (down > 0) {
+    scroller.scrollBy({ top: down, behavior: 'smooth' })
+    return
+  }
+  // 顶边越界（卡片比可视区矮、被滚到闷在顶上）：滚回顶部。
+  const up = box.top - view.top
+  if (up < 0) scroller.scrollBy({ top: up, behavior: 'smooth' })
+}
+
+/**
+ * 展开/收起法条或修改建议后卡片高度变了，操作按钮可能整体沉到抽屉后面。
+ *
+ * 只处理"正在被追问的那一张"：别的卡展开时去动当前卡，会把用户正在看的位置抢走。
+ */
+function onFoldToggle(f: Finding): void {
+  if (activeId.value !== f.id) return
+  void nextTick(() => revealCardIntoView(f.id))
 }
 
 async function renderPdf(): Promise<void> {
@@ -558,7 +605,7 @@ void load()
 
             <p class="card-evidence">{{ f.evidence }}</p>
 
-            <details v-if="f.legal_basis.length" class="fold">
+            <details v-if="f.legal_basis.length" class="fold" @toggle="onFoldToggle(f)">
               <summary>{{ legalBasisTitle(f) }}</summary>
               <div v-for="(b, i) in f.legal_basis" :key="i" class="basis">
                 <p class="basis-head">{{ b.law }} {{ b.article }}</p>
@@ -566,7 +613,7 @@ void load()
               </div>
             </details>
 
-            <details class="fold">
+            <details class="fold" @toggle="onFoldToggle(f)">
               <summary>修改建议</summary>
               <p v-if="f.suggestion.original" class="sug-original">{{ f.suggestion.original }}</p>
               <p v-if="f.suggestion.revised" class="sug-revised">{{ f.suggestion.revised }}</p>

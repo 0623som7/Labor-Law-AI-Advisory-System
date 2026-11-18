@@ -10,7 +10,7 @@
 // 没等到 done 就断（抛 ApiError"连接中断，请重试"）。
 // 三者在界面上长得不一样，否则用户分不清"答完了"和"断线了"。
 
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/client'
@@ -33,6 +33,8 @@ import type { Session } from '@/api/types'
 import CitationCard from '@/components/CitationCard.vue'
 import { useAuthStore } from '@/stores/auth'
 import { createStreamSession, type StreamSession } from '@/utils/stream-session'
+import { shouldSendOnKey } from '@/utils/send-key'
+import { dedupeTitles, parseAskTitle, sessionTitle } from '@/utils/session-title'
 
 /** 页面上的一条消息。历史消息与流式消息共用这个形状，差别只在有没有引用。 */
 interface UiMessage {
@@ -64,9 +66,42 @@ const messages = ref<UiMessage[]>([])
 const input = ref('')
 const sending = ref(false)
 const collapsed = ref(false)
-const listLoading = ref(false)
+// 初值 true：首屏本来就在"还没拉到列表"的状态，先显示「加载中…」再落空态，
+// 不要先闪一下「还没有会话」。后续 refreshSessions() 不清这个标记（列表已有内容时不显示提示）。
+const listLoading = ref(true)
 const historyLoading = ref(false)
 const banner = ref('')
+/** 左栏搜索词。纯本地过滤，不发请求——搜会话不该产生流量，也不该因为网络抖动变空白。 */
+const search = ref('')
+
+/**
+ * 侧栏标题：把后端截出来的那句话重新拼一次，同名再按顺序编号。
+ *
+ * 后端标题是"用户原话截 20 字"，从审查页追问时原话是 `合同「第七条」 · …`，
+ * 同一个条款问几次就几条一模一样。这里认回条款号与规则号，再交给 dedupeTitles
+ * 加 #2/#3，用户才能从侧栏分出是哪一次。
+ */
+const sessionTitles = computed<string[]>(() => {
+  const raw = sessions.value.map((s) => {
+    const { section, ruleId } = parseAskTitle(s.title)
+    return sessionTitle({ section, ruleId, fallback: s.title })
+  })
+  return dedupeTitles(raw)
+})
+
+/** 标题跟着会话顺序走，模板里按下标取，避免再建一张 Map。 */
+const titleOf = (index: number): string => sessionTitles.value[index] ?? ''
+
+/** 列表行：标题在整张表上算好（去重序号不随搜索结果变），再按搜索词过滤。 */
+const visibleRows = computed<{ session: Session; title: string }[]>(() => {
+  const rows = sessions.value.map((s, i) => ({ session: s, title: titleOf(i) }))
+  const q = search.value.trim().toLowerCase()
+  if (q === '') return rows
+  return rows.filter((r) => r.title.toLowerCase().includes(q))
+})
+
+/** 有会话但被搜索滤空：文案要和"一条都没有"区分开。 */
+const searchEmpty = computed(() => search.value.trim() !== '' && visibleRows.value.length === 0)
 
 const scroller = ref<HTMLElement | null>(null)
 // 当前这一轮流式回答。卸载、点停止、退出登录都要把它作废：
@@ -217,8 +252,8 @@ async function refreshSessions(): Promise<void> {
   }
 }
 
-async function openSession(session: Session): Promise<void> {
-  if (sending.value) return
+/** 只负责把一条会话的正文拉进来；地址栏的事由调用方决定。 */
+async function loadSession(session: Session): Promise<void> {
   currentSessionId.value = session.id
   messages.value = []
   historyLoading.value = true
@@ -234,12 +269,55 @@ async function openSession(session: Session): Promise<void> {
   }
 }
 
+async function openSession(session: Session): Promise<void> {
+  if (sending.value) return
+  // 先改地址再拉正文：地址是这条会话的唯一真相，F5/后退都靠它重建。
+  // 这里用 push 而不是 replace：切会话算一次真实导航，后退要能退回上一条会话。
+  // 点当前这条不会重复入栈——下面的相等判断直接跳过。
+  if (route.params.sessionId !== session.id) {
+    void router.push({ name: 'chat', params: { sessionId: session.id } })
+  }
+  await loadSession(session)
+}
+
+/** 生成中被打断的那次导航：地址已经变了、正文还没跟上，等流结束补一次。 */
+let pendingSession: string | null = null
+
+/**
+ * 把「地址里的会话」落到界面上：重建正文。
+ *
+ * watch 与 onMounted 共用这一份实现，避免"恢复"和"跟随"两处各写一半而走岔。
+ * 生成中一律推迟：onMounted 是异步的，它的 applyRoute 可能在用户已经发问之后才跑到，
+ * 那时清空 messages 会把刚推上去的用户气泡和正在长的回答一起抹掉。
+ */
+async function applyRoute(want: string): Promise<void> {
+  if (sending.value) {
+    pendingSession = want
+    return
+  }
+  if (want === '') {
+    currentSessionId.value = ''
+    messages.value = []
+    return
+  }
+  const hit = sessions.value.find((s) => s.id === want)
+  if (hit) {
+    await loadSession(hit)
+    return
+  }
+  // 会话被删、或链接本来就是脏的：回落并告知一声，不要静默停在空对话上。
+  // 只在 want !== '' 时到这里，进 /chat 空态不弹。
+  ElMessage.info('这条会话不存在或已被删除')
+  void router.replace({ name: 'chat' })
+}
+
 function startNewSession(): void {
   if (sending.value) return
   currentSessionId.value = ''
   messages.value = []
   banner.value = ''
   input.value = ''
+  if (route.params.sessionId !== undefined) void router.replace({ name: 'chat' })
 }
 
 async function removeSession(session: Session): Promise<void> {
@@ -324,6 +402,8 @@ async function send(): Promise<void> {
           // 新会话的 ID 只从这里拿：服务端在建会话时生成，
           // 没有它下一轮就会又新建一个会话。
           currentSessionId.value = event.session_id
+          // 新会话一有 ID 就写进地址栏：不然 F5 之后这条会话就找不回来了。
+          void router.replace({ name: 'chat', params: { sessionId: event.session_id } })
           push({ type: 'meta' })
           if (startedNew) void refreshSessions()
         },
@@ -378,6 +458,14 @@ async function send(): Promise<void> {
     // 否则输入框永远发不出下一条（e2e 第 4 步就是抓这个）。
     sending.value = false
     if (!alive) return
+    // 生成期间后退留下的导航：现在流停了，按地址把正文补上。
+    // 不补的话地址显示 A、内容还是 B，且没人会再纠正——用户 F5 才发现"消息丢了"。
+    if (pendingSession !== null) {
+      const want = pendingSession
+      pendingSession = null
+      await applyRoute(want)
+      return
+    }
     await scrollToBottom()
   }
 }
@@ -386,14 +474,55 @@ function stop(): void {
   session?.close()
 }
 
+/** 复制按钮的"已复制"只亮给刚点的那一条，1.5 秒后自己灭。 */
+const copiedKey = ref('')
+/** 正在流式生成的那条（最后一条 assistant）：它的复制按钮要禁用。 */
+const streamingMessage = computed(() => (sending.value ? messages.value[messages.value.length - 1] ?? null : null))
+
+async function copyAnswer(m: UiMessage): Promise<void> {
+  if (m.content === '') return
+  try {
+    await navigator.clipboard.writeText(m.content)
+  } catch {
+    // 无 user activation、非 https、权限被拒都会走到这里。
+    // 弹一个能手动全选复制的框，比"复制失败"四个字有用。
+    window.prompt('复制这条回答：', m.content)
+    return
+  }
+  copiedKey.value = m.key
+  window.setTimeout(() => {
+    if (copiedKey.value === m.key) copiedKey.value = ''
+  }, 1500)
+}
+
 function onComposerKeydown(evt: Event | KeyboardEvent): void {
   // ElInput 把原生 keydown 透出来，类型上是 Event；不判一下拿不到 ctrlKey。
   if (!(evt instanceof KeyboardEvent)) return
-  // Ctrl+Enter 与 Cmd+Enter 都发：Mac 上没有 Ctrl 的习惯。
-  if (evt.key === 'Enter' && (evt.ctrlKey || evt.metaKey)) {
-    evt.preventDefault()
-    void send()
-  }
+  // 规则在 utils/send-key.ts 里，与审查页抽屉共用一份：Enter 发、Shift+Enter 换行。
+  if (!shouldSendOnKey(evt)) return
+  // preventDefault 只拦下"换行"，发送与否交给 send() 里的 sending 判断：
+  // 生成中按 Enter 不该插一个空行，也不该打断正在跑的那一轮。
+  evt.preventDefault()
+  void send()
+}
+
+/**
+ * 粘贴超长文本时提示一次。
+ *
+ * 必须看 clipboardData 的原始长度：maxlength 先把内容截到 4000，
+ * 等 v-model 更新完再看 input.value.length 永远是 4000，判不出"被截了"。
+ */
+const INPUT_LIMIT = 4000
+let limitHinted = false
+
+function onPasteLimit(evt: ClipboardEvent): void {
+  const pasted = evt.clipboardData?.getData('text') ?? ''
+  if (pasted.length <= INPUT_LIMIT || limitHinted) return
+  limitHinted = true
+  ElMessage.warning(`单条最多 ${INPUT_LIMIT} 字，超出的部分已截断`)
+  window.setTimeout(() => {
+    limitHinted = false
+  }, 3000)
 }
 
 async function signOut(): Promise<void> {
@@ -419,7 +548,24 @@ onMounted(async () => {
   }
   await auth.loadMe()
   await refreshSessions()
+
+  // 地址里带着会话 ID 就把它恢复出来（F5、深链、后退都走这条路）。
+  // 查不到就抹掉那段脏 ID：留在地址栏上会让人以为"这条会话还在"。
+  await applyRoute(String(route.params.sessionId ?? ''))
 })
+
+// 地址变了才拉正文：后退/前进、点会话、点新对话都只改地址，
+// 正文由这里统一跟着走，避免两处各写一半。
+watch(
+  () => route.params.sessionId,
+  async (id) => {
+    const want = String(id ?? '')
+    // 自己刚写的地址不要再触发一次加载（openSession 已经拉过了）。
+    if (want === currentSessionId.value) return
+    // 生成中的打断由 applyRoute 记进 pendingSession，收尾时补切。
+    await applyRoute(want)
+  },
+)
 
 onBeforeUnmount(() => {
   // 用户切走页面/退出时，流必须跟着停：组件都没了，onDelta 还在改 messages，
@@ -448,25 +594,35 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="!collapsed" class="sidebar-body">
+        <input
+          v-if="sessions.length > 0"
+          v-model="search"
+          class="session-search"
+          type="search"
+          placeholder="搜索会话"
+          aria-label="搜索会话"
+        />
         <p v-if="listLoading && sessions.length === 0" class="sidebar-hint">加载中…</p>
         <p v-else-if="sessions.length === 0" class="sidebar-hint">还没有会话，发第一句就会出现在这里。</p>
+        <p v-else-if="searchEmpty" class="sidebar-hint">没有匹配的会话</p>
         <ul v-else class="session-list">
           <li
-            v-for="s in sessions"
-            :key="s.id"
+            v-for="row in visibleRows"
+            :key="row.session.id"
             class="session-item"
-            :class="{ active: s.id === currentSessionId }"
+            :class="{ active: row.session.id === currentSessionId }"
+            :data-session-id="row.session.id"
           >
-            <button type="button" class="session-title" :disabled="sending" @click="openSession(s)">
-              <span class="session-name">{{ s.title }}</span>
-              <span class="session-time">{{ formatRelative(s.updated_at) }}</span>
+            <button type="button" class="session-title" :disabled="sending" @click="openSession(row.session)">
+              <span class="session-name">{{ row.title }}</span>
+              <span class="session-time">{{ formatRelative(row.session.updated_at) }}</span>
             </button>
             <button
               type="button"
               class="session-del"
               title="删除会话"
               :disabled="sending"
-              @click="removeSession(s)"
+              @click="removeSession(row.session)"
             >
               ×
             </button>
@@ -570,6 +726,17 @@ onBeforeUnmount(() => {
             <div v-if="m.citations.length > 0" class="citations">
               <CitationCard v-for="c in m.citations" :key="c.statute_id" :citation="c" />
             </div>
+
+            <div v-if="m.role === 'assistant' && m.content !== ''" class="bubble-actions">
+              <button
+                type="button"
+                class="copy-btn"
+                :disabled="sending && m === streamingMessage"
+                @click="copyAnswer(m)"
+              >
+                {{ copiedKey === m.key ? '已复制' : '复制' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -629,8 +796,9 @@ onBeforeUnmount(() => {
           resize="none"
           maxlength="4000"
           show-word-limit
-          placeholder="描述你的情况，Ctrl+Enter 发送"
+          placeholder="描述你的情况，Enter 发送，Shift+Enter 换行"
           @keydown="onComposerKeydown"
+          @paste="onPasteLimit"
         />
         <div class="composer-actions">
           <el-button v-if="sending" @click="stop">停止</el-button>
@@ -705,6 +873,23 @@ onBeforeUnmount(() => {
   padding: 0;
   margin: 0;
   list-style: none;
+}
+
+/* 搜索框：左栏只有两百多像素，不加边框阴影，一条细线隔开就够。 */
+.session-search {
+  width: 100%;
+  padding: 5px 8px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--ll-text);
+  background: var(--ll-bg);
+  border: 1px solid var(--ll-border, #e5e7eb);
+  border-radius: 6px;
+  outline: none;
+}
+
+.session-search:focus {
+  border-color: var(--ll-primary);
 }
 
 .session-item {
@@ -985,6 +1170,50 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   margin-top: 10px;
+}
+
+/* 复制入口平时是淡的、悬停才变实：投影演示时鼠标不在气泡上，观众也要看得出这里能复制；
+   常亮到底又会把引用卡片挤下去，所以取中间态（0.55）。 */
+.bubble-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+  /* 常驻可见：投影演示时讲解者的鼠标不在气泡上，观众也要看得出这里能复制 */
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.row:hover .bubble-actions,
+.bubble-actions:focus-within {
+  opacity: 1;
+}
+
+/* 触屏没有 hover，常亮，否则手机上永远点不到。 */
+@media (hover: none) {
+  .bubble-actions {
+    opacity: 1;
+  }
+}
+
+.copy-btn {
+  font-size: 12px;
+  color: #6b7280;
+  background: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.copy-btn:hover:not(:disabled) {
+  color: var(--ll-primary, #1d4ed8);
+  border-color: var(--ll-primary, #1d4ed8);
+}
+
+.copy-btn:disabled {
+  color: #c0c4cc;
+  border-color: #ebeef5;
+  cursor: not-allowed;
 }
 
 .composer {

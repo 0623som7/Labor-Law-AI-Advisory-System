@@ -29,6 +29,7 @@ import {
   takePending,
 } from '@/utils/inline-chat'
 import type { InlineState } from '@/utils/inline-chat'
+import { shouldSendOnKey } from '@/utils/send-key'
 
 const props = defineProps<{ fileId: string; seed: string; seedSeq: number; section: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -144,10 +145,9 @@ function onSendClick(): void {
 }
 
 function onKeydown(evt: KeyboardEvent): void {
-  // Enter 发送、Shift+Enter 换行：中文输入法组字期间不能拦，
-  // 否则打拼音按回车选词会直接发出去半句话。
-  if (evt.key !== 'Enter' || evt.shiftKey) return
-  if (evt.isComposing) return
+  // 规则在 utils/send-key.ts 里，与对话页共用一个函数：Enter 发、Shift+Enter 换行，
+  // 输入法组字期间不拦（打拼音按回车选词不该把半句话发出去）。
+  if (!shouldSendOnKey(evt)) return
   evt.preventDefault()
   void send(input.value)
 }
