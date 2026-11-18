@@ -27,6 +27,7 @@ import {
 } from '@/utils/chat-progress'
 import { historyBubbles } from '@/utils/chat-history'
 import { fileCardLabel } from '@/utils/file-card'
+import { prependSession } from '@/utils/session-list'
 import { contextFileId, contextLabel, shouldPrefill } from '@/utils/ask-this'
 import { formatRelative } from '@/utils/format-relative'
 import type { Session } from '@/api/types'
@@ -307,10 +308,23 @@ async function applyRoute(want: string): Promise<void> {
     await loadSession(hit)
     return
   }
-  // 会话被删、或链接本来就是脏的：回落并告知一声，不要静默停在空对话上。
-  // 只在 want !== '' 时到这里，进 /chat 空态不弹。
-  ElMessage.info('这条会话不存在或已被删除')
-  void router.replace({ name: 'chat' })
+  // 侧栏只装了首屏 50 条：更早的会话、别的设备新建的会话都不在 sessions 里。
+  // 找不到不代表链接是脏的，先按 id 问一次后端，只有它明确说「没有这条」才回落。
+  try {
+    const fresh = await sessionApi.getSession(want)
+    sessions.value = prependSession(sessions.value, fresh)
+    await loadSession(fresh)
+  } catch (error) {
+    if (error instanceof ApiError && error.code === 40401) {
+      // 会话被删、或链接本来就是脏的：回落并告知一声，不要静默停在空对话上。
+      // 只在 want !== '' 时到这里，进 /chat 空态不弹。
+      ElMessage.info('这条会话不存在或已被删除')
+      void router.replace({ name: 'chat' })
+      return
+    }
+    // 网络抖动、后端 5xx：留着地址不动，用户刷新一次就能重试。
+    banner.value = '这条会话没能打开，稍后再试'
+  }
 }
 
 function startNewSession(): void {
