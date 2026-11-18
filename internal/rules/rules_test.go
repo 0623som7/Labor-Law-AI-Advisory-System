@@ -34,8 +34,8 @@ func mustHit(t *testing.T, r Rule, c Contract, n int) []Fragment {
 
 func TestRuleRegistry(t *testing.T) {
 	all := All()
-	if len(all) != 8 {
-		t.Fatalf("规则数 %d，期望 8", len(all))
+	if len(all) != 20 {
+		t.Fatalf("规则数 %d，期望 20", len(all))
 	}
 	seen := make(map[string]bool, len(all))
 	for _, r := range all {
@@ -54,8 +54,8 @@ func TestRuleRegistry(t *testing.T) {
 		}
 	}
 	ids := RuleIDs()
-	if len(ids) != 8 {
-		t.Fatalf("RuleIDs 返回 %d 个，期望 8", len(ids))
+	if len(ids) != 20 {
+		t.Fatalf("RuleIDs 返回 %d 个，期望 20", len(ids))
 	}
 }
 
@@ -592,7 +592,7 @@ func TestCheckOrderAndFilter(t *testing.T) {
 	if len(only) != 1 || only[0].ID != "R-DEPOSIT" {
 		t.Fatalf("Filter 结果错误：%+v", only)
 	}
-	if got := Filter(nil); len(got) != 8 {
+	if got := Filter(nil); len(got) != 20 {
 		t.Fatalf("空过滤器应返回全部规则，实际 %d", len(got))
 	}
 	if got := Filter([]string{"R-NOT-EXIST"}); len(got) != 0 {
