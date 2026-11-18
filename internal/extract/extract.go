@@ -115,6 +115,9 @@ func New(client port.Client) *Extractor { return &Extractor{client: client} }
 //
 // 只有在"缺规则依赖的字段"或"版面里切不出条款"时才调模型：规则缺字段会整条
 // 跳过，用户看到的是"审查通过"，这是最危险的失败形态。
+//
+// 而"缺"还要再分一层：原文写了但正则没认出来（值得调），原文根本没写（调了也是空）。
+// 后者靠 hasAttainableCriticalMissing 挡住，见 attainable.go。
 func (e *Extractor) Extract(ctx context.Context, text string, blocks []port.TextBlock) (*Document, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -149,7 +152,9 @@ func (e *Extractor) Extract(ctx context.Context, text string, blocks []port.Text
 	}
 
 	// 3) 够用就直接返回，不调模型。
-	if clauseSource == ClauseSourceLayout && !hasCriticalMissing(missing) {
+	// 缺的字段若在原文里根本没有凭据（合同没写终止日、没写试用期工资），
+	// 模型补不出来也照样花 6.8 秒，这里一并短路掉。
+	if clauseSource == ClauseSourceLayout && !hasAttainableCriticalMissing(text, missing) {
 		return doc, nil
 	}
 

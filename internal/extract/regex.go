@@ -326,23 +326,12 @@ func clip(v, lo, hi int) int {
 // criticalFields 是规则层真正会读的字段。
 //
 // 缺这些必须补模型：规则在字段缺失时会整条跳过，缺陷于是变成"审查通过"。
-// 这也是唯一值得为它付一次模型调用的情形。
+// 但"缺"不等于"模型补得出来"——是否值得调模型由 hasAttainableCriticalMissing
+// （attainable.go）判断，这里只负责列出字段名。
 var criticalFields = []string{
 	"contract_type", "term_start", "term_end", "probation_months",
 	"salary_monthly", "salary_probation", "social_insurance",
 	"deposit", "has_overtime_pay",
-}
-
-// hasCriticalMissing 判断缺失字段里是否有规则依赖项。
-func hasCriticalMissing(missing []string) bool {
-	for _, m := range missing {
-		for _, c := range criticalFields {
-			if m == c {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // mergeMissing 只把模型给出的、正则没抽到的字段填进来。
