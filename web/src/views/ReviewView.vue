@@ -28,6 +28,7 @@ import type { Finding, ParsedDoc, Review } from '@/api/types'
 import { SEVERITY_LABEL, findingsOnPage, legalBasisTitle, sortBySeverity, summarizeFindings } from '@/utils/findings'
 import InlineChat from '@/components/InlineChat.vue'
 import { buildAskContext } from '@/utils/ask-this'
+import { reviewProgressLine } from '@/utils/review-progress'
 import { shouldAutostart, shouldOfferStart } from '@/utils/review-restore'
 import {
   findingPage,
@@ -75,8 +76,9 @@ const canvases: Array<HTMLCanvasElement | null> = []
 const review = ref<Review | null>(null)
 const findings = ref<Finding[]>([])
 const running = ref(false)
-const elapsed = ref(0)
-const stage = ref('')
+/** 本轮开始的本机时间。阶段文案按"已等毫秒"算，所以记起点而不是累加秒数。 */
+const startedAt = ref(0)
+const elapsedMs = ref(0)
 const reviewError = ref('')
 /** 左侧与右侧共享的高亮条目，只此一个来源。 */
 const activeId = ref<string | null>(null)
@@ -85,6 +87,9 @@ let pollTimer: number | null = null
 let tickTimer: number | null = null
 let disposed = false
 let reviewId: string | null = null
+
+// 审查进行中的那一行文案：按已等毫秒换档，结束/失败立刻不可见。
+const progressLine = computed(() => reviewProgressLine({ elapsedMs: elapsedMs.value, running: running.value }))
 
 const summary = computed(() => summarizeFindings(findings.value))
 const sorted = computed(() => sortBySeverity(findings.value))
@@ -224,10 +229,12 @@ async function renderPdf(): Promise<void> {
 
 function startTicking(): void {
   stopTicking()
-  elapsed.value = 0
+  startedAt.value = Date.now()
+  elapsedMs.value = 0
+  // 200ms 而不是 1000ms：第一档只有 1500ms，秒级 tick 会让它晚半拍才换文案。
   tickTimer = window.setInterval(() => {
-    elapsed.value += 1
-  }, 1000)
+    elapsedMs.value = Date.now() - startedAt.value
+  }, 200)
 }
 
 function stopTicking(): void {
@@ -251,7 +258,6 @@ async function pollTask(taskId: string): Promise<void> {
     if (disposed) return
     const task = await getTask(taskId)
     if (disposed) return
-    stage.value = task.stage || ''
     if (task.status === 'succeeded') {
       if (reviewId) await showResults(reviewId)
       running.value = false
@@ -287,7 +293,6 @@ async function startReview(): Promise<void> {
   running.value = true
   reviewError.value = ''
   findings.value = []
-  stage.value = ''
   startTicking()
   try {
     const started = await requestReview(fileId.value)
@@ -326,7 +331,6 @@ async function adoptRunningReview(): Promise<void> {
     if (existing && (existing.status === 'pending' || existing.status === 'running') && existing.task_id) {
       reviewId = existing.id
       running.value = true
-      stage.value = '这份合同正在审查中，继续等待结果'
       startTicking()
       await pollTask(existing.task_id)
       return
@@ -358,7 +362,6 @@ async function restoreExisting(): Promise<void> {
     // 还在跑：接着等它的任务，别让用户看到"没结果"。
     if ((existing.status === 'pending' || existing.status === 'running') && existing.task_id) {
       running.value = true
-      stage.value = '继续等待上次的审查结果'
       startTicking()
       await pollTask(existing.task_id)
       return
@@ -528,10 +531,8 @@ void load()
         </div>
 
         <div v-if="running" class="running">
+          <p v-if="progressLine.visible" class="running-line">{{ progressLine.text }}</p>
           <el-skeleton :rows="6" animated />
-          <p class="running-line">
-            已用时 {{ elapsed }} 秒<span v-if="stage"> · {{ stage }}</span>
-          </p>
         </div>
 
         <p v-else-if="reviewError" class="review-error">{{ reviewError }}</p>
@@ -835,9 +836,9 @@ void load()
 }
 
 .running-line {
-  margin: 12px 0 0;
-  font-size: 13px;
-  color: #6b7280;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #9ca3af;
 }
 
 .review-error {
