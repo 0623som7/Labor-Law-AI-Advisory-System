@@ -538,7 +538,7 @@ void load()
         <p v-else-if="reviewError" class="review-error">{{ reviewError }}</p>
 
         <p v-else-if="!sorted.length" class="empty">
-          还没有审查结果。点「开始审查」，8 条规则会在十几秒内跑完。
+          还没有审查结果。点「开始审查」，8 条规则通常几秒内跑完；合同要素要靠模型补齐时会久一些。
         </p>
 
         <ul v-else class="cards">
