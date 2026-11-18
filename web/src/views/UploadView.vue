@@ -2,7 +2,7 @@
 // 上传页。
 //
 // 只做三件事：选文件、前端先校验一遍、传完跳预览页。
-// 校验放在上传前不是为了性能，是为了 20MB 的包在慢网上飞完四十秒才被后端拒。
+// 校验放在上传前不是为了性能，是为了 5MB 的包在慢网上飞完几十秒才被后端拒。
 // file.type 在部分系统上是空串（尤其是从网盘拖下来的 pdf），所以后缀再判一次。
 
 import { computed, ref } from 'vue'
@@ -11,9 +11,8 @@ import { ElMessage } from 'element-plus'
 
 import { ApiError } from '@/api/client'
 import { uploadFile } from '@/api/files'
+import { MAX_UPLOAD_LABEL, validateUpload } from '@/utils/upload-validate'
 import ReviewHistoryList from '@/components/ReviewHistoryList.vue'
-
-const MAX_BYTES = 20 * 1024 * 1024
 
 const router = useRouter()
 
@@ -33,7 +32,17 @@ const sizeText = computed(() => {
 function onFileChange(uploadFile_: { raw?: File }): void {
   errorText.value = ''
   percent.value = null
-  picked.value = uploadFile_.raw ?? null
+  const file = uploadFile_.raw ?? null
+  // 选完就判一次：不合格的文件不进"待上传"状态，用户不必点一次"开始上传"
+  // 才知道自己选错了，也不会在慢网上白传几十秒才被拒。
+  const invalid = file ? validateUpload(file) : null
+  if (invalid) {
+    ElMessage.error(invalid)
+    errorText.value = invalid
+    picked.value = null
+    return
+  }
+  picked.value = file
 }
 
 function onExceed(): void {
@@ -45,18 +54,10 @@ function openReview(fileId: string): void {
   void router.push({ name: 'review', params: { fileId } })
 }
 
-/** 早失败：这两条与后端 41301/41501 的判断保持一致，只是省一次往返。 */
-function validate(file: File): string | null {
-  if (file.size > MAX_BYTES) return '文件超过 20MB'
-  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
-  if (!isPdf) return '只支持 PDF 文件'
-  return null
-}
-
 async function start(): Promise<void> {
   const file = picked.value
   if (!file || uploading.value) return
-  const invalid = validate(file)
+  const invalid = validateUpload(file)
   if (invalid) {
     errorText.value = invalid
     ElMessage.error(invalid)
@@ -78,6 +79,12 @@ async function start(): Promise<void> {
       query: { autostart: '1' },
     })
   } catch (err) {
+    // 无文本层：文件已经落库了（后端先存记录再解析），只是审查无从下手。
+    // 直接把它送进审查页看"为什么不能审"，比停在上传页只说一句错误有用。
+    if (err instanceof ApiError && err.code === 42201 && err.fields?.file_id) {
+      await router.push({ name: 'review', params: { fileId: err.fields.file_id } })
+      return
+    }
     const message = err instanceof ApiError ? err.message : '上传失败，请重试'
     errorText.value = message
     ElMessage.error(message)
@@ -121,7 +128,7 @@ async function start(): Promise<void> {
           <div class="drop-inner">
             <div class="drop-icon">PDF</div>
             <p class="drop-main">把合同拖到这里，或<em>点击选择文件</em></p>
-            <p class="drop-hint">只支持 PDF，单份不超过 20MB</p>
+            <p class="drop-hint">只支持 PDF，单份不超过 {{ MAX_UPLOAD_LABEL }}</p>
           </div>
         </el-upload>
 
