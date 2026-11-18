@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,13 @@ const (
 	// chatSessionTitleRunes 是新建会话时从用户原话截取的标题长度。
 	// 侧边栏一行大约放得下 12 个汉字，20 是留够余量又不至于撑爆列表的折中。
 	chatSessionTitleRunes = 20
+
+	// chatSessionTitleStructuredRunes 是「合同「第X条」 · 规则号」这类结构化标题的上限。
+	//
+	// 比普通提问宽一倍：普通提问是用户自己写的话，截短了照样能认；结构化标题
+	// 少一个字符就可能把规则号切成两条会话共用的前缀，等于没解决问题。
+	// 40 字在 320px 的侧栏里仍是一行（超出用 ellipsis 收尾），不会撑破布局。
+	chatSessionTitleStructuredRunes = 40
 
 	// chatPersistTimeout 是落库的独立超时。
 	// 不能复用请求 ctx：客户端在最后一帧之后立刻断开是常态，
@@ -331,14 +339,67 @@ func (a *API) resolveAttachment(c *gin.Context, fileID string) ([]port.Attachmen
 //
 // 按 rune 截断再而不是按字节：汉字 3 字节，按字节切会切出半个字符，
 // MySQL 严格模式下直接报 1406。
+// sectionRe / ruleRe 用来认出审查页预填问句的两个关键片段：
+// 条款位置「合同「第七条」」与规则号「结论 R-PROBATION-ONCE」。
+// 认不出来就走原来的硬截断，不猜。
+var (
+	sectionRe = regexp.MustCompile(`合同「([^」]{1,200})」`)
+	ruleRe    = regexp.MustCompile(`结论\s+([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)`)
+)
+
 func sessionTitleFromInput(input string) string {
 	// 换行会把侧边栏撑成两行，统一压成空格。
 	flat := strings.Join(strings.Fields(input), " ")
+	if t, ok := structuredTitle(flat); ok {
+		return t
+	}
 	r := []rune(flat)
 	if len(r) > chatSessionTitleRunes {
 		return string(r[:chatSessionTitleRunes]) + "…"
 	}
 	return string(r)
+}
+
+// structuredTitle 把审查页「在对话页继续」的预填问句压成标题。
+//
+// 预填问句的固定形状是「合同「第七条」 … 结论 R-PROBATION-ONCE」，直接按
+// 20 字硬截会把规则号切掉——侧边栏于是出现三条一模一样的「合同「第七条」」，
+// 用户分不清哪条问的是哪个问题。规则号是这句话里信息量最大的部分，
+// 所以按结构拼：先保条款、再保规则号，超长时先砍条款、最后才砍规则号前缀。
+func structuredTitle(flat string) (string, bool) {
+	sec := sectionRe.FindStringSubmatch(flat)
+	rule := ruleRe.FindStringSubmatch(flat)
+	if sec == nil || rule == nil {
+		return "", false
+	}
+	head, id := sec[1], rule[1]
+	full := "合同「" + head + "」 · " + id
+	if len([]rune(full)) <= chatSessionTitleStructuredRunes {
+		return full, true
+	}
+	// 先砍条款：留出 "合同「」 · " 与 id 的位置，剩下的都给条款。
+	budget := chatSessionTitleStructuredRunes - len([]rune("合同「」 · "+id))
+	if budget >= 2 {
+		return "合同「" + clipRunes(head, budget) + "」 · " + id, true
+	}
+	// 条款砍到没有也放不下规则号：退成只报条款，至少不出现空的「」。
+	rest := chatSessionTitleStructuredRunes - len([]rune("合同「」 · "))
+	if rest < 2 {
+		return "合同「" + head + "」", true
+	}
+	return "合同「」 · " + clipRunes(id, rest), true
+}
+
+// clipRunes 按字符截断并在截断时补省略号。
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return "…"
+	}
+	return string(r[:n-1]) + "…"
 }
 
 // persistTurn 把一轮问答写进库：user 消息 + assistant 消息 + 会话时间戳。
