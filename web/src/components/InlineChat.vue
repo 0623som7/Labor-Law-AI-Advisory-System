@@ -11,7 +11,7 @@
 //   2. 回答用 {{ }} 渲染，绝不 v-html：模型输出是不可信文本；
 //   3. 卸载时 abort()，否则离开页面后 SSE 连接还挂着。
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { ApiError } from '@/api/client'
@@ -36,6 +36,18 @@ const emit = defineEmits<{ close: [] }>()
 const state = ref<InlineState>(initialInlineState())
 const input = ref('')
 const scroller = ref<HTMLElement | null>(null)
+
+/** 当前追问的上下文（一行文字，来自审查结论，不含问句）。 */
+const context = ref(props.seed)
+/** 上一次真正发给模型的上下文；没变就不再重复拼前缀。 */
+const sentContext = ref('')
+
+const inputEl = ref<HTMLTextAreaElement | null>(null)
+
+async function focusInput(): Promise<void> {
+  await nextTick()
+  inputEl.value?.focus()
+}
 
 /** 当前正在被写入的那条 assistant 气泡。 */
 const activeIndex = ref(-1)
@@ -68,7 +80,13 @@ async function send(raw: string): Promise<void> {
     return
   }
 
-  const started = beginTurn(state.value, text)
+  // 上下文变了才拼：同一目标连问几句不必重复 120 字，
+  // 但用户中途点了另一张卡时必须重新告诉模型"现在问的是哪一条"。
+  const withContext = context.value !== '' && context.value !== sentContext.value
+  const outgoing = withContext ? `${context.value}\n\n${text}` : text
+  if (withContext) sentContext.value = context.value
+
+  const started = beginTurn(state.value, outgoing)
   state.value = started.state
   activeIndex.value = started.index
   input.value = ''
@@ -84,7 +102,7 @@ async function send(raw: string): Promise<void> {
   try {
     result = await streamChat(
       {
-        input: text,
+        input: outgoing,
         ...(state.value.sessionId === '' ? {} : { session_id: state.value.sessionId }),
         ...(withFile && props.fileId !== '' ? { file_id: props.fileId } : {}),
       },
@@ -134,13 +152,15 @@ function onKeydown(evt: KeyboardEvent): void {
   void send(input.value)
 }
 
-// 看的是「第几次点击」而不是 seed 文本：连点同一张卡时 seed 一个字都不变，
-// 拿文本判重会把第二次点击吞掉。序号变一次就发一次。
+// 点「就问这条」只更新上下文并聚焦输入框，绝不代发。
+// 用户点的是"我想就这一条提问"，不是"替我提问"。曾经这里直接 send(props.seed)，
+// 结果是每点一次就往历史里塞一句他没问过的话，还把他上一段问答顶出视口。
+// 首次挂载（old === undefined，抽屉此时是 display:none）只设置上下文、不抢焦点。
 watch(
   () => props.seedSeq,
-  () => {
-    if (props.seed === '') return
-    void send(props.seed)
+  (_cur, old) => {
+    context.value = props.seed
+    if (old !== undefined) void focusInput()
   },
   { immediate: true },
 )
@@ -191,6 +211,8 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
       <button type="button" class="ic-close" title="关闭" @click="emit('close')">×</button>
     </header>
 
+    <p v-if="context !== ''" class="ic-context" :title="context">正在追问：{{ context }}</p>
+
     <div ref="scroller" class="ic-body">
       <p v-if="state.turns.length === 0" class="ic-empty">
         点风险卡片上的「就问这条」，或直接在这里问这份合同的问题。
@@ -208,10 +230,12 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 
     <footer class="ic-composer">
       <textarea
+        ref="inputEl"
         v-model="input"
         class="ic-input"
         rows="2"
-        placeholder="追问这份合同的问题，Enter 发送，Shift+Enter 换行"
+        :placeholder="props.section !== '' ? `想问「${props.section}」什么？` : '就这份合同提问…'"
+        title="Enter 发送，Shift+Enter 换行"
         :disabled="busy"
         @keydown="onKeydown"
       ></textarea>
@@ -241,6 +265,20 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   align-items: center;
   padding: 8px 12px;
   border-bottom: 1px solid #f0f1f3;
+}
+
+/* 上下文条比标题低一档：它是"现在在问哪一条"的提示，不该抢标题的位置。
+   单行截断而不是折行——折成三行把抽屉里能看答案的高度吃掉一半。 */
+.ic-context {
+  margin: 0;
+  padding: 6px 12px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #f9fafb;
+  color: #4b5563;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ic-title {

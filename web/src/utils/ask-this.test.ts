@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { buildAskQuestion, contextFileId, contextLabel, shouldPrefill } from './ask-this.ts'
+import { buildAskContext, contextFileId, contextLabel, shouldPrefill } from './ask-this.ts'
 import type { Finding } from '@/api/types'
 
 function finding(over: Partial<Finding> = {}): Finding {
@@ -20,23 +20,42 @@ function finding(over: Partial<Finding> = {}): Finding {
   }
 }
 
-test('带出条款位置与标题', () => {
-  const q = buildAskQuestion(finding())
-  assert.ok(q.includes('第二条 试用期'), `应含条款位置：${q}`)
-  assert.ok(q.includes('试用期期限超过法定上限'), `应含标题：${q}`)
+test('上下文只陈述不提问', () => {
+  const line = buildAskContext(finding())
+  for (const bad of ['？', '?', '怎么办', '吗']) {
+    assert.ok(!line.includes(bad), `上下文里不该出现「${bad}」：${line}`)
+  }
 })
 
-test('证据为空时不出现空的冒号残句', () => {
-  const q = buildAskQuestion(finding({ evidence: '' }))
-  assert.ok(!q.includes('：'), `空证据不该留冒号：${q}`)
-  assert.ok(q.includes('试用期期限超过法定上限'))
+test('带出条款位置与证据首句', () => {
+  const line = buildAskContext(finding())
+  assert.ok(line.includes('合同「第二条 试用期」'), `应含条款位置：${line}`)
+  assert.ok(line.includes('约定试用期 8 个月'), `应含证据首句：${line}`)
+  // 证据常有两三句，只取第一句，否则这一行会被撑成两倍长。
+  assert.ok(!line.includes('法定上限 2 个月。'), `第二句不该带进来：${line}`)
 })
 
-test('超长证据截断到 200 字以内并留省略号', () => {
-  const q = buildAskQuestion(finding({ evidence: '很长的证据'.repeat(100) }))
-  assert.ok(q.length <= 200, `总长应 ≤ 200，实际 ${q.length}`)
-  assert.ok(q.includes('…'), `截断处应有省略号：${q}`)
-  assert.ok(q.endsWith('公司不同意改，我该怎么办？'), `末尾那一问要留着：${q}`)
+test('证据为空时不留连续分隔符', () => {
+  const line = buildAskContext(
+    finding({
+      evidence: '',
+      rule_id: 'R-PROBATION-SALARY',
+      clause_ref: { section: '第四条', page: 2, bbox: [57, 515, 496, 526] },
+    }),
+  )
+  assert.equal(line, '合同「第四条」 · 结论 R-PROBATION-SALARY')
+  assert.ok(!line.includes('· ·'), `不该出现连续分隔符：${line}`)
+})
+
+test('没有条款号时用「该条款」兜底', () => {
+  const line = buildAskContext(finding({ clause_ref: { section: '  ', page: 0, bbox: [0, 0, 0, 0] } }))
+  assert.ok(line.startsWith('合同「该条款」'), `应兜底为「该条款」：${line}`)
+})
+
+test('超长时截断到 120 字并留省略号（总长 121）', () => {
+  const line = buildAskContext(finding({ evidence: '很长的证据'.repeat(100) }))
+  assert.equal(line.length, 121)
+  assert.ok(line.endsWith('…'), `截断处应以省略号结尾：${line}`)
 })
 
 test('只有非空字符串 ask 才预填', () => {

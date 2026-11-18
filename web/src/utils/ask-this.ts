@@ -1,32 +1,30 @@
 import type { Finding } from '@/api/types'
 
-/** 预填句子的总长度上限。
+/** 上下文一行的长度上限。
  *
- *  对话输入上限是 4000 字，这里只留 200：预填的目的是替用户把"哪一条、
- *  什么毛病"说清楚，剩下的由他自己补。填满一屏反而要删。 */
-const MAX_LEN = 200
+ *  这一行会拼在用户问题前面发给模型，也会沉淀进历史气泡，所以必须短：
+ *  超过一屏的"前言"比没有前言更难读，用户还得滚动才看得到自己问的那句。 */
+const MAX_LEN = 120
 
-/** 句子末尾固定带这一问。
+/** 把一条审查结论变成一行"正在追问什么"的上下文。
  *
- *  审查页看到风险后最常见的下一句就是"那我能怎么办"，写死它可以让用户
- *  直接回车，也可以接着往下改。 */
-const TAIL = '公司不同意改，我该怎么办？'
-
-/** 把一条审查结论变成一句可以直接发给顾问的追问。
+ *  只陈述、不提问——问什么由用户决定。这三样（条款位置、证据首句、规则 ID）
+ *  全部来自规则引擎，不含模型生成内容，所以不会替用户编出一个他没问过的事实。
  *
- *  只用条款位置、标题与证据三样：这三样是规则引擎自己的输出，不含模型生成内容，
- *  所以预填的句子不会替用户"编"出一个他没问过的事实。 */
-export function buildAskQuestion(f: Finding): string {
-  const section = (f.clause_ref?.section ?? '').trim()
-  const head = section ? `合同「${section}」这一条被判为「${f.title}」` : `这份合同被判为「${f.title}」`
-  const evidence = (f.evidence ?? '').trim()
+ *  为什么必须有这一行：后端 chatRequest 只有 input/session_id/file_id，
+ *  FileID 不过编排层（internal/api/chat.go 的注释写明 Runner 不感知附件），
+ *  模型看不到合同正文。不把条款号和证据塞进 input，它就只能泛泛而谈。 */
+export function buildAskContext(f: Finding): string {
+  const section = (f.clause_ref?.section ?? '').trim() || '该条款'
+  // 只取证据的第一句：证据常有两三句，全带上会把这一行撑到两倍长。
+  const reason = (f.evidence ?? '').trim().split(/[。；]/)[0].trim()
 
-  // 证据为空时不拼"：＋空"，否则会出现一句以冒号结尾的残句。
-  const body = evidence ? `${head}：${evidence}` : head
-  // 截断只切证据那一段：末尾那一问必须留着，否则预填出来的是一个问不出口的残句。
-  const room = MAX_LEN - TAIL.length - 1 - 1
-  const clipped = body.length > room ? `${body.slice(0, Math.max(room, 0))}…` : body
-  return `${clipped}\n${TAIL}`
+  const parts = [`合同「${section}」`]
+  if (reason !== '') parts.push(reason)
+  if (f.rule_id !== '') parts.push(`结论 ${f.rule_id}`)
+
+  const line = parts.join(' · ')
+  return line.length > MAX_LEN ? `${line.slice(0, MAX_LEN)}…` : line
 }
 
 /** 路由里带了 ask 参数、且不是空串时才预填。 */

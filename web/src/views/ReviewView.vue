@@ -27,7 +27,7 @@ import {
 import type { Finding, ParsedDoc, Review } from '@/api/types'
 import { SEVERITY_LABEL, findingsOnPage, legalBasisTitle, sortBySeverity, summarizeFindings } from '@/utils/findings'
 import InlineChat from '@/components/InlineChat.vue'
-import { buildAskQuestion } from '@/utils/ask-this'
+import { buildAskContext } from '@/utils/ask-this'
 import { shouldAutostart, shouldOfferStart } from '@/utils/review-restore'
 import {
   findingPage,
@@ -143,7 +143,7 @@ const chatSeedSeq = ref(0)
 const chatSection = ref('')
 
 function askThis(f: Finding): void {
-  chatSeed.value = buildAskQuestion(f)
+  chatSeed.value = buildAskContext(f)
   chatSection.value = (f.clause_ref?.section ?? '').trim()
   chatSeedSeq.value += 1
   chatOpen.value = true
