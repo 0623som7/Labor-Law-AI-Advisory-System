@@ -49,16 +49,23 @@ func (f *fakeFileStore) LoadPages(_ context.Context, _ string) ([]port.ParsedPag
 // fakeReviewStore 记录写入，供断言"落库只发生一次"与"状态最终是 succeeded"。
 type fakeReviewStore struct {
 	port.ReviewStore
-	updates []port.Review
-	saves   int
-	saved   []port.Finding
-	saveErr error
+	updateErrs map[int]error
+	updates    []port.Review
+	saves      int
+	saved      []port.Finding
+	saveErr    error
 	// ctxErrs 与 updates 一一对应：记录每次 Update 拿到的 ctx 是否已经取消。
 	// 失败路径必须用 WithoutCancel 派生的 ctx 写库，否则记下来的就是取消态。
 	ctxErrs []error
 }
 
 func (f *fakeReviewStore) Update(ctx context.Context, r *port.Review) error {
+	if err := f.updateErrs[len(f.updates)]; err != nil {
+		// 失败也要记录：终态测试要确认失败的兜底写入确实发生过。
+		f.updates = append(f.updates, *r)
+		f.ctxErrs = append(f.ctxErrs, ctx.Err())
+		return err
+	}
 	f.updates = append(f.updates, *r)
 	f.ctxErrs = append(f.ctxErrs, ctx.Err())
 	return nil
@@ -404,6 +411,56 @@ func TestReviewHandlerUnparsedFile(t *testing.T) {
 	}
 }
 
+func TestReviewHandlerFileNotFound(t *testing.T) {
+	files := &fakeFileStore{recordErr: port.New(port.CodeNotFound, "文件不存在")}
+	reviews := &fakeReviewStore{}
+	statutes := &fakeStatuteStore{rows: seedStatutes()}
+	handler := NewReviewHandler(ReviewDeps{
+		Files:     files,
+		Reviews:   reviews,
+		Statutes:  statutes,
+		Extractor: extract.New(&llm.FakeClient{Reply: extractReply}),
+	})
+
+	err := handler(context.Background(), payloadFor(), nil)
+	if !port.IsCode(err, port.CodeNotFound) {
+		t.Fatalf("code = %v, want %v, err=%v", port.CodeOf(err), port.CodeNotFound, err)
+	}
+	if len(reviews.updates) != 0 || reviews.saves != 0 || statutes.gets != 0 {
+		t.Fatal("文件不存在时不应写状态、写 findings 或查法条")
+	}
+}
+
+func TestReviewHandlerEmptyContractText(t *testing.T) {
+	files := &fakeFileStore{
+		record: port.FileRecord{ID: reviewTestFile, UserID: reviewTestUser},
+		pages:  []port.ParsedPage{{Index: 1, Width: 595, Height: 842}},
+	}
+	reviews := &fakeReviewStore{}
+	handler := NewReviewHandler(ReviewDeps{
+		Files:     files,
+		Reviews:   reviews,
+		Statutes:  &fakeStatuteStore{rows: seedStatutes()},
+		Extractor: extract.New(&llm.FakeClient{Reply: extractReply}),
+	})
+
+	err := handler(context.Background(), payloadFor(), nil)
+	if !port.IsCode(err, port.CodeNoTextLayer) {
+		t.Fatalf("code = %v, want %v, err=%v", port.CodeOf(err), port.CodeNoTextLayer, err)
+	}
+	if len(reviews.updates) != 0 || reviews.saves != 0 {
+		t.Fatal("没有文本可审时不应先写入任务状态")
+	}
+}
+
+func TestReviewHandlerMissingDependencies(t *testing.T) {
+	handler := NewReviewHandler(ReviewDeps{})
+	err := handler(context.Background(), payloadFor(), nil)
+	if !port.IsCode(err, port.CodeInternal) {
+		t.Fatalf("code = %v, want %v, err=%v", port.CodeOf(err), port.CodeInternal, err)
+	}
+}
+
 // TestReviewHandlerSaveFindingsError 覆盖落库失败：错误原样上抛，状态不置 succeeded。
 func TestReviewHandlerSaveFindingsError(t *testing.T) {
 	files := &fakeFileStore{
@@ -512,6 +569,70 @@ func TestReviewMarksFailedAfterContextCancel(t *testing.T) {
 	}
 	if ctxErr != nil {
 		t.Fatalf("落终态用的 ctx 已被取消（%v），真实库上这次写入会失败", ctxErr)
+	}
+}
+
+func TestReviewHandlerFinalUpdateFailureMarksFailed(t *testing.T) {
+	files := &fakeFileStore{
+		record: port.FileRecord{ID: reviewTestFile, UserID: reviewTestUser},
+		pages:  pagesFixture(),
+	}
+	reviews := &fakeReviewStore{updateErrs: map[int]error{
+		1: port.New(port.CodeInternal, "最终状态写入失败"),
+	}}
+	handler := NewReviewHandler(ReviewDeps{
+		Files:     files,
+		Reviews:   reviews,
+		Statutes:  &fakeStatuteStore{rows: seedStatutes()},
+		Extractor: extract.New(&llm.FakeClient{Reply: extractReply}),
+	})
+
+	if err := handler(context.Background(), payloadFor(), nil); err == nil {
+		t.Fatal("最终状态写入失败必须返回错误")
+	}
+	if len(reviews.updates) != 3 {
+		t.Fatalf("状态写入次数 = %d, want 3（running、失败的成功状态、兜底 failed）", len(reviews.updates))
+	}
+	last, ctxErr := lastUpdate(t, reviews)
+	if last.Status != port.TaskFailed {
+		t.Fatalf("最后状态 = %q, want %q", last.Status, port.TaskFailed)
+	}
+	if ctxErr != nil {
+		t.Fatalf("兜底终态应使用可写 ctx，实际 ctx=%v", ctxErr)
+	}
+}
+
+func TestReviewRulePanicDoesNotStopOtherRules(t *testing.T) {
+	files := &fakeFileStore{
+		record: port.FileRecord{ID: reviewTestFile, UserID: reviewTestUser},
+		pages:  pagesFixture(),
+	}
+	reviews := &fakeReviewStore{}
+	panicking := rules.Rule{
+		ID:       "R-PANIC",
+		Severity: port.SeverityHigh,
+		Title:    "测试规则 panic",
+		Articles: []rules.ArticleRef{{Law: rules.LawLaborContract, Article: "第九条"}},
+		Check: func(rules.Contract) []rules.Fragment {
+			panic("bad rule")
+		},
+	}
+	handler := NewReviewHandler(ReviewDeps{
+		Files:     files,
+		Reviews:   reviews,
+		Statutes:  &fakeStatuteStore{rows: seedStatutes()},
+		Extractor: extract.New(&llm.FakeClient{Reply: extractReply}),
+		Rules:     []rules.Rule{panicking, rules.Filter([]string{"R-DEPOSIT"})[0]},
+	})
+
+	if err := handler(context.Background(), payloadFor(), nil); err != nil {
+		t.Fatalf("单条规则 panic 不应让整份审查失败: %v", err)
+	}
+	if len(reviews.saved) != 1 || reviews.saved[0].RuleID != "R-DEPOSIT" {
+		t.Fatalf("panic 后其它规则应继续执行，findings=%+v", ruleIDsOf(reviews.saved))
+	}
+	if last := reviews.updates[len(reviews.updates)-1]; last.Status != port.TaskSucceeded {
+		t.Fatalf("审查状态 = %q, want %q", last.Status, port.TaskSucceeded)
 	}
 }
 
