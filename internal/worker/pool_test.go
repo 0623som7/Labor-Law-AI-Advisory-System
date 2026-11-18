@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -182,8 +183,10 @@ func TestNoRetryOnPlainError(t *testing.T) {
 		t.Fatalf("Status = %s, want failed", task.Status)
 	}
 	// Task.Error 只放 Message，不含 cause。
-	if task.Error != "服务内部错误" {
-		t.Fatalf("Error = %q, want 服务内部错误（不得拼接 cause）", task.Error)
+	// 未分类 error 也要给一句能行动的话，而不是"服务内部错误"；
+	// 同时仍然不得拼接 cause（cause 里可能是原文或密钥片段）。
+	if !strings.Contains(task.Error, "请重新发起") || strings.Contains(task.Error, "空指针") {
+		t.Fatalf("Error = %q, want 一句可行动文案且不含 cause", task.Error)
 	}
 }
 

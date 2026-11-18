@@ -186,7 +186,7 @@ onBeforeUnmount(stopPolling)
           :key="row.id"
           class="row"
           :class="{ active: row.file_id === props.activeFileId, clickable: isClickable(row.status) }"
-          :title="row.status === 'failed' ? '上一次审查没有完成，点击可重新审查' : ''"
+          :title="row.status === 'failed' ? (row.error || '上一次审查没有完成，点击可重新审查') : ''"
           @click="open(row)"
         >
           <div class="row-name">{{ row.filename || '未命名合同' }}</div>

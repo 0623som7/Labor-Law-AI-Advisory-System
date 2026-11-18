@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"laborlaw/internal/id"
+	"laborlaw/internal/port"
 )
 
 // TestReviewsCarryFilename 守住"审查记录带出原文件名"。
@@ -60,5 +61,66 @@ func TestReviewsCarryFilename(t *testing.T) {
 	}
 	if got.Filename != "" {
 		t.Fatalf("文件已删除时 Filename 应为空串，实际 %q", got.Filename)
+	}
+}
+
+// TestReviewsCarryTaskError 守住"历史行能显示失败原因"。
+//
+// 缺陷形态：审查失败之后，列表只给 status=failed，用户看到"失败 未评级"，
+// 原因只写在 tasks.error 里，前端拿不到——等于什么都没有。
+func TestReviewsCarryTaskError(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	userID := id.New()
+	cleanupUser(t, db, userID)
+
+	tasks := NewTasks(db)
+	task := &port.Task{
+		ID:      id.New(),
+		Type:    "review.run",
+		Status:  port.TaskPending,
+		Payload: []byte(`{"review_id":"x","file_id":"y","user_id":"` + userID + `"}`),
+	}
+	if err := tasks.Create(ctx, task); err != nil {
+		t.Fatalf("准备任务失败：%v", err)
+	}
+	reason := "任务执行时出现未预期的错误，请重新发起；若持续失败请提供任务号"
+	if err := tasks.Finish(ctx, task.ID, port.TaskFailed, reason); err != nil {
+		t.Fatalf("写失败原因失败：%v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, task.ID)
+	})
+
+	s := NewReviews(db)
+	rv := newReview(userID)
+	rv.TaskID = task.ID
+	rv.Status = port.TaskFailed
+	cleanupReviews(t, db, rv.ID)
+	if err := s.Create(ctx, rv); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := s.Get(ctx, userID, rv.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Error != reason {
+		t.Fatalf("失败原因没带出来：%q", got.Error)
+	}
+
+	// 成功的审查没有 error，不能把别的行串过来。
+	ok := newReview(userID)
+	cleanupReviews(t, db, ok.ID)
+	if err := s.Create(ctx, ok); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	gotOK, err := s.Get(ctx, userID, ok.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if gotOK.Error != "" {
+		t.Fatalf("成功记录不该有失败原因：%q", gotOK.Error)
 	}
 }

@@ -24,7 +24,9 @@ type reviewDTO struct {
 	ID     string `json:"id"`
 	FileID string `json:"file_id"`
 	// Filename 只用于列表展示。补不到时是空串，前端自己兜「未命名合同」。
-	Filename       string          `json:"filename"`
+	Filename string `json:"filename"`
+	// Error 只在失败时有值，前端挂在历史行 tooltip 与失败空态上。
+	Error          string          `json:"error"`
 	Status         string          `json:"status"`
 	RiskLevel      string          `json:"risk_level"`
 	Score          int             `json:"score"`
@@ -44,6 +46,7 @@ func toReviewDTO(rv *port.Review) reviewDTO {
 		ID:             rv.ID,
 		FileID:         rv.FileID,
 		Filename:       rv.Filename,
+		Error:          rv.Error,
 		Status:         string(rv.Status),
 		RiskLevel:      string(rv.RiskLevel),
 		Score:          rv.Score,

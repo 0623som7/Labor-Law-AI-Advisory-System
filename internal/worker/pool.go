@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -266,7 +267,22 @@ func failureMessage(err error) string {
 	if err == nil {
 		return "任务失败"
 	}
-	return port.AsAppError(err).Message
+	// 分类过的错误直接用它的 Message：那已经是给人看的一句话。
+	var appErr *port.AppError
+	if errors.As(err, &appErr) && strings.TrimSpace(appErr.Message) != "" {
+		return appErr.Message
+	}
+	// 未分类的 error 是 bug，但"服务内部错误"五个字等于什么都没说：
+	// 用户拿不到任何可执行的下一步，支持也只有一个任务号可查。
+	// 这里按最常见的两种可控原因分开说，其余的给一句"请重试 + 报任务号"。
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "任务执行超时已中断，请稍后重试"
+	case errors.Is(err, context.Canceled):
+		return "任务被取消"
+	default:
+		return "任务执行时出现未预期的错误，请重新发起；若持续失败请提供任务号"
+	}
 }
 
 // progressReporter 是每个任务一份的进度节流器。

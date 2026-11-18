@@ -175,6 +175,8 @@ export interface Review {
   file_id: string
   /** 上传时的原文件名，只用于展示。后端补不到时是空串。 */
   filename?: string
+  /** 失败原因（后端已分类的一句话）。成功的审查是空串。 */
+  error?: string
   status: TaskStatus
   risk_level: Severity
   score: number

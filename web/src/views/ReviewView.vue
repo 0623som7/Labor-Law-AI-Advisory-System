@@ -80,6 +80,8 @@ const running = ref(false)
 const startedAt = ref(0)
 const elapsedMs = ref(0)
 const reviewError = ref('')
+/** 失败的具体原因：有就展示在提示下面一行小字，没有就不占位。 */
+const reviewReason = ref('')
 /** 左侧与右侧共享的高亮条目，只此一个来源。 */
 const activeId = ref<string | null>(null)
 
@@ -416,6 +418,7 @@ async function restoreExisting(): Promise<void> {
     review.value = existing
     if (existing.status === 'failed' || existing.status === 'cancelled') {
       reviewError.value = '上一次审查没有完成，可以重新开始'
+      reviewReason.value = (existing.error ?? '').trim()
       // 失败的那次不算"有结果"，按钮要还回去。
       review.value = null
     }
@@ -582,7 +585,10 @@ void load()
           <el-skeleton :rows="6" animated />
         </div>
 
-        <p v-else-if="reviewError" class="review-error">{{ reviewError }}</p>
+        <p v-else-if="reviewError" class="review-error">
+          {{ reviewError }}
+          <span v-if="reviewReason" class="review-reason">{{ reviewReason }}</span>
+        </p>
 
         <p v-else-if="!sorted.length" class="empty">
           还没有审查结果。点「开始审查」，8 条规则通常几秒内跑完；合同要素要靠模型补齐时会久一些。
@@ -892,6 +898,14 @@ void load()
   margin: 16px;
   font-size: 13px;
   color: #d93026;
+}
+
+/* 具体原因比标题轻一档：用户先看到"没完成"，想深究再读这一行。 */
+.review-reason {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--ll-text-weak);
 }
 
 .empty {

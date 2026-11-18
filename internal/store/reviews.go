@@ -22,8 +22,10 @@ const reviewColumns = `r.id, r.file_id, r.user_id, r.status, r.risk_level, r.sco
 //
 // 用 LEFT JOIN 而不是再查一次 files：列表一页 20 条，逐条补名字就是 20 次往返；
 // LEFT 保证文件被删掉的老记录仍然读得出来，只是 filename 为空串。
-const reviewSelect = `SELECT ` + reviewColumns + `, COALESCE(f.filename, '')
-	FROM reviews r LEFT JOIN files f ON f.id = r.file_id`
+const reviewSelect = `SELECT ` + reviewColumns + `, COALESCE(f.filename, ''), COALESCE(t.error, '')
+	FROM reviews r
+	LEFT JOIN files f ON f.id = r.file_id
+	LEFT JOIN tasks t ON t.id = r.task_id`
 
 // findingColumns 是 findings 表的读取列序，与 scanFinding 一一对应。
 const findingColumns = `id, review_id, rule_id, severity, title, section, page_no,
@@ -338,15 +340,17 @@ func scanReviewFrom(s scanner, missing string) (*port.Review, error) {
 		status   string
 		risk     string
 		filename sql.NullString
+		taskErr  sql.NullString
 	)
 	if err := s.Scan(&rv.ID, &rv.FileID, &rv.UserID, &status, &risk, &rv.Score,
 		&rv.ClausePassRate, &rv.Counts.High, &rv.Counts.Medium, &rv.Counts.Low,
-		&rv.TaskID, &rv.CreatedAt, &rv.UpdatedAt, &filename); err != nil {
+		&rv.TaskID, &rv.CreatedAt, &rv.UpdatedAt, &filename, &taskErr); err != nil {
 		return nil, notFound(err, "%s", missing)
 	}
 	rv.Status = port.TaskStatus(status)
 	rv.RiskLevel = port.Severity(risk)
 	rv.Filename = filename.String
+	rv.Error = taskErr.String
 	return &rv, nil
 }
 
