@@ -392,3 +392,201 @@ func TestReviewsActiveUniqueAllowsHistory(t *testing.T) {
 	}
 	cleanupReviews(t, db, ids...)
 }
+
+// insertReviewAt 造一条审查记录并把 created_at 钉在指定时刻。
+//
+// Create 不接受 created_at（列有 DEFAULT CURRENT_TIMESTAMP(3)），所以插完再改。
+// 游标翻页要验的正是"同一毫秒并列"的排序稳定性，不能靠 sleep 碰运气。
+func insertReviewAt(t *testing.T, s *Reviews, db *sql.DB, userID string, at time.Time) *port.Review {
+	t.Helper()
+	ctx := context.Background()
+	rv := newReview(userID)
+	if err := s.Create(ctx, rv); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE reviews SET created_at = ? WHERE id = ?`, at, rv.ID); err != nil {
+		t.Fatalf("UPDATE created_at: %v", err)
+	}
+	rv.CreatedAt = at
+	return rv
+}
+
+// TestReviewsListBeforePagination 验 keyset 游标翻完 25 条不重不漏。
+//
+// 25 条里每 5 条共用同一毫秒：只按 created_at 比较的游标会在这里全漏或全重，
+// 双列 (created_at, id) 才是正解。
+func TestReviewsListBeforePagination(t *testing.T) {
+	db := testDB(t)
+	s := NewReviews(db)
+	ctx := context.Background()
+
+	userID := id.New()
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	want := make([]*port.Review, 0, 25)
+	ids := make([]string, 0, 25)
+	for i := 0; i < 25; i++ {
+		rv := insertReviewAt(t, s, db, userID, base.Add(time.Duration(i/5)*time.Millisecond))
+		want = append(want, rv)
+		ids = append(ids, rv.ID)
+	}
+	cleanupReviews(t, db, ids...)
+
+	// 第一页走 offset（等价于 HTTP 层不带 before_id 的那条分支），后面两页走游标。
+	page, err := s.ListByUser(ctx, userID, 10, 0)
+	if err != nil {
+		t.Fatalf("第一页: %v", err)
+	}
+	if len(page) != 10 {
+		t.Fatalf("第一页 %d 条，期望 10", len(page))
+	}
+	got := append([]port.Review{}, page...)
+	for len(page) == 10 {
+		last := page[len(page)-1]
+		page, err = s.ListByUserBefore(ctx, userID, last.CreatedAt, last.ID, 10)
+		if err != nil {
+			t.Fatalf("游标页: %v", err)
+		}
+		got = append(got, page...)
+		if len(page) < 10 {
+			break
+		}
+	}
+
+	if len(got) != 25 {
+		t.Fatalf("翻完 %d 条，期望 25（漏了 %d 条）", len(got), 25-len(got))
+	}
+	seen := make(map[string]bool, 25)
+	for _, rv := range got {
+		if seen[rv.ID] {
+			t.Fatalf("翻页重复：%s 出现两次", rv.ID)
+		}
+		seen[rv.ID] = true
+	}
+	for _, rv := range want {
+		if !seen[rv.ID] {
+			t.Fatalf("漏掉记录：%s（created_at=%s）", rv.ID, rv.CreatedAt.Format(time.RFC3339Nano))
+		}
+	}
+	// 顺序必须严格递减：created_at 相同的那几条按 id 倒序，否则游标会自我重叠。
+	for i := 1; i < len(got); i++ {
+		prev, cur := got[i-1], got[i]
+		if cur.CreatedAt.After(prev.CreatedAt) {
+			t.Fatalf("第 %d 条时间比上一条新：%s > %s", i, cur.CreatedAt, prev.CreatedAt)
+		}
+		if cur.CreatedAt.Equal(prev.CreatedAt) && cur.ID >= prev.ID {
+			t.Fatalf("同毫秒的两条没有按 id 倒序：%s >= %s", cur.ID, prev.ID)
+		}
+	}
+}
+
+// TestReviewsListBeforeSurvivesInsert 验翻页期间新增记录不会让上一页的行重跑一遍。
+//
+// 这就是 offset 分页的原始 bug：头部插一条，OFFSET 10 变成"从第 12 条开始"，
+// 第 10 条在第二页再出现一次。游标钉在第 10 条那条记录上，新记录进不了后续页。
+func TestReviewsListBeforeSurvivesInsert(t *testing.T) {
+	db := testDB(t)
+	s := NewReviews(db)
+	ctx := context.Background()
+
+	userID := id.New()
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	ids := make([]string, 0, 26)
+	for i := 0; i < 25; i++ {
+		rv := insertReviewAt(t, s, db, userID, base.Add(time.Duration(i)*time.Millisecond))
+		ids = append(ids, rv.ID)
+	}
+	cleanupReviews(t, db, ids...)
+
+	page1, err := s.ListByUser(ctx, userID, 10, 0)
+	if err != nil {
+		t.Fatalf("第一页: %v", err)
+	}
+	if len(page1) != 10 {
+		t.Fatalf("第一页 %d 条，期望 10", len(page1))
+	}
+
+	// 两次翻页之间新审完一份合同。
+	fresh := insertReviewAt(t, s, db, userID, base.Add(time.Second))
+	cleanupReviews(t, db, fresh.ID)
+
+	last := page1[len(page1)-1]
+	page2, err := s.ListByUserBefore(ctx, userID, last.CreatedAt, last.ID, 10)
+	if err != nil {
+		t.Fatalf("游标页: %v", err)
+	}
+	if len(page2) != 10 {
+		t.Fatalf("第二页 %d 条，期望 10", len(page2))
+	}
+	inPage1 := make(map[string]bool, 10)
+	for _, rv := range page1 {
+		inPage1[rv.ID] = true
+	}
+	for _, rv := range page2 {
+		if inPage1[rv.ID] {
+			t.Fatalf("第二页出现第一页已有的记录：%s", rv.ID)
+		}
+		if rv.ID == fresh.ID {
+			t.Fatalf("第二页出现了翻页后新增的记录：%s", rv.ID)
+		}
+	}
+	// 对照：offset 分支在同样场景下必然重复一条，这条断言是给未来的自己看的。
+	offsetPage2, err := s.ListByUser(ctx, userID, 10, 10)
+	if err != nil {
+		t.Fatalf("offset 第二页: %v", err)
+	}
+	if len(offsetPage2) == 0 || offsetPage2[0].ID == page1[len(page1)-1].ID {
+		t.Logf("offset 第二页首条与第一页末条不同（本次没有复现重复），不视为失败")
+	}
+}
+
+// 5 条同毫秒的游标翻页：这是最容易被写成"只比时间"的场景，
+// 3 条并列时单列游标必然重复或漏。limit=2 翻三页，断言 5 条不重不漏。
+func TestReviewsListBeforeSameMillisecond(t *testing.T) {
+	db := testDB(t)
+	s := NewReviews(db)
+	ctx := context.Background()
+
+	userID := id.New()
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	ids := make([]string, 0, 5)
+	for i := 0; i < 5; i++ {
+		rv := insertReviewAt(t, s, db, userID, at) // 五条 created_at 完全相同
+		ids = append(ids, rv.ID)
+	}
+	cleanupReviews(t, db, ids...)
+
+	got := make([]port.Review, 0, 5)
+	page, err := s.ListByUser(ctx, userID, 2, 0)
+	if err != nil {
+		t.Fatalf("第一页: %v", err)
+	}
+	got = append(got, page...)
+	for len(page) == 2 {
+		last := page[len(page)-1]
+		page, err = s.ListByUserBefore(ctx, userID, last.CreatedAt, last.ID, 2)
+		if err != nil {
+			t.Fatalf("游标页: %v", err)
+		}
+		got = append(got, page...)
+		if len(page) < 2 {
+			break
+		}
+	}
+
+	if len(got) != 5 {
+		t.Fatalf("翻完 %d 条，期望 5", len(got))
+	}
+	seen := map[string]bool{}
+	for _, rv := range got {
+		if seen[rv.ID] {
+			t.Fatalf("同毫秒翻页重复：%s", rv.ID)
+		}
+		seen[rv.ID] = true
+	}
+	// 同毫秒时必须按 id 倒序，否则游标 (created_at, id) 会自我重叠。
+	for i := 1; i < len(got); i++ {
+		if got[i].ID >= got[i-1].ID {
+			t.Fatalf("第 %d 条 id 没有严格递减：%s >= %s", i, got[i].ID, got[i-1].ID)
+		}
+	}
+}

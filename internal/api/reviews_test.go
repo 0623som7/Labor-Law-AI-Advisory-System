@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"laborlaw/internal/id"
 	"laborlaw/internal/port"
 )
 
@@ -948,5 +949,127 @@ func TestCreateReviewFallsBackOnUniqueConflict(t *testing.T) {
 	}
 	if len(f.submit.tasks) != 0 {
 		t.Fatalf("冲突时不该入池，实际入池 %d 个", len(f.submit.tasks))
+	}
+}
+
+// ListByUserBefore 是游标分支的实现；假 store 也实现一份，
+// 否则 handler 里的类型断言永远失败，游标路径一条测试都跑不到。
+func (f *fakeReviewStore) ListByUserBefore(_ context.Context, userID string, beforeCreatedAt time.Time, beforeID string, limit int) ([]port.Review, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []port.Review{}
+	for _, rv := range f.reviews {
+		if rv.UserID != userID {
+			continue
+		}
+		// 与 SQL 的 (created_at < ? OR (created_at = ? AND id < ?)) 同义。
+		if rv.CreatedAt.After(beforeCreatedAt) {
+			continue
+		}
+		if rv.CreatedAt.Equal(beforeCreatedAt) && rv.ID >= beforeID {
+			continue
+		}
+		out = append(out, rv)
+	}
+	if limit > 0 && limit < len(out) {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// 游标指向别人的 review_id：必须是 40001，而不是静默从第一页开始，
+// 也不能漏出"这条记录存在但没权限"的信息。
+func TestListReviewsBeforeCursorRejectsOthersID(t *testing.T) {
+	f := newReviewFixture(t)
+	ctx := context.Background()
+	// dev-user-0001 是 fixture 里的登录人，这里造一条别人的记录。
+	if err := f.store.reviews.Create(ctx, &port.Review{
+		ID: "R-OTHER", FileID: "F-OTHER", UserID: "someone-else", Status: port.TaskSucceeded,
+	}); err != nil {
+		t.Fatalf("造别人的审查记录: %v", err)
+	}
+
+	rec, env := doRequest(t, f.api, http.MethodGet, "/api/v1/reviews?limit=10&before_id=R-OTHER", nil)
+	if rec.Code != http.StatusBadRequest || env.Code != int(port.CodeInvalidArgument) {
+		t.Fatalf("拿到 %d/%d，期望 400/40001（原文 %q）", rec.Code, env.Code, env.Message)
+	}
+	if env.Message != "before_id 不存在" {
+		t.Fatalf("文案 = %q，期望「before_id 不存在」", env.Message)
+	}
+}
+
+// 游标正常翻页：信封顶层的 next_before_id 必须是本页最后一条的 id，
+// 且第二页不含第一页已有的记录。
+func TestListReviewsBeforeCursorPages(t *testing.T) {
+	f := newReviewFixture(t)
+	ctx := context.Background()
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	// 5 条里有 3 条同一毫秒：只比 created_at 的游标会重或漏。
+	for i := 0; i < 5; i++ {
+		at := base.Add(time.Duration(i/3) * time.Millisecond)
+		rv := &port.Review{
+			ID: id.New(), FileID: "F-1", UserID: "dev-user-0001",
+			Status: port.TaskSucceeded, CreatedAt: at,
+		}
+		if err := f.store.reviews.Create(ctx, rv); err != nil {
+			t.Fatalf("造记录 %d: %v", i, err)
+		}
+	}
+
+	type pageEnvelope struct {
+		Envelope
+		NextBeforeID string `json:"next_before_id"`
+	}
+	first, err := json.Marshal(f.store.reviews.reviews)
+	if err != nil {
+		t.Fatalf("快照失败: %v", err)
+	}
+	var snapshot []port.Review
+	if err := json.Unmarshal(first, &snapshot); err != nil {
+		t.Fatalf("快照回读失败: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/reviews?limit=3", nil)
+	rec := httptest.NewRecorder()
+	f.api.ServeHTTP(rec, req)
+	var p1 pageEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &p1); err != nil {
+		t.Fatalf("第一页不是 JSON: %s", rec.Body.String())
+	}
+	if p1.Code != 0 {
+		t.Fatalf("第一页 code=%d %s", p1.Code, p1.Message)
+	}
+	list1, _ := p1.Data.([]any)
+	if len(list1) != 3 || p1.NextBeforeID == "" {
+		t.Fatalf("第一页 %d 条、next_before_id=%q，期望 3 条且有游标", len(list1), p1.NextBeforeID)
+	}
+	seen := map[string]bool{}
+	for _, it := range list1 {
+		seen[it.(map[string]any)["id"].(string)] = true
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/reviews?limit=3&before_id="+p1.NextBeforeID, nil)
+	rec = httptest.NewRecorder()
+	f.api.ServeHTTP(rec, req)
+	var p2 pageEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &p2); err != nil {
+		t.Fatalf("第二页不是 JSON: %s", rec.Body.String())
+	}
+	list2, _ := p2.Data.([]any)
+	if len(list2) == 0 {
+		t.Fatal("第二页空，游标把后面的记录切掉了")
+	}
+	for _, it := range list2 {
+		rid := it.(map[string]any)["id"].(string)
+		if seen[rid] {
+			t.Fatalf("第二页重复出现第一页的记录：%s", rid)
+		}
+		seen[rid] = true
+	}
+	if len(seen) != len(snapshot) {
+		t.Fatalf("两页合计 %d 条，期望 %d 条（漏了）", len(seen), len(snapshot))
 	}
 }

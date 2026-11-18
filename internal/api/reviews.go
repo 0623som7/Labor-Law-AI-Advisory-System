@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -310,6 +311,21 @@ func (a *API) listReviews(c *gin.Context) {
 		return
 	}
 
+	// before_id 是 keyset 游标：给了就按 (created_at, id) 继续，不给维持 offset。
+	// 两个分支共存不是历史包袱——老客户端（和 curl 脚本）仍在传 offset，
+	// 直接把 offset 删掉等于让它们静默拿到第一页。
+	if beforeID := strings.TrimSpace(c.Query("before_id")); beforeID != "" {
+		items, err := a.listReviewsBefore(ctx, UserID(c), beforeID, limit)
+		if err != nil {
+			Fail(c, err)
+			return
+		}
+		dtos := toReviewDTOs(items)
+		a.fillReviewFilenames(ctx, UserID(c), items, dtos)
+		writeReviewList(c, dtos)
+		return
+	}
+
 	items, err := a.store.Review().ListByUser(ctx, UserID(c), limit, offset)
 	if err != nil {
 		Fail(c, err)
@@ -317,7 +333,69 @@ func (a *API) listReviews(c *gin.Context) {
 	}
 	dtos := toReviewDTOs(items)
 	a.fillReviewFilenames(ctx, UserID(c), items, dtos)
-	OK(c, dtos)
+	writeReviewList(c, dtos)
+}
+
+// reviewCursorLister 是 reviews 游标翻页的最小接口。
+//
+// 用局部接口断言而不是往 port.ReviewStore 上加方法：port 是 A/B 两侧共用的契约，
+// 加一个只有 HTTP 层用得到的方法，会逼着所有实现（含 api 单测里的假 store）
+// 一起改，收益只有一处。
+type reviewCursorLister interface {
+	ListByUserBefore(ctx context.Context, userID string, beforeCreatedAt time.Time, beforeID string, limit int) ([]port.Review, error)
+}
+
+// listReviewsBefore 按游标取一页。
+//
+// 多一条 SELECT 是为了拿到游标那行的 created_at：客户端只回传 id（它手里就只有 id），
+// 而比较需要 (created_at, id) 两列。用 Get 而不是新增存储方法，顺便就把"这条是不是
+// 你的"一起校验了——游标里塞别人的 review_id 只会得到 40001。
+func (a *API) listReviewsBefore(ctx context.Context, userID, beforeID string, limit int) ([]port.Review, error) {
+	// 先验游标再验能力：游标本身是用户输入，属于 40001 的范畴；
+	// 能力不足是服务端装配问题，属于 50001。反过来的话，一个不存在的 id
+	// 会报成 50001，前端会当成"后端挂了"去重试。
+	anchor, err := a.store.Review().Get(ctx, userID, beforeID)
+	if err != nil {
+		if port.IsCode(err, port.CodeNotFound) {
+			// 不静默降级成第一页：游标失效时前端会把老内容当新内容再渲染一遍。
+			return nil, port.New(port.CodeInvalidArgument, "before_id 不存在")
+		}
+		return nil, err
+	}
+	lister, ok := a.store.Review().(reviewCursorLister)
+	if !ok {
+		// 报 50001 比悄悄退回第一页安全——后者会让前端无限加载同一页。
+		return nil, port.New(port.CodeInternal, "审查历史不支持游标翻页")
+	}
+	return lister.ListByUserBefore(ctx, userID, anchor.CreatedAt, anchor.ID, limit)
+}
+
+// reviewListEnvelope 在统一信封上多带一个游标。
+//
+// next_before_id 放在信封顶层而不是 data 里：data 是数组，老客户端的解包函数
+// 只取 data（GET /reviews?file_id= 也走同一个解包），换成 {items,next_before_id}
+// 会让那条调用静默变成空。加一个同级字段对它们是透明的。
+type reviewListEnvelope struct {
+	Envelope
+	// NextBeforeID 是这一页最后一条的 id；空页为空串。
+	NextBeforeID string `json:"next_before_id"`
+}
+
+// writeReviewList 写审查列表：数组照旧在 data，游标在同级。
+func writeReviewList(c *gin.Context, dtos []reviewDTO) {
+	next := ""
+	if n := len(dtos); n > 0 {
+		next = dtos[n-1].ID
+	}
+	c.JSON(http.StatusOK, reviewListEnvelope{
+		Envelope: Envelope{
+			Code:    int(port.CodeOK),
+			Message: "ok",
+			Data:    dtos,
+			TraceID: TraceID(c),
+		},
+		NextBeforeID: next,
+	})
 }
 
 // getReview 处理 GET /api/v1/reviews/{reviewId}。

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"laborlaw/internal/id"
 	"laborlaw/internal/port"
@@ -244,6 +245,49 @@ func (r *Reviews) ListByUser(ctx context.Context, userID string, limit, offset i
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+reviewColumns+` FROM reviews WHERE user_id = ?
 		 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, userID, limit, offset)
+	if err != nil {
+		return nil, port.Wrap(port.CodeInternal, err, "查询审查历史失败")
+	}
+	defer rows.Close()
+
+	out := make([]port.Review, 0, limit)
+	for rows.Next() {
+		rv, err := scanReviewRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *rv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, port.Wrap(port.CodeInternal, err, "遍历审查历史失败")
+	}
+	return out, nil
+}
+
+// ListByUserBefore 按 (created_at, id) 游标翻页，返回严格早于游标的那一页。
+//
+// 为什么不用 OFFSET：列表按 created_at DESC 排序，新记录从头部插入，OFFSET 会整体
+// 后移一行——上一页的最后一条就在下一页里再出现一次（线上实测 page1 ∩ page2 = 1）。
+// 游标把"从哪继续"钉死在一行记录上，头部插多少条都不影响后面的页。
+//
+// 必须双列比较：created_at 是 DATETIME(3)，同一毫秒天然并列，只比时间会让并列的
+// 那几条要么漏要么重；id 是 ULID，单调递增且唯一，把并列的那几条排出稳定次序。
+//
+// 不用行构造器 (created_at, id) < (?, ?)：索引只有 (user_id, created_at)，行构造器
+// 那版 EXPLAIN 会退化成扫全部行再过滤。拆成 OR 两段能吃到索引。
+func (r *Reviews) ListByUserBefore(ctx context.Context, userID string, beforeCreatedAt time.Time, beforeID string, limit int) ([]port.Review, error) {
+	if limit <= 0 {
+		limit = defaultReviewPageSize
+	}
+	if limit > maxReviewPageSize {
+		limit = maxReviewPageSize
+	}
+
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+reviewColumns+` FROM reviews WHERE user_id = ?
+		 AND (created_at < ? OR (created_at = ? AND id < ?))
+		 ORDER BY created_at DESC, id DESC LIMIT ?`,
+		userID, beforeCreatedAt, beforeCreatedAt, beforeID, limit)
 	if err != nil {
 		return nil, port.Wrap(port.CodeInternal, err, "查询审查历史失败")
 	}
