@@ -215,6 +215,18 @@ docker exec deploy-mysql-1 sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "s
 #      2026-11-17 那次：线上 messages 缺 attachments 列，messages 停在 11-16 14:37，
 #      而会话数照涨（resolveSession 先建会话再写消息），一夜多了 12 条空会话。
 
+# 3.6.3 上传接口对无文字层文件回 422（2026-11-18 契约变更）
+#   1) POST /api/v1/files 遇到没有文字层的扫描件，从 200（data 里给个空壳记录）
+#      改成 422 {"code":42201,"fields":{"file_id":"..."}}。旧前端配新后端时
+#      uploadFile() 会抛 ApiError，只弹一条错误、不会跳到阻断页 —— 所以
+#      前端和后端要一起上，或者前端先上（新前端认 fields.file_id 就会跳）。
+#   2) 上完后必须重启 api 容器，再复跑一次全量验收：
+#      node web/e2e/.tmp/verify-all.mjs
+#      预期 46 PASS / 1 FAIL / 2 SKIP：只剩 G3（4 页审查 6–9s，口径是
+#      "首次 6–9s、sha256 命中缓存 <0.1s"）与 D3/D5（线上造不出 failed、凑不满一页）。
+#   3) 历史上"page_count>0 但没有页面"的坏记录（2026-11-18 之前产生的扫描件）
+#      不用手工清库：同一份文件再传一次就会按"没解析过"补跑，拿到的仍是 422。
+
 # 3.7 起 TLS 层 + 前端站点（api 的端口已改成 127.0.0.1:8080，公网只看得到 8443）
 docker compose -f deploy/docker-compose.yml --env-file .env up -d nginx
 # 配置改动（bind mount 进来的 default.conf）up -d 不会重读：容器没变就 Running 跳过。

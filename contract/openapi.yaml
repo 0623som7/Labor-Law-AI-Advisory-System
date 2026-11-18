@@ -619,9 +619,23 @@ paths:
           schema:
             type: string
           description: 按合同文件过滤，返回该文件最近一次审查；不存在时返回空列表
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            keyset 游标：只返回严格早于这条记录的下一页，取值来自上一页响应的
+            next_before_id。与 offset 二选一，给了 before_id 就忽略 offset；
+            id 不存在或不属于当前用户时返回 40001（不静默退回第一页）。
+            存在的理由：列表按 created_at 倒序，翻页期间新增记录会把 offset 整体
+            后移一位，上一页最后一条就在下一页重复出现。
+          example: 01J9Z0K7Q2X3M4N5P6R7S8T9V0
       responses:
         '200':
-          description: 按创建时间倒序；带 file_id 时最多一条（该文件最近一次审查）
+          description: >-
+            按创建时间倒序；带 file_id 时最多一条（该文件最近一次审查）。
+            信封顶层带 next_before_id（本页最后一条的 id，空页为 ""），供下一页使用。
           content:
             application/json:
               schema:
@@ -984,6 +998,18 @@ components:
         scene:
           type: string
           enum: [consult, qa]
+        file_id:
+          type: string
+          description: >-
+            建会话那一刻问的是哪份合同；历史会话（迁移 0007 之前建的）为空串。
+            只用于会话列表的标题与溯源，不参与鉴权：文件归属仍然每次按 token 校验。
+          example: 01J9Z0K7Q2X3M4N5P6R7S8T9V0
+        file_name:
+          type: string
+          description: >-
+            建会话那一刻的文件名快照。文件之后被改名或删除都不影响这里，
+            因为历史会话要能说清"当时看的是哪份合同"。
+          example: 劳动合同.pdf
         created_at:
           type: string
           format: date-time
@@ -1436,6 +1462,13 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Review'
+            next_before_id:
+              type: string
+              description: >-
+                本页最后一条的 id，可直接作为下一页的 before_id 传回；
+                空页或到底时为空串。放在信封顶层而不是 data 里，是为了让只解
+                data 的老客户端（含 GET /reviews?file_id=）不受影响。
+              example: 01J9Z0K7Q2X3M4N5P6R7S8T9V0
 
     FindingListEnvelope:
       allOf:
