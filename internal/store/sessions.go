@@ -136,17 +136,13 @@ func (s *Sessions) ListByUser(ctx context.Context, userID string, limit, offset 
 	// 再对它 .map() 就是一个白屏。
 	out := make([]port.Session, 0, limit)
 	for rows.Next() {
-		var (
-			sn        port.Session
-			createdAt time.Time
-			updatedAt time.Time
-		)
-		if err := rows.Scan(&sn.ID, &sn.UserID, &sn.Title, &sn.Scene, &createdAt, &updatedAt); err != nil {
+		// 必须走 scanSession：列序由 sessionColumns 决定，这里手写一份
+		// 就等于给同一张表留两个"真相"，加列时漏改一处就是线上 500。
+		sn, err := scanSession(rows)
+		if err != nil {
 			return nil, port.Wrap(port.CodeInternal, err, "读取会话行失败")
 		}
-		sn.CreatedAt = createdAt
-		sn.UpdatedAt = updatedAt
-		out = append(out, sn)
+		out = append(out, *sn)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, port.Wrap(port.CodeInternal, err, "遍历会话行失败")

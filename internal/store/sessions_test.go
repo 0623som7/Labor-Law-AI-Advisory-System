@@ -468,3 +468,42 @@ func TestSessionCreateWithoutFileLeavesNull(t *testing.T) {
 		t.Fatalf("未附合同时 file_name = %q，期望空串", s.FileName)
 	}
 }
+
+// 列表也要带 file_id / file_name：ListByUser 手写过一份 Scan，
+// 加列时漏改就是"建的会话能看、列表 500"。这条用例钉住列序只有一处真相。
+func TestSessionsListIncludesFileSnapshot(t *testing.T) {
+	db := testDB(t)
+	userID := id.New()
+	withFile := &port.Session{
+		UserID: userID, Title: "带合同的会话", Scene: "consult",
+		FileID: id.New(), FileName: "劳动合同.pdf",
+	}
+	without := &port.Session{UserID: userID, Title: "没附合同的会话", Scene: "consult"}
+	cleanupSessions(t, db, withFile.ID, without.ID)
+
+	store := NewSessions(db)
+	ctx := context.Background()
+	for _, s := range []*port.Session{withFile, without} {
+		if err := store.Create(ctx, s); err != nil {
+			t.Fatalf("Create %s: %v", s.Title, err)
+		}
+	}
+
+	got, err := store.ListByUser(ctx, userID, 10, 0)
+	if err != nil {
+		t.Fatalf("ListByUser: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("列出 %d 条，期望 2", len(got))
+	}
+	byTitle := map[string]port.Session{}
+	for _, s := range got {
+		byTitle[s.Title] = s
+	}
+	if s := byTitle["带合同的会话"]; s.FileID != withFile.FileID || s.FileName != "劳动合同.pdf" {
+		t.Fatalf("带合同的会话 file_id=%q file_name=%q，期望 %q/%q", s.FileID, s.FileName, withFile.FileID, "劳动合同.pdf")
+	}
+	if s := byTitle["没附合同的会话"]; s.FileID != "" || s.FileName != "" {
+		t.Fatalf("未附合同的会话 file_id=%q file_name=%q，期望都是空串", s.FileID, s.FileName)
+	}
+}
