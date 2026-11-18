@@ -535,7 +535,7 @@ void load()
     <div v-else-if="scanned" class="blocked">
       <p class="blocked-title">这份文件没有文字层，可能是扫描件，暂不支持审查</p>
       <p class="blocked-hint">扫描件需要先做 OCR 才能定位条款，当前版本还没有这一步。</p>
-      <el-button @click="router.push({ name: 'upload' })">换一份文件</el-button>
+      <el-button type="primary" @click="router.push({ name: 'upload' })">重新上传</el-button>
     </div>
 
     <main v-else class="body">
@@ -585,10 +585,15 @@ void load()
           <el-skeleton :rows="6" animated />
         </div>
 
-        <p v-else-if="reviewError" class="review-error">
-          {{ reviewError }}
+        <div v-else-if="reviewError" class="review-error">
+          <p class="review-error-text">{{ reviewError }}</p>
           <span v-if="reviewReason" class="review-reason">{{ reviewReason }}</span>
-        </p>
+          <!-- 失败之后用户只有两条路：换一份合同，或者原地再试一次。都给成按钮，别让人回去翻页。 -->
+          <div class="review-error-actions">
+            <el-button type="primary" @click="router.push({ name: 'upload' })">重新上传</el-button>
+            <el-button @click="startReview">重新审查</el-button>
+          </div>
+        </div>
 
         <p v-else-if="!sorted.length" class="empty">
           还没有审查结果。点「开始审查」，8 条规则通常几秒内跑完；合同要素要靠模型补齐时会久一些。
@@ -898,6 +903,16 @@ void load()
   margin: 16px;
   font-size: 13px;
   color: #d93026;
+}
+
+.review-error-text {
+  margin: 0;
+}
+
+.review-error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* 具体原因比标题轻一档：用户先看到"没完成"，想深究再读这一行。 */
