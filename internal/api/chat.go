@@ -181,9 +181,9 @@ func (a *API) chatCompletions(c *gin.Context) {
 
 	messageID := id.New()
 
-	// 附件校验放在最前：它是纯只读校验，而 resolveSession 在没带
-	// session_id 时会建会话。顺序反了的话，一个失效的 file_id 会先留下
-	// 一条空会话再报 40401，侧栏就多一条点进去什么都没有的记录。
+	// 附件校验放在最前：除了"失效的 file_id 不该先留下一条空会话"这个理由，
+	// 建会话时还要把 file_id / 文件名写进 sessions（侧栏标题要显示文件名），
+	// 所以解析结果必须先有。
 	attachments, err := a.resolveAttachment(c, strings.TrimSpace(req.FileID))
 	if err != nil {
 		Fail(c, err)
@@ -192,7 +192,7 @@ func (a *API) chatCompletions(c *gin.Context) {
 
 	// 会话解析也必须发生在 Attach 之前：一旦写了 SSE 响应头，
 	// "会话不存在"就只能变成流内 error 帧，前端拿到的不是 404。
-	sessionID, err := a.resolveSession(c, strings.TrimSpace(req.SessionID), req.Input)
+	sessionID, err := a.resolveSession(c, strings.TrimSpace(req.SessionID), req.Input, attachments)
 	if err != nil {
 		Fail(c, err)
 		return
@@ -268,9 +268,12 @@ func (a *API) chatCompletions(c *gin.Context) {
 // 三种情况：store 未装配（单测/无库部署）→ 不落库，只在内存里用调用方给的 ID；
 // 带 session_id → 必须属于当前用户，否则 40401；不带 → 建一个新会话。
 //
+// attachments 只在"新建会话"时用到（写进 file_id / file_name），老会话不回头补：
+// 会话该记录的是创建那一刻的事实，事后补会把"这条会话问的是哪份合同"改写成别的东西。
+//
 // 校验归属放在这里而不是让存储层兜底，是因为越权访问要报 404 而不是"查不到消息"：
 // 前者告诉用户这个会话不属于你，后者会让前端以为会话刚被删了。
-func (a *API) resolveSession(c *gin.Context, sessionID, input string) (string, error) {
+func (a *API) resolveSession(c *gin.Context, sessionID, input string, attachments []port.Attachment) (string, error) {
 	if a.store == nil {
 		if sessionID == "" {
 			return id.New(), nil
@@ -288,6 +291,13 @@ func (a *API) resolveSession(c *gin.Context, sessionID, input string) (string, e
 	}
 
 	sn := &port.Session{UserID: userID, Scene: chatScene, Title: sessionTitleFromInput(input)}
+	// 建会话那一刻问的是哪份合同，记在会话上：侧栏标题要用文件名区分
+	// "同一份合同的第七条的第三次追问"。文件名取 resolveAttachment 已经
+	// 查到的那个，不为了一行标题再查一次库。
+	if len(attachments) > 0 {
+		sn.FileID = attachments[0].FileID
+		sn.FileName = attachments[0].Filename
+	}
 	if err := a.store.Session().Create(ctx, sn); err != nil {
 		return "", err
 	}

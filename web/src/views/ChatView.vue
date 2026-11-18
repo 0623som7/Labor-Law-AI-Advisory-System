@@ -84,7 +84,9 @@ const search = ref('')
 const sessionTitles = computed<string[]>(() => {
   const raw = sessions.value.map((s) => {
     const { section, ruleId } = parseAskTitle(s.title)
-    return sessionTitle({ section, ruleId, fallback: s.title })
+    // 有 file_name 就用它当标题前缀：同一份合同的同一条款追问多次，
+    // 靠文件名 + #2/#3 才分得清；历史会话没有这列，退回条款 + 规则号。
+    return sessionTitle({ fileName: s.file_name, section, ruleId, fallback: s.title })
   })
   return dedupeTitles(raw)
 })

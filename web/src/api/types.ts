@@ -46,6 +46,10 @@ export interface Session {
   id: string
   title: string
   scene: Scene
+  /** 建会话那一刻问的是哪份合同；历史会话是空串（迁移 0007 之前建的没有这列）。 */
+  file_id?: string
+  /** 与 file_id 同一时刻的文件名快照，文件后来改名/删除都不变。 */
+  file_name?: string
   created_at: string
   updated_at: string
 }

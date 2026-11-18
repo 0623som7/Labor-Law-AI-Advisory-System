@@ -18,6 +18,10 @@ type Session struct {
 	Title string
 	// Scene 是会话场景，同一会话内固定，避免历史和当前场景错配。
 	Scene string
+	// FileID 是建会话那一刻问的是哪份合同；历史会话为空。
+	FileID string
+	// FileName 是同一时刻的文件名快照，不随 files 改名而变。
+	FileName string
 	// CreatedAt 是创建时间，由 DB 默认值填充。
 	CreatedAt time.Time
 	// UpdatedAt 是最后活跃时间，列表按它倒序。

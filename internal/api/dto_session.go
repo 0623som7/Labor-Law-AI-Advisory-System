@@ -12,9 +12,13 @@ import (
 // port.Session 不打 tag，直接序列化会输出 ID/UserID/Title 这样的大写键，
 // 前端拿到的就是 undefined。形状在这里定，port 保持原样。
 type sessionDTO struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Scene     string    `json:"scene"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Scene string `json:"scene"`
+	// FileID / FileName 是建会话那一刻问的合同。历史会话没有，输出空串：
+	// 前端据此把标题退化成"条款 + 规则号"，不需要再判 null。
+	FileID    string    `json:"file_id"`
+	FileName  string    `json:"file_name"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -102,6 +106,8 @@ func toSessionDTO(s *port.Session) sessionDTO {
 		ID:        s.ID,
 		Title:     s.Title,
 		Scene:     s.Scene,
+		FileID:    s.FileID,
+		FileName:  s.FileName,
 		CreatedAt: s.CreatedAt,
 		UpdatedAt: s.UpdatedAt,
 	}

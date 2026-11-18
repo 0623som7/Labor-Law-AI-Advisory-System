@@ -408,3 +408,63 @@ func TestMessageAttachmentsRoundTrip(t *testing.T) {
 		t.Fatalf("assistant 消息不该有附件，实际 %+v", assistant.Attachments)
 	}
 }
+
+// 0007：会话要记住"建它的时候问的是哪份合同"。
+// 三个字段必须原样往返，否则侧栏标题会拿到空文件名而退回条款号。
+func TestSessionCreateGetFileSnapshot(t *testing.T) {
+	db := testDB(t)
+	userID := id.New()
+	s := &port.Session{
+		UserID:   userID,
+		Title:    "合同「第七条」 · 结论 R-PROBATION-ONCE",
+		Scene:    "consult",
+		FileID:   id.New(),
+		FileName: "劳动合同.pdf",
+	}
+	cleanupSessions(t, db, s.ID)
+
+	store := NewSessions(db)
+	ctx := context.Background()
+	if err := store.Create(ctx, s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, userID, s.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.FileID != s.FileID {
+		t.Fatalf("file_id = %q，期望 %q", got.FileID, s.FileID)
+	}
+	if got.FileName != s.FileName {
+		t.Fatalf("file_name = %q，期望 %q", got.FileName, s.FileName)
+	}
+}
+
+// 没附合同的会话，file_id 必须是 SQL NULL 而不是空串。
+//
+// 空串会变成"关联了一个不存在的空 ID"：以后任何按 file_id 查、按 file_id 统计的
+// 地方都会把它算成"有关联"，而 NULL 天然落在"没有"这一侧。
+func TestSessionCreateWithoutFileLeavesNull(t *testing.T) {
+	db := testDB(t)
+	userID := id.New()
+	s := newSession(userID)
+	cleanupSessions(t, db, s.ID)
+
+	store := NewSessions(db)
+	ctx := context.Background()
+	if err := store.Create(ctx, s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var isNull int
+	if err := db.QueryRowContext(ctx,
+		`SELECT file_id IS NULL FROM sessions WHERE id = ?`, s.ID).Scan(&isNull); err != nil {
+		t.Fatalf("查 file_id IS NULL: %v", err)
+	}
+	if isNull != 1 {
+		t.Fatalf("file_id IS NULL = %d，期望 1（空 FILEID 要落 NULL，不是空串）", isNull)
+	}
+	if s.FileName != "" {
+		t.Fatalf("未附合同时 file_name = %q，期望空串", s.FileName)
+	}
+}

@@ -69,3 +69,15 @@ test('同名去重：第二次起追加 #2 #3，顺序不变', () => {
 test('去重不合并不同标题，也不给唯一的加后缀', () => {
   assert.deepEqual(dedupeTitles(['a', 'b', 'c']), ['a', 'b', 'c'])
 })
+
+test('会话带了文件名：标题以文件名开头（侧栏据此分辨是哪份合同）', () => {
+  const withFile = sessionTitle({ fileName: '劳动合同.pdf', section: '第七条', ruleId: 'R-PROBATION-ONCE' })
+  assert.ok(withFile.startsWith('劳动合同'), withFile)
+  assert.equal(withFile, '劳动合同 · 第七条')
+  // 同一份合同同一条款的三次追问，靠 dedupe 才能分开
+  assert.deepEqual(dedupeTitles([withFile, withFile, withFile]), [
+    '劳动合同 · 第七条',
+    '劳动合同 · 第七条 #2',
+    '劳动合同 · 第七条 #3',
+  ])
+})

@@ -25,7 +25,7 @@ func isDuplicate(err error) bool {
 }
 
 // sessionColumns 是 sessions 表的读取列序，与 scanSession 一一对应。
-const sessionColumns = `id, user_id, title, scene, created_at, updated_at`
+const sessionColumns = `id, user_id, title, scene, file_id, file_name, created_at, updated_at`
 
 // messageColumns 是 messages 表的读取列序，与扫描顺序一一对应。
 const messageColumns = `id, session_id, role, content, prompt_tokens, completion_tokens, trace_id, citations, attachments, created_at`
@@ -85,8 +85,15 @@ func (s *Sessions) Create(ctx context.Context, sn *port.Session) error {
 		title = string(r[:100])
 	}
 
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (id, user_id, title, scene) VALUES (?, ?, ?, ?)`,
-		sn.ID, sn.UserID, title, sn.Scene)
+	// file_id 列可空：历史会话（迁移前建的）与"没附合同"的咨询都留 NULL，
+	// 而空字符串会变成"关联了一个不存在的空 ID"，后面按 file_id 查会踩坑。
+	var fileID any
+	if sn.FileID != "" {
+		fileID = sn.FileID
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO sessions (id, user_id, title, scene, file_id, file_name) VALUES (?, ?, ?, ?, ?, ?)`,
+		sn.ID, sn.UserID, title, sn.Scene, fileID, sn.FileName)
 	if err != nil {
 		if isDuplicate(err) {
 			return port.Wrap(port.CodeConflict, err, "会话已存在")
@@ -316,16 +323,20 @@ func (m *Messages) ListBySession(ctx context.Context, sessionID string, limit in
 // scanSession 把一个会话行扫进 port.Session。
 func scanSession(row interface{ Scan(...any) error }) (*port.Session, error) {
 	var (
-		sn        port.Session
+		sn port.Session
+		// file_id 是 CHAR(26) NULL：老会话读出来是 NULL，扫进 string 会报
+		// "converting NULL to string is unsupported"，必须用 NullString 接。
+		fileID    sql.NullString
 		createdAt time.Time
 		updatedAt time.Time
 	)
-	if err := row.Scan(&sn.ID, &sn.UserID, &sn.Title, &sn.Scene, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&sn.ID, &sn.UserID, &sn.Title, &sn.Scene, &fileID, &sn.FileName, &createdAt, &updatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, port.New(port.CodeNotFound, "会话不存在")
 		}
 		return nil, port.Wrap(port.CodeInternal, err, "读取会话失败")
 	}
+	sn.FileID = fileID.String
 	sn.CreatedAt = createdAt
 	sn.UpdatedAt = updatedAt
 	return &sn, nil
