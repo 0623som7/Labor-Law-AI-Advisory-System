@@ -116,6 +116,18 @@ var sources = []sourceSpec{
 		Effective: "2011-07-01",
 		Expected:  98,
 	},
+	{
+		// 2026-11-18 补：R-WAGE-UNDER-MIN 现在只能引《劳动合同法》第二十条、
+		// 《劳动法》第四十八条这类原则条款；最低工资由哪几项构成、哪些收入不计入、
+		// 多久调一次，全在这部部委规章里，不收录就只能给一句"不低于最低标准"。
+		// 页面正文写"2004年1月20日劳动保障部令第21号公布 自2004年3月1日起施行"。
+		File:      "min_wage.html",
+		Law:       "最低工资规定",
+		IDPrefix:  "MWR",
+		URL:       "https://www.gov.cn/zhengce/2022-08/31/content_5711292.htm",
+		Effective: "2004-03-01",
+		Expected:  15,
+	},
 }
 
 var (
