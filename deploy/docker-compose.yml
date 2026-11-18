@@ -114,6 +114,9 @@ services:
     restart: unless-stopped
     depends_on: [api]
     ports:
+      # 80 只做 301 跳 https；443 是域名入口；8443 留着给 IP 直连兜底。
+      - "80:80"
+      - "443:443"
       - "8443:8443"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro

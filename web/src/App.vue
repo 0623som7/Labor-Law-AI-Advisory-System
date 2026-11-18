@@ -9,6 +9,9 @@
     <main class="app-main">
       <RouterView />
     </main>
+    <footer class="icp">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">粤ICP备2026184096号-1</a>
+    </footer>
   </div>
 </template>
 
@@ -34,6 +37,23 @@
   flex: 1;
   min-height: 0;
   display: flex;
+}
+
+.icp {
+  flex: none;
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+  padding: 6px 0;
+}
+
+.icp a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.icp a:hover {
+  text-decoration: underline;
 }
 
 /* 路由渲染出的页面是 .app-main 的 flex item，默认 flex: 0 1 auto 会收缩到内容宽度，
