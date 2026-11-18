@@ -5,7 +5,7 @@
 // （42201 说明没文字层，这时连「开始审查」都不该给），最后才渲染 PDF。
 // 反过来的话，用户会先看到一片空白画布，再被弹回上传页。
 
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as pdfjsLib from 'pdfjs-dist'
@@ -440,6 +440,13 @@ async function load(): Promise<void> {
 
 function retry(): void {
   void load()
+
+// 同一路由换 fileId 时组件被复用（App.vue 是裸 <RouterView />，没有 :key），
+// 不重新 load 就会把上一份合同的卡片和 PDF 留在屏幕上——浏览器前进后退最容易撞上。
+watch(fileId, () => {
+  chatOpen.value = false
+  void load()
+})
 }
 
 onBeforeUnmount(() => {
