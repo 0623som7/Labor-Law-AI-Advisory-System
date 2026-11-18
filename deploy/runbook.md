@@ -256,6 +256,38 @@ sudo chmod 750 storage
 > 迁移走 `api -migrate`：跑完即退出，不需要装 mysql 客户端，也不会在线上悄悄改表。
 > 输出 `迁移完成 applied=N` 即成功；重复执行为 `applied=0`，是幂等的。
 
+# 3.9 用 bundle 传输（服务器 git fetch 报 HTTP2 framing 时的兜底）
+
+服务器上 `git fetch origin` 有时会直接失败：
+
+```
+error: RPC failed; curl 16 Error in the HTTP2 framing layer
+fatal: expected flush after ref listing
+```
+
+这不是网络断了，是 HTTP/2 帧层被中间设备掐掉。兜底做法是把提交打包带到机器上：
+
+```bash
+# 本机
+git bundle create /tmp/x.bundle main
+scp /tmp/x.bundle ubuntu@<主机>:/tmp/
+
+# 服务器
+cd /opt/laborlaw
+git bundle verify /tmp/x.bundle
+git fetch /tmp/x.bundle main:incoming
+git update-ref refs/remotes/origin/main incoming   # 这行不能省，否则 remote ref 停在旧位置
+git reset --hard incoming
+git branch -D incoming                             # 指向已合并的提交，留着只会被误 checkout
+```
+
+> 症状：`git branch -vv` 显示 `main … [origin/main: ahead 30]`，而 `git rev-parse --short refs/remotes/origin/main` 指向一个旧提交；
+> 后果：下一次 `git pull --ff-only` 或 `git reset --hard origin/main` 会把线上退回旧版本——工作区内容是对的，错的是指针。
+> 只补指针：`git update-ref refs/remotes/origin/main <当前 HEAD>`，别 reset、别 checkout。
+
+> `git fetch /tmp/x.bundle main:incoming` 只更新 `incoming` 分支，**不会**动 `refs/remotes/origin/main`。
+> 这正是上面那行 `update-ref` 存在的原因：漏了它，`reset --hard origin/main` 会在下一次部署时把线上退回旧版本。
+
 ---
 
 ## 4. 验收（每一项都要亲眼看到）
