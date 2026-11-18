@@ -122,6 +122,11 @@ type Review struct {
 	ID string
 	// FileID 是被审查文件。
 	FileID string
+	// Filename 是被审查文件的原文件名，只用于展示。
+	//
+	// 读路径由 reviews LEFT JOIN files 带出来：审查历史页要显示"审的是哪份合同"，
+	// 让前端再按 file_id 逐条查文件就是 N+1；文件被删掉时是空串，前端自己兜。
+	Filename string
 	// UserID 是归属人。
 	UserID string
 	// Status 是审查进度状态，取值与 TaskStatus 一致。

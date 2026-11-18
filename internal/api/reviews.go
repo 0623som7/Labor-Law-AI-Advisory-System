@@ -245,8 +245,11 @@ func (a *API) finishTask(ctx context.Context, taskID string, status port.TaskSta
 
 // fillReviewFilenames 给列表补文件名。
 //
-// 为什么不在 SQL 里 JOIN：文件名住在 files 表，而 port.Review 没有这个字段，
-// 也不想为一个纯展示字段去动冻结的 port 契约。这里用 Files().Get 逐条补，
+// 2026-11-18 起 store 层已经 LEFT JOIN files 把文件名带进 port.Review，
+// 所以这里退化成"兜底"：只补 Filename 还是空串的那些行。之所以不直接删掉，
+// 是因为 Detail（GET /reviews/{id}）与部分假实现仍可能给不出文件名，
+// 而"列表里少一列文件名"是肉眼可见的缺陷，宁可多一次主键点查。
+//
 // 一页最多 20 条、全是主键点查，代价可以忽略。
 //
 // 去重是必须的：同一个文件可能有多条审查记录（失败重试、取消后重发起），
@@ -260,6 +263,11 @@ func (a *API) fillReviewFilenames(ctx context.Context, userID string, items []po
 	}
 	names := make(map[string]string, len(items))
 	for _, it := range items {
+		if it.Filename != "" {
+			// store 已经带出来了，不用再查。
+			names[it.FileID] = it.Filename
+			continue
+		}
 		if _, done := names[it.FileID]; done {
 			continue
 		}

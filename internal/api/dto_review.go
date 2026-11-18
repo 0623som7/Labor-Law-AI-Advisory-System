@@ -43,6 +43,7 @@ func toReviewDTO(rv *port.Review) reviewDTO {
 	return reviewDTO{
 		ID:             rv.ID,
 		FileID:         rv.FileID,
+		Filename:       rv.Filename,
 		Status:         string(rv.Status),
 		RiskLevel:      string(rv.RiskLevel),
 		Score:          rv.Score,

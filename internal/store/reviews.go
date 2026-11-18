@@ -12,8 +12,18 @@ import (
 )
 
 // reviewColumns 是 reviews 表的读取列序，与 scanReview 一一对应。
-const reviewColumns = `id, file_id, user_id, status, risk_level, score,
-	clause_pass_rate, counts_high, counts_medium, counts_low, task_id, created_at, updated_at`
+//
+// 全部带 r. 前缀：读路径统一 LEFT JOIN files 取原文件名，两表同名列（id、created_at）
+// 不加前缀会报 ambiguous。
+const reviewColumns = `r.id, r.file_id, r.user_id, r.status, r.risk_level, r.score,
+	r.clause_pass_rate, r.counts_high, r.counts_medium, r.counts_low, r.task_id, r.created_at, r.updated_at`
+
+// reviewSelect 把列序、文件名与 JOIN 拼在一起。
+//
+// 用 LEFT JOIN 而不是再查一次 files：列表一页 20 条，逐条补名字就是 20 次往返；
+// LEFT 保证文件被删掉的老记录仍然读得出来，只是 filename 为空串。
+const reviewSelect = `SELECT ` + reviewColumns + `, COALESCE(f.filename, '')
+	FROM reviews r LEFT JOIN files f ON f.id = r.file_id`
 
 // findingColumns 是 findings 表的读取列序，与 scanFinding 一一对应。
 const findingColumns = `id, review_id, rule_id, severity, title, section, page_no,
@@ -75,16 +85,15 @@ func (r *Reviews) Create(ctx context.Context, rv *port.Review) error {
 // Get 按 ID 查审查，同时按 userID 过滤。
 func (r *Reviews) Get(ctx context.Context, userID, reviewID string) (*port.Review, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT `+reviewColumns+` FROM reviews WHERE id = ? AND user_id = ?`, reviewID, userID)
+		reviewSelect+` WHERE r.id = ? AND r.user_id = ?`, reviewID, userID)
 	return scanReview(row)
 }
 
 // GetByFile 返回该文件最近一次审查，供"同一合同不重复审"复用。
 func (r *Reviews) GetByFile(ctx context.Context, userID, fileID string) (*port.Review, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT `+reviewColumns+` FROM reviews
-		 WHERE user_id = ? AND file_id = ?
-		 ORDER BY created_at DESC, id DESC LIMIT 1`, userID, fileID)
+		reviewSelect+` WHERE r.user_id = ? AND r.file_id = ?
+		 ORDER BY r.created_at DESC, r.id DESC LIMIT 1`, userID, fileID)
 	return scanReview(row)
 }
 
@@ -243,8 +252,8 @@ func (r *Reviews) ListByUser(ctx context.Context, userID string, limit, offset i
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+reviewColumns+` FROM reviews WHERE user_id = ?
-		 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, userID, limit, offset)
+		reviewSelect+` WHERE r.user_id = ?
+		 ORDER BY r.created_at DESC, r.id DESC LIMIT ? OFFSET ?`, userID, limit, offset)
 	if err != nil {
 		return nil, port.Wrap(port.CodeInternal, err, "查询审查历史失败")
 	}
@@ -284,9 +293,9 @@ func (r *Reviews) ListByUserBefore(ctx context.Context, userID string, beforeCre
 	}
 
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+reviewColumns+` FROM reviews WHERE user_id = ?
-		 AND (created_at < ? OR (created_at = ? AND id < ?))
-		 ORDER BY created_at DESC, id DESC LIMIT ?`,
+		reviewSelect+` WHERE r.user_id = ?
+		 AND (r.created_at < ? OR (r.created_at = ? AND r.id < ?))
+		 ORDER BY r.created_at DESC, r.id DESC LIMIT ?`,
 		userID, beforeCreatedAt, beforeCreatedAt, beforeID, limit)
 	if err != nil {
 		return nil, port.Wrap(port.CodeInternal, err, "查询审查历史失败")
@@ -325,17 +334,19 @@ type scanner interface {
 // scanReviewFrom 把一行扫进 port.Review。
 func scanReviewFrom(s scanner, missing string) (*port.Review, error) {
 	var (
-		rv     port.Review
-		status string
-		risk   string
+		rv       port.Review
+		status   string
+		risk     string
+		filename sql.NullString
 	)
 	if err := s.Scan(&rv.ID, &rv.FileID, &rv.UserID, &status, &risk, &rv.Score,
 		&rv.ClausePassRate, &rv.Counts.High, &rv.Counts.Medium, &rv.Counts.Low,
-		&rv.TaskID, &rv.CreatedAt, &rv.UpdatedAt); err != nil {
+		&rv.TaskID, &rv.CreatedAt, &rv.UpdatedAt, &filename); err != nil {
 		return nil, notFound(err, "%s", missing)
 	}
 	rv.Status = port.TaskStatus(status)
 	rv.RiskLevel = port.Severity(risk)
+	rv.Filename = filename.String
 	return &rv, nil
 }
 
