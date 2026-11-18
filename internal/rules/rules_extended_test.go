@@ -51,6 +51,7 @@ func TestPenaltyUnlawful(t *testing.T) {
 	// 服务期与竞业限制是法律允许约定违约金的两个场景。
 	mustHit(t, r, Contract{Clauses: []Clause{{Text: "乙方违反服务期约定的，应支付违约金。"}}}, 0)
 	mustHit(t, r, Contract{Clauses: []Clause{{Text: "乙方违反竞业限制约定的，应支付违约金。"}}}, 0)
+	mustHit(t, r, Contract{Clauses: []Clause{{Text: "甲方违约的，应向乙方支付违约金。"}}}, 0)
 }
 
 func TestInvalidExemption(t *testing.T) {
@@ -126,12 +127,15 @@ func TestPregnantNightWork(t *testing.T) {
 	r := findExtendedRule(t, "R-PREGNANT-NIGHT-WORK")
 	mustHit(t, r, Contract{Clauses: []Clause{{Text: "怀孕七个月以上的女职工仍安排夜班。"}}}, 1)
 	mustHit(t, r, Contract{Clauses: []Clause{{Text: "怀孕七个月以上不得安排夜班。"}}}, 0)
+	mustHit(t, r, Contract{Clauses: []Clause{{Text: "怀孕期间不得延长工作时间。"}}}, 0)
 }
 
 func TestFemaleHazardWork(t *testing.T) {
 	r := findExtendedRule(t, "R-FEMALE-HAZARD-WORK")
 	mustHit(t, r, Contract{Clauses: []Clause{{Text: "哺乳期女职工继续从事有毒有害作业。"}}}, 1)
 	mustHit(t, r, Contract{Clauses: []Clause{{Text: "不得安排怀孕女职工从事有毒有害作业。"}}}, 0)
+	mustHit(t, r, Contract{Clauses: []Clause{{Text: "哺乳期女职工不得从事井下作业。"}}}, 0)
+	mustHit(t, r, Contract{Clauses: []Clause{{Text: "孕期女职工禁止从事高温作业。"}}}, 0)
 }
 
 func TestDismissalCompensationWaiver(t *testing.T) {
