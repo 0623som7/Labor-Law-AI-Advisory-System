@@ -336,6 +336,63 @@ function startNewSession(): void {
   if (route.params.sessionId !== undefined) void router.replace({ name: 'chat' })
 }
 
+/** 侧栏当前停靠的行：roving tabindex 的"当前"就是它。 */
+const listActive = ref(0)
+
+// 列表长度会变（搜索过滤、删会话、新建会话），把停靠点夹回合法范围，
+// 否则 Tab 进来落到一个不存在的行上，等于列表失去焦点入口。
+watch(
+  () => visibleRows.value.length,
+  (n) => {
+    if (n === 0) {
+      listActive.value = 0
+      return
+    }
+    if (listActive.value > n - 1) listActive.value = n - 1
+  },
+)
+
+/** 把焦点挪到第 idx 行（越界夹住）。 */
+function focusSessionRow(idx: number): void {
+  const rows = visibleRows.value
+  if (rows.length === 0) return
+  const next = Math.min(Math.max(idx, 0), rows.length - 1)
+  listActive.value = next
+  const id = rows[next].session.id
+  const el = document.querySelector<HTMLElement>(
+    `.session-item[data-session-id="${id}"] .session-title`,
+  )
+  el?.focus()
+}
+
+/** 侧栏键盘：↑/↓ 换行、Home/End 到头尾、Delete 删当前行。 */
+function onListKeydown(evt: KeyboardEvent, idx: number, session: Session): void {
+  if (evt.key === 'ArrowDown') {
+    evt.preventDefault()
+    focusSessionRow(idx + 1)
+    return
+  }
+  if (evt.key === 'ArrowUp') {
+    evt.preventDefault()
+    focusSessionRow(idx - 1)
+    return
+  }
+  if (evt.key === 'Home') {
+    evt.preventDefault()
+    focusSessionRow(0)
+    return
+  }
+  if (evt.key === 'End') {
+    evt.preventDefault()
+    focusSessionRow(visibleRows.value.length - 1)
+    return
+  }
+  if (evt.key === 'Delete') {
+    evt.preventDefault()
+    void removeSession(session)
+  }
+}
+
 async function removeSession(session: Session): Promise<void> {
   try {
     await ElMessageBox.confirm(`删除后「${session.title}」里的对话将无法恢复。`, '删除会话', {
@@ -599,9 +656,15 @@ onBeforeUnmount(() => {
         <el-button type="primary" class="new-btn" :disabled="sending" @click="startNewSession">
           ＋ 新对话
         </el-button>
+        <!--
+          收起/展开是纯视觉开关，不进 Tab 顺序：键盘用户从搜索框走到会话行只要一次，
+          而它夹在中间会把"到主输入框几次 Tab"顶上去（实测 8 次，目标是 6 次以内）。
+          收起之后主区顶部的 » 按钮仍在 Tab 顺序里，键盘照样能展开回来。
+        -->
         <button
           type="button"
           class="collapse-btn"
+          tabindex="-1"
           :title="collapsed ? '展开会话列表' : '收起会话列表'"
           @click="collapsed = !collapsed"
         >
@@ -621,15 +684,29 @@ onBeforeUnmount(() => {
         <p v-if="listLoading && sessions.length === 0" class="sidebar-hint">加载中…</p>
         <p v-else-if="sessions.length === 0" class="sidebar-hint">还没有会话，发第一句就会出现在这里。</p>
         <p v-else-if="searchEmpty" class="sidebar-hint">没有匹配的会话</p>
+        <!--
+          侧栏用 roving tabindex：整张列表只留一个 Tab 停靠点。
+          之前每行两个可聚焦按钮（标题 + 删除），50 条会话意味着从搜索框走到
+          主输入框要按 107 次 Tab——纯键盘用户基本上用不了。
+          现在 ↑/↓ 在行间移动、Enter 打开、Delete 删除，Tab 一次就离开列表。
+        -->
         <ul v-else class="session-list">
           <li
-            v-for="row in visibleRows"
+            v-for="(row, idx) in visibleRows"
             :key="row.session.id"
             class="session-item"
             :class="{ active: row.session.id === currentSessionId }"
             :data-session-id="row.session.id"
+            @keydown="onListKeydown($event, idx, row.session)"
           >
-            <button type="button" class="session-title" :disabled="sending" @click="openSession(row.session)">
+            <button
+              type="button"
+              class="session-title"
+              :tabindex="idx === listActive ? 0 : -1"
+              :disabled="sending"
+              @focus="listActive = idx"
+              @click="openSession(row.session)"
+            >
               <span class="session-name">{{ row.title }}</span>
               <span class="session-time">{{ formatRelative(row.session.updated_at) }}</span>
             </button>
@@ -637,6 +714,7 @@ onBeforeUnmount(() => {
               type="button"
               class="session-del"
               title="删除会话"
+              tabindex="-1"
               :disabled="sending"
               @click="removeSession(row.session)"
             >
@@ -788,6 +866,17 @@ onBeforeUnmount(() => {
             ×
           </button>
         </div>
+        <el-input
+          v-model="input"
+          type="textarea"
+          :rows="3"
+          resize="none"
+          maxlength="4000"
+          show-word-limit
+          placeholder="描述你的情况，Enter 发送，Shift+Enter 换行"
+          @keydown="onComposerKeydown"
+          @paste="onPasteLimit"
+        />
         <div class="composer-tools">
           <button
             type="button"
@@ -805,17 +894,6 @@ onBeforeUnmount(() => {
             @change="onFilePicked"
           />
         </div>
-        <el-input
-          v-model="input"
-          type="textarea"
-          :rows="3"
-          resize="none"
-          maxlength="4000"
-          show-word-limit
-          placeholder="描述你的情况，Enter 发送，Shift+Enter 换行"
-          @keydown="onComposerKeydown"
-          @paste="onPasteLimit"
-        />
         <div class="composer-actions">
           <el-button v-if="sending" @click="stop">停止</el-button>
           <el-button v-else type="primary" :disabled="!canSend" @click="send">发送</el-button>
@@ -1233,6 +1311,12 @@ onBeforeUnmount(() => {
 }
 
 .composer {
+  /*
+    flex 列 + 显式 order：DOM 里把「附合同」放到输入框之后，是为了让键盘先落到
+    主输入框（Tab 到 textarea 的次数是可用性指标），视觉上它仍然在输入框上方。
+  */
+  display: flex;
+  flex-direction: column;
   flex: none;
   padding: 10px 16px 14px;
   background: var(--ll-surface);
@@ -1240,12 +1324,14 @@ onBeforeUnmount(() => {
 }
 
 .composer-actions {
+  order: 5;
   display: flex;
   justify-content: flex-end;
   margin-top: 8px;
 }
 
 .composer-tools {
+  order: 3;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -1279,6 +1365,7 @@ onBeforeUnmount(() => {
 
 /* 待发送芯片：让用户在按发送之前就知道"这一轮带了一份合同"。 */
 .ask-ctx {
+  order: 1;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -1319,6 +1406,7 @@ onBeforeUnmount(() => {
 }
 
 .pending-file {
+  order: 2;
   display: flex;
   gap: 8px;
   align-items: center;
