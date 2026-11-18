@@ -109,7 +109,13 @@ func (a *API) uploadFile(c *gin.Context) {
 	switch {
 	case err == nil:
 		_ = a.blobs.Remove(relPath)
-		if existing.PageCount == 0 {
+		// 不能用 PageCount 判断"解析成功"：无文字层的扫描件页数是 1、文本层是空的，
+		// 只看页数会把这类坏记录当成已解析直接回 200，用户重传多少次都拿不到文本。
+		// 判据换成"库里有没有解析结果"——LoadPages 没有页面就当作没解析过，补跑一次。
+		// 故意把 perr 也算进"没解析过"：DB 抖动时重解析一次，失败了同样回 422/500，
+		// 比把一个坏记录当成功返回更接近用户预期。
+		pages, perr := a.store.File().LoadPages(ctx, existing.ID)
+		if perr != nil || len(pages) == 0 {
 			a.finishParse(c, existing)
 			return
 		}
@@ -190,6 +196,13 @@ func (a *API) finishParse(c *gin.Context, rec *port.FileRecord) {
 	}
 
 	if parseErr != nil {
+		// 无文本层不算"服务器出问题"，而是一份可以指认的文件：
+		// 带上 file_id，前端才能把用户送到那份文件的审查页去看提示。
+		if port.CodeOf(parseErr) == port.CodeNoTextLayer {
+			FailFields(c, port.CodeNoTextLayer, "没有检测到文字层，可能是扫描件，请改用 OCR 或换一份文件",
+				map[string]string{"file_id": rec.ID})
+			return
+		}
 		Fail(c, parseErr)
 		return
 	}
@@ -257,7 +270,9 @@ func (a *API) getFilePages(c *gin.Context) {
 		// 文件存在但没解析结果 = 上次解析没成功（扫描件、超页数、崩溃）。
 		// 折成 42201 而不是 404：404 会让前端以为文件被删了。
 		if port.CodeOf(err) == port.CodeNotFound {
-			FailCode(c, port.CodeNoTextLayer, "该文件尚未解析出文本层，请重新上传或改用 OCR")
+			// 文案与"上传时解析失败"那一处保持一致：同一件事用户不该看到两种说法。
+			FailFields(c, port.CodeNoTextLayer, "没有检测到文字层，可能是扫描件，请改用 OCR 或换一份文件",
+				map[string]string{"file_id": rec.ID})
 			return
 		}
 		Fail(c, err)

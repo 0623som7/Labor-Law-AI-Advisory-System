@@ -85,3 +85,15 @@ func Fail(c *gin.Context, err error) {
 func FailCode(c *gin.Context, code port.ErrorCode, format string, args ...any) {
 	Fail(c, port.New(code, format, args...))
 }
+
+// FailFields 也是语法糖，只多带字段级信息。
+//
+// 目前唯一用途是把 42201 的 file_id 带回去：前端拿到它才能把用户直接送到
+// 那份文件的审查页，否则用户只看到"没有文字层"却不知道该看哪一份。
+func FailFields(c *gin.Context, code port.ErrorCode, message string, fields map[string]string) {
+	appErr := port.New(code, "%s", message)
+	for k, v := range fields {
+		appErr = appErr.WithField(k, v)
+	}
+	Fail(c, appErr)
+}
