@@ -88,6 +88,30 @@
   color-scheme: light;
 }
 
+/* element-plus 主题桥接：组件取色统一走品牌令牌。
+   写成 html:root 是因为 EP 自己也用 :root 定义同名变量，同优先级只能靠加载顺序取胜。 */
+html:root {
+  --el-color-primary: var(--ll-primary); /* #2f6feb，白字 4.57:1 */
+  --el-color-primary-dark-2: #2659bc; /* active，白字 6.49:1 */
+  --el-color-primary-light-3: #2a63d2; /* hover，白字 5.51:1（EP 原 #5a8bf0 只有 3.29） */
+  --el-color-primary-light-5: #86aaf4; /* disabled 底 */
+  --el-color-primary-light-7: #b1c8f8;
+  --el-color-primary-light-8: #c7d7fa;
+  --el-color-primary-light-9: #e6edfd;
+  --el-border-radius-base: var(--ll-radius-sm); /* 6px */
+  --el-border-radius-small: var(--ll-radius-sm);
+  --el-border-radius-round: 999px;
+}
+
+/* 浅色 disabled：EP 默认白字压 light-5 只有 2.32，改成浅底深字 5.32 */
+.el-button--primary.is-disabled,
+.el-button--primary.is-disabled:hover,
+.el-button--primary.is-disabled:active {
+  --el-button-disabled-bg-color: #c7d7fa;
+  --el-button-disabled-text-color: #475467;
+  --el-button-disabled-border-color: #c7d7fa;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -190,4 +214,36 @@ button {
   --ll-mark-medium: #d97706;
   --ll-mark-low: #ca8a04;
   --ll-paper-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+/* 深色的 EP 变量要压过上面 html:root 的浅色值，必须同优先级再写一遍 */
+html[data-theme='dark'] {
+  --el-color-primary: var(--ll-primary); /* #4c8dff */
+  --el-color-primary-dark-2: #3d7ae0;
+  --el-color-primary-light-3: #6ea8fe; /* hover：#111827 压上去 7.35:1 */
+}
+
+/* 深色下只有主按钮需要深色文字：白字压在 #4c8dff 上只有 2.9:1 */
+[data-theme='dark'] .el-button--primary {
+  --el-button-text-color: #111827; /* on #4c8dff = 5.54:1 */
+  --el-button-hover-text-color: #111827;
+  --el-button-active-text-color: #111827;
+  --el-button-disabled-text-color: #98a2b3;
+  /* dark-2(#3d7ae0) 压深字只有 4.27，active 单独换一档更亮的蓝 */
+  --el-button-active-bg-color: #7fb3ff;
+  --el-button-disabled-bg-color: #26303d;
+  --el-button-disabled-border-color: #26303d;
+}
+
+[data-theme='dark'] .el-button--primary.is-disabled,
+[data-theme='dark'] .el-button--primary.is-disabled:hover,
+[data-theme='dark'] .el-button--primary.is-disabled:active {
+  color: #a7b0bd; /* on #26303d = 6.2:1，且明显比可用态暗 */
+  background-color: #26303d;
+  border-color: #26303d;
+}
+
+/* element-plus 没有 --el-button-padding-horizontal，只能显式覆盖；文字按钮不参与 */
+.el-button:not(.is-text):not(.is-link) {
+  padding: 8px 12px;
 }
