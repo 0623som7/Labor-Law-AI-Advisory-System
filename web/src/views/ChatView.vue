@@ -1084,7 +1084,7 @@ onMounted(() => {
   font-size: 12px;
   color: var(--ll-text);
   background: var(--ll-bg);
-  border: 1px solid var(--ll-border, #e5e7eb);
+  border: 1px solid var(--ll-border);
   border-radius: 6px;
   outline: none;
 }
@@ -1156,7 +1156,7 @@ onMounted(() => {
 }
 
 .session-del:hover {
-  color: #d93026;
+  color: var(--ll-danger);
   background: #fdecea;
 }
 
@@ -1164,7 +1164,7 @@ onMounted(() => {
   flex: none;
   padding: 8px 12px;
   font-size: 13px;
-  color: var(--ll-accent, #2563eb);
+  color: var(--ll-accent);
   text-decoration: none;
   border-top: 1px solid var(--ll-border);
 }
@@ -1234,7 +1234,7 @@ onMounted(() => {
   padding: 8px 16px;
   margin: 0;
   font-size: 12px;
-  color: #d93026;
+  color: var(--ll-danger);
   background: #fdecea;
 }
 
@@ -1286,7 +1286,7 @@ onMounted(() => {
 }
 
 .bubble-user {
-  color: #fff;
+  color: var(--ll-on-primary);
   background: var(--ll-user-bubble);
 }
 
@@ -1363,7 +1363,7 @@ onMounted(() => {
 .error-line {
   margin: 6px 0 0;
   font-size: 12px;
-  color: #d93026;
+  color: var(--ll-danger);
 }
 
 .citations {
@@ -1398,9 +1398,9 @@ onMounted(() => {
 
 .copy-btn {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--ll-text-subtle);
   background: none;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--ll-border-muted);
   border-radius: 6px;
   padding: 2px 8px;
   cursor: pointer;
@@ -1483,14 +1483,14 @@ onMounted(() => {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 6px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  color: #4b5563;
+  background: var(--ll-surface-muted);
+  border: 1px solid var(--ll-border-muted);
+  color: var(--ll-text-soft);
 }
 
 .ask-ctx-link {
   font-size: 12px;
-  color: #2563eb;
+  color: var(--ll-accent);
   text-decoration: none;
 }
 
@@ -1501,7 +1501,7 @@ onMounted(() => {
 .ask-ctx-close {
   border: none;
   background: transparent;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
@@ -1509,7 +1509,7 @@ onMounted(() => {
 }
 
 .ask-ctx-close:hover {
-  color: #4b5563;
+  color: var(--ll-text-soft);
 }
 
 .pending-file {
@@ -1543,7 +1543,7 @@ onMounted(() => {
 }
 
 .pending-remove:hover {
-  color: #d93026;
+  color: var(--ll-danger);
 }
 
 /*
@@ -1561,7 +1561,7 @@ onMounted(() => {
   margin-bottom: 8px;
   color: var(--ll-text);
   cursor: pointer;
-  background: #fff;
+  background: var(--ll-surface);
   border: 1px solid var(--ll-border);
   border-radius: 8px;
 }
@@ -1574,7 +1574,7 @@ onMounted(() => {
   flex: none;
   width: 26px;
   height: 26px;
-  color: #d93026;
+  color: var(--ll-danger);
 }
 
 .file-card-label {
@@ -1616,7 +1616,7 @@ onMounted(() => {
 
 .splitter:hover,
 .splitter:focus-visible {
-  background: var(--ll-primary-weak, #dbeafe);
+  background: var(--ll-primary-weak);
   outline: none;
 }
 

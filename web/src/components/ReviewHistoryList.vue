@@ -229,14 +229,14 @@ onBeforeUnmount(stopPolling)
 .history-head {
   flex: none;
   padding: 16px 16px 12px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--ll-border-muted);
 }
 
 .history-title {
   margin: 0 0 10px;
   font-size: 15px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--ll-text-body);
 }
 
 .rows {
@@ -269,7 +269,7 @@ onBeforeUnmount(stopPolling)
 .row-name {
   font-weight: 600;
   font-size: 13px;
-  color: #1f2937;
+  color: var(--ll-text-body);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -288,15 +288,15 @@ onBeforeUnmount(stopPolling)
   flex: none;
   padding: 1px 8px;
   font-weight: 500;
-  color: #1f2937;
-  background: #f3f4f6;
+  color: var(--ll-text-body);
+  background: var(--ll-surface-sunken);
   border-radius: 999px;
 }
 
 /* 配色与 ReviewsView 原页一致，不另定一套 */
 .status-succeeded {
   color: #047857;
-  background: #ecfdf5;
+  background: var(--ll-ok-wash);
 }
 
 .status-running {
@@ -305,7 +305,7 @@ onBeforeUnmount(stopPolling)
 }
 
 .status-failed {
-  color: #b91c1c;
+  color: var(--ll-danger-strong);
   background: #fef2f2;
 }
 
@@ -316,28 +316,28 @@ onBeforeUnmount(stopPolling)
 }
 
 .risk-high {
-  color: #b91c1c;
+  color: var(--ll-danger-strong);
   background: #fef2f2;
 }
 
 .risk-medium {
-  color: #b45309;
+  color: var(--ll-warn-strong);
   background: #fffbeb;
 }
 
 .risk-low {
   color: #047857;
-  background: #ecfdf5;
+  background: var(--ll-ok-wash);
 }
 
 .risk-none {
-  color: #6b7280;
-  background: #f3f4f6;
+  color: var(--ll-text-subtle);
+  background: var(--ll-surface-sunken);
 }
 
 .row-time {
   margin-left: auto;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
   white-space: nowrap;
 }
 
@@ -346,21 +346,21 @@ onBeforeUnmount(stopPolling)
   gap: 8px;
   margin-top: 4px;
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .row-metrics em {
   font-style: normal;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--ll-text-body);
 }
 
 .row-metrics em.high {
-  color: #b91c1c;
+  color: var(--ll-danger-strong);
 }
 
 .row-metrics em.medium {
-  color: #b45309;
+  color: var(--ll-warn-strong);
 }
 
 .row-metrics em.low {
@@ -370,14 +370,14 @@ onBeforeUnmount(stopPolling)
 .state {
   padding: 24px 16px;
   text-align: center;
-  color: #6b7280;
+  color: var(--ll-text-subtle);
   font-size: 13px;
 }
 
 .state .hint {
   margin-top: 6px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .error {
@@ -396,7 +396,7 @@ onBeforeUnmount(stopPolling)
   margin: 0;
   padding: 8px 16px;
   font-size: 12px;
-  color: #b45309;
+  color: var(--ll-warn-strong);
   background: #fffbeb;
   border-top: 1px solid #fde68a;
 }

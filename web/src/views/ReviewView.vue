@@ -870,7 +870,7 @@ void load()
 
 .brand {
   font-weight: 600;
-  color: #1f2937;
+  color: var(--ll-text-body);
 }
 
 .file-meta {
@@ -882,7 +882,7 @@ void load()
 
 .file-name {
   font-size: 14px;
-  color: #111827;
+  color: var(--ll-text-strong);
   max-width: 40vw;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -891,7 +891,7 @@ void load()
 
 .file-pages {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .links {
@@ -920,7 +920,7 @@ void load()
 }
 
 .crumbs a {
-  color: #2563eb;
+  color: var(--ll-accent);
   text-decoration: none;
 }
 
@@ -946,13 +946,13 @@ void load()
 .blocked-title {
   margin: 0;
   font-size: 16px;
-  color: #374151;
+  color: var(--ll-text-mid);
 }
 
 .blocked-hint {
   margin: 0;
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .body {
@@ -969,12 +969,12 @@ void load()
   width: 6px;
   cursor: col-resize;
   background: transparent;
-  border-left: 1px solid #e5e7eb;
+  border-left: 1px solid var(--ll-border-muted);
 }
 
 .splitter:hover,
 .splitter:focus-visible {
-  background: #dbeafe;
+  background: var(--ll-primary-wash);
   outline: none;
 }
 
@@ -991,11 +991,11 @@ void load()
   gap: 12px;
   padding: 12px 20px;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--ll-text-subtle);
 }
 
 .viewer-title {
-  color: #374151;
+  color: var(--ll-text-mid);
   font-weight: 500;
 }
 
@@ -1008,7 +1008,7 @@ void load()
 .page {
   position: relative;
   margin: 0 auto 20px;
-  background: #fff;
+  background: var(--ll-paper);
   box-shadow: 0 1px 6px rgba(15, 23, 42, 0.12);
 }
 
@@ -1042,10 +1042,10 @@ void load()
   background: rgba(202, 138, 4, 0.07);
 }
 
-/* 选中态常驻：不自动灭，点下一条自然切换。描边沿用风险配色（#d93026）。 */
+/* 选中态常驻：不自动灭，点下一条自然切换。描边沿用风险配色（var(--ll-danger)）。 */
 .mark--active {
   z-index: 2;
-  border-color: #d93026;
+  border-color: var(--ll-danger);
   background: rgba(217, 48, 38, 0.16);
   outline: 2px solid rgba(217, 48, 38, 0.85);
   outline-offset: 1px;
@@ -1054,12 +1054,12 @@ void load()
 
 /* 描边跟随风险等级：中/低风险点中后仍是自己的橙/黄，不然颜色自相矛盾。 */
 .mark--active.mark--medium {
-  border-color: #d97706;
+  border-color: var(--ll-warn);
   outline-color: rgba(217, 119, 6, 0.85);
 }
 
 .mark--active.mark--low {
-  border-color: #ca8a04;
+  border-color: var(--ll-warn-mid);
   outline-color: rgba(202, 138, 4, 0.85);
 }
 
@@ -1075,7 +1075,7 @@ void load()
 .pdf-error {
   text-align: center;
   font-size: 13px;
-  color: #d93026;
+  color: var(--ll-danger);
 }
 
 .panel {
@@ -1085,8 +1085,8 @@ void load()
   flex: none;
   display: flex;
   flex-direction: column;
-  background: #fff;
-  border-left: 1px solid #e5e7eb;
+  background: var(--ll-surface);
+  border-left: 1px solid var(--ll-border-muted);
 }
 
 .panel-head {
@@ -1105,15 +1105,15 @@ void load()
 }
 
 .sum--high {
-  color: #d93026;
+  color: var(--ll-danger);
 }
 
 .sum--medium {
-  color: #d97706;
+  color: var(--ll-warn);
 }
 
 .sum--low {
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .running {
@@ -1123,13 +1123,13 @@ void load()
 .running-line {
   margin: 0 0 10px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .review-error {
   margin: 16px;
   font-size: 13px;
-  color: #d93026;
+  color: var(--ll-danger);
 }
 
 .review-error-text {
@@ -1154,7 +1154,7 @@ void load()
   margin: 16px;
   font-size: 13px;
   line-height: 1.7;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .cards {
@@ -1168,14 +1168,14 @@ void load()
 .card {
   padding: 12px;
   margin-bottom: 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--ll-border-muted);
   border-radius: 8px;
   cursor: pointer;
   transition: border-color 0.15s ease;
 }
 
 .card--active {
-  border-color: #2563eb;
+  border-color: var(--ll-accent);
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
 }
 
@@ -1190,38 +1190,38 @@ void load()
   font-size: 12px;
   padding: 0 5px;
   border-radius: 3px;
-  color: #fff;
+  color: var(--ll-on-primary);
 }
 
 .tag--high {
-  background: #d93026;
+  background: var(--ll-danger);
 }
 
 .tag--medium {
-  background: #d97706;
+  background: var(--ll-warn);
 }
 
 .tag--low {
-  background: #ca8a04;
+  background: var(--ll-warn-mid);
 }
 
 .card-title {
   font-size: 14px;
   font-weight: 500;
-  color: #111827;
+  color: var(--ll-text-strong);
 }
 
 .card-section {
   margin-left: auto;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .card-evidence {
   margin: 8px 0 0;
   font-size: 13px;
   line-height: 1.7;
-  color: #374151;
+  color: var(--ll-text-mid);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1229,17 +1229,17 @@ void load()
 .ask-this {
   margin-top: 8px;
   padding: 4px 10px;
-  border: 1px solid #d0d5dd;
+  border: 1px solid var(--ll-border-strong);
   border-radius: 6px;
-  background: #fff;
+  background: var(--ll-surface);
   color: #475467;
   font-size: 12px;
   cursor: pointer;
 }
 
 .ask-this:hover {
-  border-color: #2f6feb;
-  color: #2f6feb;
+  border-color: var(--ll-primary);
+  color: var(--ll-primary);
 }
 
 .card-actions {
@@ -1251,17 +1251,17 @@ void load()
 .copy-sug {
   margin-top: 8px;
   padding: 4px 10px;
-  border: 1px solid #d0d5dd;
+  border: 1px solid var(--ll-border-strong);
   border-radius: 6px;
-  background: #fff;
+  background: var(--ll-surface);
   color: #475467;
   font-size: 12px;
   cursor: pointer;
 }
 
 .copy-sug:hover {
-  border-color: #2f6feb;
-  color: #2f6feb;
+  border-color: var(--ll-primary);
+  color: var(--ll-primary);
 }
 
 .fold {
@@ -1271,7 +1271,7 @@ void load()
 
 .fold summary {
   cursor: pointer;
-  color: #2563eb;
+  color: var(--ll-accent);
   list-style: none;
 }
 
@@ -1282,28 +1282,28 @@ void load()
 .basis {
   margin-top: 8px;
   padding: 8px 10px;
-  background: #f9fafb;
+  background: var(--ll-surface-muted);
   border-radius: 6px;
 }
 
 .basis-head {
   margin: 0;
   font-weight: 500;
-  color: #111827;
+  color: var(--ll-text-strong);
 }
 
 .basis-text {
   margin: 4px 0 0;
   line-height: 1.7;
-  color: #4b5563;
+  color: var(--ll-text-soft);
   white-space: pre-wrap;
 }
 
 .sug-original {
   margin: 8px 0 0;
   padding: 6px 8px;
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--ll-surface-sunken);
+  color: var(--ll-text-subtle);
   text-decoration: line-through;
   border-radius: 6px;
   white-space: pre-wrap;
@@ -1312,7 +1312,7 @@ void load()
 .sug-revised {
   margin: 6px 0 0;
   padding: 6px 8px;
-  background: #ecfdf5;
+  background: var(--ll-ok-wash);
   color: #065f46;
   border-radius: 6px;
   white-space: pre-wrap;
@@ -1320,7 +1320,7 @@ void load()
 
 .sug-reason {
   margin: 6px 0 0;
-  color: #6b7280;
+  color: var(--ll-text-subtle);
   line-height: 1.7;
 }
 /* 窄屏：分隔条消失、面板回到改动前的 420，等于退回原来的固定两栏。 */
@@ -1387,19 +1387,19 @@ void load()
   height: 24px;
   font-size: 12px;
   font-weight: 600;
-  color: #fff;
+  color: var(--ll-on-primary);
   border-radius: 50%;
 }
 
 .rail-count--high {
-  background: #d93026;
+  background: var(--ll-danger);
 }
 
 .rail-count--medium {
-  background: #d97706;
+  background: var(--ll-warn);
 }
 
 .rail-count--low {
-  background: #ca8a04;
+  background: var(--ll-warn-mid);
 }
 </style>

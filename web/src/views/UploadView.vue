@@ -284,7 +284,7 @@ async function start(): Promise<void> {
 
 .brand {
   font-weight: 600;
-  color: #1f2937;
+  color: var(--ll-text-body);
 }
 
 .links {
@@ -312,7 +312,7 @@ async function start(): Promise<void> {
 }
 
 .crumbs a {
-  color: #2563eb;
+  color: var(--ll-accent);
   text-decoration: none;
 }
 
@@ -340,19 +340,19 @@ async function start(): Promise<void> {
 .splitter {
   cursor: col-resize;
   background: transparent;
-  border-left: 1px solid #e5e7eb;
+  border-left: 1px solid var(--ll-border-muted);
 }
 
 .splitter:hover,
 .splitter:focus-visible {
-  background: #dbeafe;
+  background: var(--ll-primary-wash);
   outline: none;
 }
 
 .pane-history {
   min-height: 0;
-  background: #fff;
-  border-right: 1px solid #e5e7eb;
+  background: var(--ll-surface);
+  border-right: 1px solid var(--ll-border-muted);
 }
 
 .pane-work {
@@ -383,7 +383,7 @@ async function start(): Promise<void> {
 
   .pane-history {
     border-right: none;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--ll-border-muted);
   }
 
   .pane-work {
@@ -394,20 +394,20 @@ async function start(): Promise<void> {
 .title {
   margin: 0 0 8px;
   font-size: 22px;
-  color: #1f2937;
+  color: var(--ll-text-body);
 }
 
 .subtitle {
   margin: 0 0 24px;
   font-size: 14px;
   line-height: 1.7;
-  color: #6b7280;
+  color: var(--ll-text-subtle);
 }
 
 .drop :deep(.el-upload-dragger) {
   padding: 32px 16px;
   border-radius: 10px;
-  background: #fff;
+  background: var(--ll-surface);
 }
 
 .drop-inner {
@@ -431,25 +431,25 @@ async function start(): Promise<void> {
 .drop-main {
   margin: 6px 0 0;
   font-size: 14px;
-  color: #374151;
+  color: var(--ll-text-mid);
 }
 
 .drop-main em {
   font-style: normal;
-  color: #2563eb;
+  color: var(--ll-accent);
 }
 
 .drop-hint {
   margin: 0;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .picked {
   margin-top: 20px;
   padding: 16px;
-  background: #fff;
-  border: 1px solid #e5e7eb;
+  background: var(--ll-surface);
+  border: 1px solid var(--ll-border-muted);
   border-radius: 10px;
 }
 
@@ -461,13 +461,13 @@ async function start(): Promise<void> {
 
 .picked-name {
   font-size: 14px;
-  color: #111827;
+  color: var(--ll-text-strong);
   word-break: break-all;
 }
 
 .picked-size {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .picked-actions {
@@ -483,13 +483,13 @@ async function start(): Promise<void> {
 
 .hint {
   font-size: 13px;
-  color: #6b7280;
+  color: var(--ll-text-subtle);
 }
 
 .error {
   margin-top: 16px;
   font-size: 13px;
-  color: #d93026;
+  color: var(--ll-danger);
 }
 
 /* 900 以下再钉一次单栏：三段式 grid 若被任何后续规则改回，这里兜住，

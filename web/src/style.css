@@ -8,6 +8,32 @@
   --ll-primary-weak: #eaf1fe;
   --ll-user-bubble: #2f6feb;
   --ll-radius: 10px;
+  /* 表面层级 */
+  --ll-surface-muted: #f9fafb;
+  --ll-surface-sunken: #f3f4f6;
+  /* 边框 */
+  --ll-border-muted: #e5e7eb;
+  --ll-border-strong: #d0d5dd;
+  /* 文字 */
+  --ll-text-strong: #111827;
+  --ll-text-body: #1f2937;
+  --ll-text-mid: #374151;
+  --ll-text-soft: #4b5563;
+  --ll-text-subtle: #6b7280;
+  --ll-text-faint: #9ca3af;
+  /* 蓝色（注意两个蓝值不同，不要合并） */
+  --ll-accent: #2563eb;
+  --ll-primary-wash: #dbeafe;
+  /* 语义色 */
+  --ll-danger: #d93026;
+  --ll-danger-strong: #b91c1c;
+  --ll-warn: #d97706;
+  --ll-warn-strong: #b45309;
+  --ll-warn-mid: #ca8a04;
+  --ll-ok-wash: #ecfdf5;
+  /* 纸面与反白：这两个不随主题变 */
+  --ll-paper: #ffffff;
+  --ll-on-primary: #ffffff;
   color-scheme: light;
 }
 

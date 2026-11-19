@@ -419,7 +419,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   height: v-bind('renderedHeight + "px"');
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--ll-surface);
 }
 
 /* 拖拽条 6px，border-top 挪到这里（留在 .inline-chat 上会叠成 2px）。 */
@@ -427,12 +427,12 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   flex: none;
   height: 6px;
   cursor: ns-resize;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--ll-border-muted);
 }
 
 .ic-resizer:hover,
 .ic-resizer:focus-visible {
-  background: var(--ll-primary-weak, #dbeafe);
+  background: var(--ll-primary-weak);
   outline: none;
 }
 
@@ -460,9 +460,9 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 .ic-context {
   margin: 0;
   padding: 6px 12px;
-  border-bottom: 1px solid #f3f4f6;
-  background: #f9fafb;
-  color: #4b5563;
+  border-bottom: 1px solid var(--ll-surface-sunken);
+  background: var(--ll-surface-muted);
+  color: var(--ll-text-soft);
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
@@ -472,18 +472,18 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 .ic-title {
   font-size: 13px;
   font-weight: 600;
-  color: #111827;
+  color: var(--ll-text-strong);
 }
 
 .ic-session {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .ic-link {
   margin-left: auto;
   font-size: 12px;
-  color: #2563eb;
+  color: var(--ll-accent);
   text-decoration: none;
 }
 
@@ -494,7 +494,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 .ic-close {
   border: none;
   background: transparent;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
@@ -502,7 +502,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 }
 
 .ic-close:hover {
-  color: #4b5563;
+  color: var(--ll-text-soft);
 }
 
 .ic-body {
@@ -515,7 +515,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 .ic-empty {
   margin: 0;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--ll-text-faint);
 }
 
 .ic-turn {
@@ -526,7 +526,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   margin: 0;
   font-size: 13px;
   line-height: 1.6;
-  color: #1f2937;
+  color: var(--ll-text-body);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -534,7 +534,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 .ic-user .ic-text {
   padding: 6px 10px;
   border-radius: 8px;
-  background: #f3f4f6;
+  background: var(--ll-surface-sunken);
 }
 
 .ic-citations {
@@ -547,7 +547,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 .ic-error {
   margin: 6px 0 0;
   font-size: 12px;
-  color: #b91c1c;
+  color: var(--ll-danger-strong);
 }
 
 .ic-composer {
@@ -565,20 +565,20 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   font-family: inherit;
   font-size: 13px;
   line-height: 1.5;
-  border: 1px solid #d0d5dd;
+  border: 1px solid var(--ll-border-strong);
   border-radius: 6px;
 }
 
 .ic-input:focus {
   outline: none;
-  border-color: #2f6feb;
+  border-color: var(--ll-primary);
 }
 
 .ic-send {
   padding: 6px 12px;
   font-size: 13px;
-  color: #fff;
-  background: #2f6feb;
+  color: var(--ll-on-primary);
+  background: var(--ll-primary);
   border: none;
   border-radius: 6px;
   cursor: pointer;

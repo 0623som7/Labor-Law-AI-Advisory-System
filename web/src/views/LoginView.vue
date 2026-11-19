@@ -245,13 +245,13 @@ function switchMode(next: 'login' | 'register'): void {
 
 .field-error {
   font-size: 12px;
-  color: #d93026;
+  color: var(--ll-danger);
 }
 
 .form-error {
   margin: 0;
   font-size: 13px;
-  color: #d93026;
+  color: var(--ll-danger);
 }
 
 .submit {
