@@ -352,9 +352,25 @@ async function start(): Promise<void> {
   margin-right: auto;
 }
 
-/* 窄屏：左栏改成顶部一条，仍然可见——「看不见历史」正是这次要解决的问题，
-   不能一窄就藏起来。 */
+/* 1000px 这一档仍要双栏：审查历史是主路径，不能一窄就退成上下两段。
+   左栏固定 340px，右栏拿剩下的，分隔条留着但不给拖（宽度由断点决定，拖了也不会生效）。 */
 @media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 340px 6px minmax(0, 1fr);
+    grid-template-rows: 1fr;
+  }
+
+  .splitter {
+    display: block;
+    cursor: default;
+    /* 必须：否则拖拽会写 laborlaw.upload.sideWidth 却不动布局 */
+    pointer-events: none;
+  }
+}
+
+/* 真正的单栏：左栏改成顶部一条，仍然可见——「看不见历史」正是要解决的问题，
+   不能一窄就藏起来。 */
+@media (max-width: 860px) {
   .workspace {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(180px, 34vh) 1fr;
@@ -488,9 +504,9 @@ async function start(): Promise<void> {
   color: var(--ll-danger);
 }
 
-/* 900 以下再钉一次单栏：三段式 grid 若被任何后续规则改回，这里兜住，
-   不会出现「1fr 6px 1fr」在窄屏里挤出横向滚动条。 */
-@media (max-width: 900px) {
+/* 单栏之后再钉一次：三段式 grid 若被任何后续规则改回，这里兜住，
+   不会出现「1fr 6px 1fr」在窄屏里挤出横向滚动条。断点与上面单栏一致（860）。 */
+@media (max-width: 860px) {
   .workspace {
     grid-template-columns: 1fr;
   }
