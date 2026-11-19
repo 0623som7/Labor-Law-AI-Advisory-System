@@ -1,3 +1,5 @@
+@import 'element-plus/theme-chalk/dark/css-vars.css';
+
 :root {
   --ll-bg: #f6f7f9;
   --ll-surface: #ffffff;
@@ -117,4 +119,75 @@ button {
 .ll-pre-wrap {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 纸面投影：浅色保持原来的卡片阴影（像素不变），深色单独给一层更实的投影把白纸顶起来 */
+:root {
+  --ll-paper-shadow: var(--ll-shadow-card);
+}
+
+/* 深色：--ll-paper / --ll-on-primary / --ll-text-statute / 两个 mark 色必须原位重申，
+   它们坐在白色纸面上，跟着变深就等于把法条读没了。 */
+[data-theme='dark'] {
+  color-scheme: dark;
+  --ll-bg: #0f1216;
+  --ll-surface: #171b21;
+  --ll-surface-muted: #1a1f27;
+  --ll-surface-sunken: #12161b;
+  --ll-border: #333b49;
+  --ll-border-muted: #2e3644;
+  --ll-border-strong: #3a4250;
+  --ll-text: #e6e8ec;
+  --ll-text-weak: #9aa4b2;
+  --ll-text-strong: #f2f4f8;
+  --ll-text-body: #e6e8ec;
+  --ll-text-mid: #cbd2dc;
+  --ll-text-soft: #b3bcc9;
+  --ll-text-subtle: #98a2b3;
+  --ll-text-faint: #6b7480;
+  --ll-text-hint: #78828f;
+  --ll-text-statute: #3b4048;
+  --ll-primary: #4c8dff;
+  --ll-primary-weak: #1c2740;
+  --ll-primary-wash: #1b2b45;
+  --ll-user-bubble: #2f6feb;
+  --ll-accent: #6ea8fe;
+  --ll-accent-line: #2f4a75;
+  --ll-accent-strong: #5b9bf8;
+  --ll-accent-deep: #82b4ff;
+  --ll-accent-wash-1: #16233a;
+  --ll-accent-wash-2: #16233a;
+  --ll-accent-wash-3: #1a2138;
+  --ll-indigo: #8b8cf7;
+  --ll-danger: #ff6b5e;
+  --ll-danger-strong: #ff8a80;
+  --ll-danger-mid: #ff7b6e;
+  --ll-danger-wash-1: #2a1518;
+  --ll-danger-wash-2: #331a1c;
+  --ll-warn: #f0a049;
+  --ll-warn-strong: #f5b971;
+  --ll-warn-mid: #e3b341;
+  --ll-warn-wash: #2a2113;
+  --ll-warn-line: #4a3a1c;
+  --ll-ok-wash: #12281f;
+  --ll-ok-strong: #34d399;
+  --ll-ok-deep: #6ee7b7;
+  --ll-hairline-1: #2a3240;
+  --ll-hairline-2: #333b49;
+  --ll-hairline-3: #2a3240;
+  --ll-page-alt: #12161b;
+  --ll-row-hover: #1c222a;
+  --ll-disabled-text: #5d6673;
+  --ll-disabled-bg: #1a1f27;
+  --ll-btn-text: #b3bcc9;
+  --ll-notice-bg: #14181e;
+  --ll-notice-text: #9aa4b2;
+  --ll-notice-line: #333b49;
+  /* 以下四项与浅色完全相同：白纸与压在色块上的反白字不随主题变 */
+  --ll-paper: #ffffff;
+  --ll-on-primary: #ffffff;
+  --ll-text-statute: #3b4048;
+  --ll-mark-medium: #d97706;
+  --ll-mark-low: #ca8a04;
+  --ll-paper-shadow: 0 8px 24px rgb(0 0 0 / 45%);
 }

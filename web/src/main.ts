@@ -8,6 +8,16 @@ import { onSessionExpired, resetSessionExpired } from './api/session-expiry'
 import router from './router'
 import { useAuthStore } from './stores/auth'
 import './style.css'
+import { applyTheme, readTheme } from './utils/theme'
+
+// 首屏之前就把主题挂上，避免先白一下再变深（白闪比慢半秒更刺眼）。
+applyTheme(readTheme())
+
+// 跟随时：系统切换时要跟着变，用户显式选了浅/深就不再听系统的。
+const themeMedia = window.matchMedia('(prefers-color-scheme: dark)')
+themeMedia.addEventListener('change', () => {
+  if (readTheme() === 'system') applyTheme('system')
+})
 
 const app = createApp(App)
 

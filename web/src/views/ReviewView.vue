@@ -982,7 +982,7 @@ void load()
   position: relative;
   margin: 0 auto 20px;
   background: var(--ll-paper);
-  box-shadow: var(--ll-shadow-card);
+  box-shadow: var(--ll-paper-shadow);
 }
 
 .page-canvas {
