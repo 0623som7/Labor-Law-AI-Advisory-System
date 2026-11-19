@@ -1222,11 +1222,13 @@ onMounted(() => {
 }
 
 .main-head {
+  /* 与 PageHeader 对齐：同一个 56px 高度、24px 左右内边距，切页时头不会跳 */
   display: flex;
   flex: none;
   gap: 8px;
   align-items: center;
-  padding: 12px 16px;
+  height: 56px;
+  padding: 0 24px;
   background: var(--ll-surface);
   border-bottom: 1px solid var(--ll-border);
 }

@@ -23,6 +23,7 @@ import {
   writeSideWidth,
 } from '@/utils/splitter'
 import ReviewHistoryList from '@/components/ReviewHistoryList.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 const router = useRouter()
 
@@ -175,17 +176,18 @@ async function start(): Promise<void> {
 
 <template>
   <div class="upload-page">
-    <header class="topbar">
-      <div class="brand">劳动法 AI 顾问</div>
-      <nav class="links" aria-label="面包屑">
-        <ol class="crumbs">
-          <li v-for="c in crumbs" :key="c.label" class="crumb">
-            <router-link v-if="c.to" :to="{ name: c.to }">{{ c.label }}</router-link>
-            <span v-else class="current" aria-current="page">{{ c.label }}</span>
-          </li>
-        </ol>
-      </nav>
-    </header>
+    <PageHeader title="劳动法 AI 顾问">
+      <template #right>
+        <nav class="links" aria-label="面包屑">
+          <ol class="crumbs">
+            <li v-for="c in crumbs" :key="c.label" class="crumb">
+              <router-link v-if="c.to" :to="{ name: c.to }">{{ c.label }}</router-link>
+              <span v-else class="current" aria-current="page">{{ c.label }}</span>
+            </li>
+          </ol>
+        </nav>
+      </template>
+    </PageHeader>
 
     <div ref="workEl" class="workspace" :class="{ 'is-resizing': dragging }">
       <aside class="pane-history">
@@ -258,26 +260,6 @@ async function start(): Promise<void> {
 </template>
 
 <style scoped>
-.topbar {
-  /* 吸顶同审查页；分隔线用 box-shadow，避免滚动时 1px 抖动。 */
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  height: 56px;
-  background: var(--ll-surface);
-  box-shadow: 0 1px 0 var(--ll-border);
-}
-
-.brand {
-  font-weight: 600;
-  color: var(--ll-text-body);
-}
-
 .upload-page {
   /* 同 .review-page：外层 .app-shell 已是 100vh，这里再要 100vh 会多出一条纵向滚动条。 */
   display: flex;

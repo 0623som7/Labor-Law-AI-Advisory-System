@@ -27,6 +27,7 @@ import {
 import type { Finding, ParsedDoc, Review } from '@/api/types'
 import { SEVERITY_LABEL, findingsOnPage, legalBasisTitle, sortBySeverity, summarizeFindings } from '@/utils/findings'
 import InlineChat from '@/components/InlineChat.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import { buildAskContext } from '@/utils/ask-this'
 import { reviewProgressLine } from '@/utils/review-progress'
 import { shouldAutostart, shouldOfferStart } from '@/utils/review-restore'
@@ -109,6 +110,11 @@ const summary = computed(() => summarizeFindings(findings.value))
 
 const crumbs = breadcrumbFor('review')
 
+// 页头副标题：合同文件名 + 页数；文件名过长时由 PageHeader 自己省略
+const headerSubtitle = computed(() => {
+  if (!file.value) return ''
+  return `${file.value.filename} · ${file.value.page_count} 页`
+})
 
 // ---- 右栏折叠 ------------------------------------------------------------
 // 投屏时想给合同原文更多横向空间，但完全藏掉清单会看不见"有几条高风险"，
@@ -627,21 +633,18 @@ void load()
 
 <template>
   <div class="review-page" :class="{ 'is-resizing': dragging }">
-    <header class="topbar">
-      <div class="brand">劳动法 AI 顾问</div>
-      <div class="file-meta" v-if="file">
-        <span class="file-name">{{ file.filename }}</span>
-        <span class="file-pages">{{ file.page_count }} 页</span>
-      </div>
-      <nav class="links" aria-label="面包屑">
-        <ol class="crumbs">
-          <li v-for="c in crumbs" :key="c.label" class="crumb">
-            <router-link v-if="c.to" :to="{ name: c.to }">{{ c.label }}</router-link>
-            <span v-else class="current" aria-current="page">{{ c.label }}</span>
-          </li>
-        </ol>
-      </nav>
-    </header>
+    <PageHeader title="劳动法 AI 顾问" :subtitle="headerSubtitle">
+      <template #right>
+        <nav class="links" aria-label="面包屑">
+          <ol class="crumbs">
+            <li v-for="c in crumbs" :key="c.label" class="crumb">
+              <router-link v-if="c.to" :to="{ name: c.to }">{{ c.label }}</router-link>
+              <span v-else class="current" aria-current="page">{{ c.label }}</span>
+            </li>
+          </ol>
+        </nav>
+      </template>
+    </PageHeader>
 
     <div v-if="loading" class="loading">正在加载合同…</div>
 
@@ -746,6 +749,8 @@ void load()
           </div>
         </div>
 
+        <!-- 折叠态只留图标条：结果区整块不渲染，否则 40px 宽里塞着卡片会溢出到屏幕外 -->
+        <template v-if="!panelCollapsed">
         <div v-if="running" class="running">
           <p
             v-if="progressLine.visible"
@@ -816,6 +821,7 @@ void load()
             </div>
           </li>
         </ul>
+        </template>
 
         <!-- 抽屉放在 panel 里而不是盖在它上面：同一个 flex 列里上下分，
              卡片列表（flex:1）自动让位，被压住的内容也就不会滚不出来。
@@ -852,49 +858,6 @@ void load()
   display: flex;
   flex-direction: column;
   background: var(--ll-page-alt);
-}
-
-.topbar {
-  /* 吸顶：长合同往下滚时还能看见文件名与折叠按钮。
-     分隔线用 box-shadow 而不是 border-bottom：border 会在滚动时让高度跳 1px。 */
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 24px;
-  height: 56px;
-  background: var(--ll-surface);
-  box-shadow: 0 1px 0 var(--ll-border);
-}
-
-.brand {
-  font-weight: 600;
-  color: var(--ll-text-body);
-}
-
-.file-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.file-name {
-  /* 合同文件名：页头标题 */
-  font-size: var(--ll-fs-title);
-  color: var(--ll-text-strong);
-  max-width: 40vw;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-pages {
-  /* 页数：页码 */
-  font-size: var(--ll-fs-meta);
-  color: var(--ll-text-faint);
 }
 
 .links {
