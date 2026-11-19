@@ -27,9 +27,9 @@
   flex: none;
   padding: 6px 16px;
   font-size: 12px;
-  color: #8a6d3b;
-  background: #fcf8e3;
-  border-bottom: 1px solid #faebcc;
+  color: var(--ll-notice-text);
+  background: var(--ll-notice-bg);
+  border-bottom: 1px solid var(--ll-notice-line);
   text-align: center;
 }
 
@@ -42,7 +42,7 @@
 .icp {
   flex: none;
   font-size: 12px;
-  color: #909399;
+  color: var(--ll-text-hint);
   text-align: center;
   padding: 6px 0;
 }

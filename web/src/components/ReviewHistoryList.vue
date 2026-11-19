@@ -250,7 +250,7 @@ onBeforeUnmount(stopPolling)
 
 .row {
   padding: 12px 16px;
-  border-bottom: 1px solid #f1f3f5;
+  border-bottom: 1px solid var(--ll-hairline-3);
 }
 
 .row.clickable {
@@ -258,12 +258,12 @@ onBeforeUnmount(stopPolling)
 }
 
 .row.clickable:hover {
-  background: #f8fafc;
+  background: var(--ll-row-hover);
 }
 
 .row.active {
-  background: #eef4ff;
-  box-shadow: inset 3px 0 0 #3b82f6;
+  background: var(--ll-accent-wash-1);
+  box-shadow: inset 3px 0 0 var(--ll-accent-strong);
 }
 
 .row-name {
@@ -295,18 +295,18 @@ onBeforeUnmount(stopPolling)
 
 /* 配色与 ReviewsView 原页一致，不另定一套 */
 .status-succeeded {
-  color: #047857;
+  color: var(--ll-ok-strong);
   background: var(--ll-ok-wash);
 }
 
 .status-running {
-  color: #1d4ed8;
-  background: #eff6ff;
+  color: var(--ll-accent-deep);
+  background: var(--ll-accent-wash-2);
 }
 
 .status-failed {
   color: var(--ll-danger-strong);
-  background: #fef2f2;
+  background: var(--ll-danger-wash-1);
 }
 
 .row-risk {
@@ -317,16 +317,16 @@ onBeforeUnmount(stopPolling)
 
 .risk-high {
   color: var(--ll-danger-strong);
-  background: #fef2f2;
+  background: var(--ll-danger-wash-1);
 }
 
 .risk-medium {
   color: var(--ll-warn-strong);
-  background: #fffbeb;
+  background: var(--ll-warn-wash);
 }
 
 .risk-low {
-  color: #047857;
+  color: var(--ll-ok-strong);
   background: var(--ll-ok-wash);
 }
 
@@ -364,7 +364,7 @@ onBeforeUnmount(stopPolling)
 }
 
 .row-metrics em.low {
-  color: #047857;
+  color: var(--ll-ok-strong);
 }
 
 .state {
@@ -381,14 +381,14 @@ onBeforeUnmount(stopPolling)
 }
 
 .error {
-  color: #dc2626;
+  color: var(--ll-danger-mid);
 }
 
 .more {
   flex: none;
   padding: 12px;
   text-align: center;
-  border-top: 1px solid #f1f3f5;
+  border-top: 1px solid var(--ll-hairline-3);
 }
 
 .stalled {
@@ -397,7 +397,7 @@ onBeforeUnmount(stopPolling)
   padding: 8px 16px;
   font-size: 12px;
   color: var(--ll-warn-strong);
-  background: #fffbeb;
-  border-top: 1px solid #fde68a;
+  background: var(--ll-warn-wash);
+  border-top: 1px solid var(--ll-warn-line);
 }
 </style>

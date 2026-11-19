@@ -133,7 +133,7 @@ function onKey(evt: KeyboardEvent): void {
 .citation-text {
   margin: 0;
   font-size: 13px;
-  color: #3b4048;
+  color: var(--ll-text-statute);
 }
 
 .citation-link {

@@ -264,7 +264,7 @@ async function start(): Promise<void> {
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  background: #f5f7fa;
+  background: var(--ll-page-alt);
 }
 
 .topbar {
@@ -422,8 +422,8 @@ async function start(): Promise<void> {
   height: 44px;
   line-height: 44px;
   border-radius: 10px;
-  background: #eef2ff;
-  color: #4f46e5;
+  background: var(--ll-accent-wash-3);
+  color: var(--ll-indigo);
   font-size: 12px;
   font-weight: 700;
 }

@@ -850,7 +850,7 @@ void load()
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: #f5f7fa;
+  background: var(--ll-page-alt);
 }
 
 .topbar {
@@ -1042,10 +1042,12 @@ void load()
   background: rgba(202, 138, 4, 0.07);
 }
 
-/* 选中态常驻：不自动灭，点下一条自然切换。描边沿用风险配色（var(--ll-danger)）。 */
+/* 选中态常驻：不自动灭，点下一条自然切换。描边沿用风险配色。
+   这里和下面两条都用 --ll-mark-* 或 rgba 字面量：风险框压在白色 PDF 纸面上，
+   深色模式把纸面留白、标记也必须保持原色，不能跟着主题变量一起变浅。 */
 .mark--active {
   z-index: 2;
-  border-color: var(--ll-danger);
+  border-color: rgba(217, 48, 38, 1);
   background: rgba(217, 48, 38, 0.16);
   outline: 2px solid rgba(217, 48, 38, 0.85);
   outline-offset: 1px;
@@ -1054,12 +1056,12 @@ void load()
 
 /* 描边跟随风险等级：中/低风险点中后仍是自己的橙/黄，不然颜色自相矛盾。 */
 .mark--active.mark--medium {
-  border-color: var(--ll-warn);
+  border-color: var(--ll-mark-medium);
   outline-color: rgba(217, 119, 6, 0.85);
 }
 
 .mark--active.mark--low {
-  border-color: var(--ll-warn-mid);
+  border-color: var(--ll-mark-low);
   outline-color: rgba(202, 138, 4, 0.85);
 }
 
@@ -1095,7 +1097,7 @@ void load()
   justify-content: space-between;
   gap: 12px;
   padding: 14px 16px;
-  border-bottom: 1px solid #f1f2f4;
+  border-bottom: 1px solid var(--ll-hairline-2);
 }
 
 .summary {
@@ -1232,7 +1234,7 @@ void load()
   border: 1px solid var(--ll-border-strong);
   border-radius: 6px;
   background: var(--ll-surface);
-  color: #475467;
+  color: var(--ll-btn-text);
   font-size: 12px;
   cursor: pointer;
 }
@@ -1254,7 +1256,7 @@ void load()
   border: 1px solid var(--ll-border-strong);
   border-radius: 6px;
   background: var(--ll-surface);
-  color: #475467;
+  color: var(--ll-btn-text);
   font-size: 12px;
   cursor: pointer;
 }
@@ -1313,7 +1315,7 @@ void load()
   margin: 6px 0 0;
   padding: 6px 8px;
   background: var(--ll-ok-wash);
-  color: #065f46;
+  color: var(--ll-ok-deep);
   border-radius: 6px;
   white-space: pre-wrap;
 }

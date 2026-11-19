@@ -452,7 +452,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   gap: 8px;
   align-items: center;
   padding: 8px 12px;
-  border-bottom: 1px solid #f0f1f3;
+  border-bottom: 1px solid var(--ll-hairline-1);
 }
 
 /* 上下文条比标题低一档：它是"现在在问哪一条"的提示，不该抢标题的位置。
@@ -555,7 +555,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   gap: 8px;
   align-items: flex-end;
   padding: 8px 12px 10px;
-  border-top: 1px solid #f0f1f3;
+  border-top: 1px solid var(--ll-hairline-1);
 }
 
 .ic-input {
@@ -585,7 +585,7 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 }
 
 .ic-send:disabled {
-  background: #c7d2fe;
+  background: var(--ll-accent-line);
   cursor: not-allowed;
 }
 </style>

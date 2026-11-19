@@ -34,6 +34,40 @@
   /* 纸面与反白：这两个不随主题变 */
   --ll-paper: #ffffff;
   --ll-on-primary: #ffffff;
+  /* 中性细分 */
+  --ll-hairline-1: #f0f1f3;
+  --ll-hairline-2: #f1f2f4;
+  --ll-hairline-3: #f1f3f5;
+  --ll-page-alt: #f5f7fa;
+  --ll-row-hover: #f8fafc;
+  --ll-text-hint: #909399;
+  --ll-disabled-text: #c0c4cc;
+  --ll-disabled-bg: #ebeef5;
+  --ll-btn-text: #475467;
+  --ll-text-statute: #3b4048;
+  /* 蓝色家族（与既有 --ll-accent #2563eb 并列） */
+  --ll-accent-line: #c7d2fe;
+  --ll-accent-strong: #3b82f6;
+  --ll-accent-deep: #1d4ed8;
+  --ll-accent-wash-1: #eef4ff;
+  --ll-accent-wash-2: #eff6ff;
+  --ll-accent-wash-3: #eef2ff;
+  --ll-indigo: #4f46e5;
+  /* 状态色补齐 */
+  --ll-ok-strong: #047857;
+  --ll-ok-deep: #065f46;
+  --ll-danger-mid: #dc2626;
+  --ll-danger-wash-1: #fef2f2;
+  --ll-danger-wash-2: #fdecea;
+  --ll-warn-wash: #fffbeb;
+  --ll-warn-line: #fde68a;
+  /* 顶部免责条 */
+  --ll-notice-bg: #fcf8e3;
+  --ll-notice-text: #8a6d3b;
+  --ll-notice-line: #faebcc;
+  /* 纸面上的风险框：永不随主题变 */
+  --ll-mark-medium: #d97706;
+  --ll-mark-low: #ca8a04;
   color-scheme: light;
 }
 

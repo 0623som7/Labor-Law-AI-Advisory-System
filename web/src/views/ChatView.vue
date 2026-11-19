@@ -1134,7 +1134,7 @@ onMounted(() => {
 
 .session-time {
   font-size: 12px;
-  color: #909399;
+  color: var(--ll-text-hint);
 }
 
 .session-del {
@@ -1157,7 +1157,7 @@ onMounted(() => {
 
 .session-del:hover {
   color: var(--ll-danger);
-  background: #fdecea;
+  background: var(--ll-danger-wash-2);
 }
 
 .review-link {
@@ -1235,7 +1235,7 @@ onMounted(() => {
   margin: 0;
   font-size: 12px;
   color: var(--ll-danger);
-  background: #fdecea;
+  background: var(--ll-danger-wash-2);
 }
 
 .messages {
@@ -1407,13 +1407,13 @@ onMounted(() => {
 }
 
 .copy-btn:hover:not(:disabled) {
-  color: var(--ll-primary, #1d4ed8);
-  border-color: var(--ll-primary, #1d4ed8);
+  color: var(--ll-primary, var(--ll-accent-deep));
+  border-color: var(--ll-primary, var(--ll-accent-deep));
 }
 
 .copy-btn:disabled {
-  color: #c0c4cc;
-  border-color: #ebeef5;
+  color: var(--ll-disabled-text);
+  border-color: var(--ll-disabled-bg);
   cursor: not-allowed;
 }
 
