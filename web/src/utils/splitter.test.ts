@@ -121,7 +121,20 @@ test('clampDrawerHeight：视口过矮时上限被 0.7 * 视口 压住', () => {
 
 test('clampDrawerHeight：脏输入不产生 NaN', () => {
   assert.equal(clampDrawerHeight(Number.NaN, 780, 900), 240)
-  assert.equal(clampDrawerHeight(300, Number.NaN, 900), 0) // 面板高未知 → 上下限都为 0
+  // 面板高未知时不再塌成 0：只丢"给卡片留 160"这条限制，560 与视口上限仍在
+  assert.equal(clampDrawerHeight(300, Number.NaN, 900), 300)
+})
+
+test('clampDrawerHeight：面板还没量到高度时不吃 160 的亏', () => {
+  // 首次挂载那几毫秒父级 clientHeight 是 0；此时若仍算 panel-160 就等于 -160，
+  // upper 被压到 0，抽屉整块塌掉。
+  // 400 落在 [240, 560] 里，夹取结果就是 400 本身（不是 360——360 是默认高度，
+  // 不是这个函数的输出）。
+  assert.equal(clampDrawerHeight(400, 0, 900), 400)
+})
+
+test('clampDrawerHeight：面板读不到时仍受 560 硬上限约束', () => {
+  assert.equal(clampDrawerHeight(9999, 0, 900), 560)
 })
 
 test('defaultDrawerHeight：0.4 视口高，封顶 360', () => {

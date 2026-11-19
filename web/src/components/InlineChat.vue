@@ -278,15 +278,38 @@ function syncNarrow(): void {
   narrow.value = media?.matches ?? false
 }
 
+let panelObserver: ResizeObserver | null = null
+
 onMounted(() => {
   syncNarrow()
   media?.addEventListener('change', syncNarrow)
   // 读出来再夹一次：换分辨率或换机器时，旧值可能已经超出当前面板能给的区间。
   const { viewport } = measure()
   applyHeight(readSideWidth(HEIGHT_KEY, defaultDrawerHeight(viewport), 120, 560))
+
+  // 窗口变小（演示时临时拉小浏览器）要把抽屉重新夹进新的面板高度里，
+  // 否则 560 的抽屉会把卡片区压成一条缝。
+  const panel = chatRoot.value?.parentElement
+  if (panel && typeof ResizeObserver !== 'undefined') {
+    let scheduled = false
+    panelObserver = new ResizeObserver(() => {
+      // 拖拽中不跟手：pointermove 正在算高度，这里再夹一次会打架。
+      if (scheduled || resizing.value) return
+      // 合并连续回调：拉窗口时每帧都触发，逐次夹取会抖。
+      scheduled = true
+      requestAnimationFrame(() => {
+        scheduled = false
+        // 用当前值再夹一次，不读存储——存储里要留住用户拖到的那个高度。
+        applyHeight(chatHeight.value)
+      })
+    })
+    panelObserver.observe(panel)
+  }
 })
 
 onBeforeUnmount(() => {
+  panelObserver?.disconnect()
+  panelObserver = null
   media?.removeEventListener('change', syncNarrow)
   document.body.style.userSelect = ''
   stopDrag?.()

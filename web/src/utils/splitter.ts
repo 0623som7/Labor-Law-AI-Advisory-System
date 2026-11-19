@@ -152,7 +152,11 @@ export function nextHeightByKey(
 export function clampDrawerHeight(desired: number, panelHeight: number, viewportHeight: number): number {
   const panel = Number.isFinite(panelHeight) && panelHeight > 0 ? panelHeight : 0
   const viewport = Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0
-  const upper = Math.max(0, Math.min(Math.round(viewport * 0.7), 560, Math.round(panel - 160)))
+  // 面板高度读不到（首次挂载时父级还在布局）就不做"给卡片留 160"这条限制：
+  // 否则 panel=0 → upper=0 → 抽屉整块塌掉。退回只剩视口与 560 两个上限。
+  const capByPanel = panel > 0 ? Math.round(panel - 160) : Number.POSITIVE_INFINITY
+  // 视口也读不到（0）时 upper 仍是 0：两条信息都没有，宁可 0 也不猜一个可能更糟的高度。
+  const upper = Math.max(0, Math.min(Math.round(viewport * 0.7), 560, capByPanel))
   const lower = Math.min(240, upper)
   const want = Number.isFinite(desired) ? desired : lower
   return Math.round(Math.max(lower, Math.min(upper, want)))
