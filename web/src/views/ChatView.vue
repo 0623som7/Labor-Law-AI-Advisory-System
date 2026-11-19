@@ -479,14 +479,36 @@ async function removeSession(session: Session): Promise<void> {
     return
   }
 
+  // 删之前先记下它在**当前可见列表**里的位置：删完之后 sessions 变了，
+  // 下一行是谁只能从这个下标推。搜索过滤下用 sessions 的下标会落到别的行上。
+  const removedAt = visibleRows.value.findIndex((r) => r.session.id === session.id)
+
   try {
     await sessionApi.deleteSession(session.id)
     sessions.value = sessions.value.filter((s) => s.id !== session.id)
     if (currentSessionId.value === session.id) startNewSession()
     ElMessage.success('已删除')
+    // 等 DOM 更新完再落焦点：行还在原位，但按钮是新渲染的，先聚焦会找不到。
+    await nextTick()
+    focusAfterDelete(removedAt)
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '删除失败')
   }
+}
+
+/**
+ * 删完把焦点接上，别把键盘用户扔回文档开头。
+ *
+ * 优先同一位置的那一行（原本的下一行顶上来）；删的是最后一行就退到上一行；
+ * 列表空了只能回「新对话」按钮——否则焦点落在 body 上，Tab 要从头数一遍。
+ */
+function focusAfterDelete(removedAt: number): void {
+  const rows = visibleRows.value
+  if (rows.length === 0) {
+    document.querySelector<HTMLElement>('.new-btn')?.focus()
+    return
+  }
+  focusSessionRow(Math.min(Math.max(removedAt, 0), rows.length - 1))
 }
 
 function addCitation(target: UiMessage, citation: Citation): void {
@@ -1302,8 +1324,17 @@ onMounted(() => {
 
 .empty {
   max-width: 520px;
-  margin: 40px auto;
+  /* 与审查页空态、审查历史空态对齐：32px 上下留白 + 16px 左右 */
+  margin: 0 auto;
+  padding: 32px 16px;
   color: var(--ll-text-weak);
+}
+
+/* 空态正文统一到正文档：三处空态的字号从这里开始只认 --ll-fs-* 令牌。 */
+.empty p,
+.empty li {
+  font-size: var(--ll-fs-body);
+  line-height: 1.7;
 }
 
 .empty h3 {

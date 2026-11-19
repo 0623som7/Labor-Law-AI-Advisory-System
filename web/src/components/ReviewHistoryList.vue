@@ -380,6 +380,25 @@ onBeforeUnmount(stopPolling)
   font-size: var(--ll-fs-tag);
 }
 
+/* 空态与审查页、对话页的空态对齐：同一档字号、同一档上下留白。 */
+.state.empty {
+  padding: 32px 16px;
+}
+
+.state.empty p {
+  margin: 0;
+  /* 空态说明 */
+  font-size: var(--ll-fs-body);
+  line-height: 1.7;
+}
+
+/* 补充说明仍小一档，并保住与上一行的 6px 距离（上面那条 margin:0 会盖掉它） */
+.state.empty p.hint {
+  margin-top: 6px;
+  /* 空态补充说明 */
+  font-size: var(--ll-fs-meta);
+}
+
 .state .hint {
   margin-top: 6px;
   /* 状态补充说明 */

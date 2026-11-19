@@ -26,6 +26,7 @@ import {
 } from '@/api/files'
 import type { Finding, ParsedDoc, Review } from '@/api/types'
 import { SEVERITY_LABEL, findingsOnPage, legalBasisTitle, sortBySeverity, summarizeFindings } from '@/utils/findings'
+import { countBySeverity, filterFindings, type SeverityFilter } from '@/utils/findings-filter'
 import InlineChat from '@/components/InlineChat.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { buildAskContext } from '@/utils/ask-this'
@@ -192,6 +193,50 @@ function resetPanelWidth(): void {
   writeSideWidth(PANEL_KEY, PANEL_DEFAULT)
 }
 const sorted = computed(() => sortBySeverity(findings.value))
+
+// ---- 筛选与搜索 ----------------------------------------------------------
+const severityFilter = ref<SeverityFilter>('all')
+const keyword = ref('')
+
+/**
+ * chip 上的数字取 sorted（全部结果），不取 visible。
+ *
+ * 跟着筛选变的话，点「高风险」之后另外三个 chip 会全变成 0——那是筛选结果，
+ * 不是"这份合同有几条"，用户会以为数据丢了。
+ */
+const counts = computed(() => countBySeverity(sorted.value))
+
+const visible = computed(() =>
+  filterFindings(sorted.value, { severity: severityFilter.value, query: keyword.value }),
+)
+
+/** 有没有筛选在生效。图上被筛掉的框靠它决定要不要淡下去。 */
+const filtering = computed(() => severityFilter.value !== 'all' || keyword.value.trim() !== '')
+
+const visibleIds = computed(() => new Set(visible.value.map((f) => f.id)))
+
+const chips = computed<{ value: SeverityFilter; label: string; n: number }[]>(() => [
+  { value: 'all', label: '全部', n: counts.value.all },
+  { value: 'high', label: '高风险', n: counts.value.high },
+  { value: 'medium', label: '中风险', n: counts.value.medium },
+  { value: 'low', label: '低风险', n: counts.value.low },
+])
+
+function clearFilters(): void {
+  severityFilter.value = 'all'
+  keyword.value = ''
+}
+
+/**
+ * 筛选一变，原来高亮的那条可能已经不在列表里。
+ *
+ * 不置空的话左边原文还亮着一个框、右边找不到对应卡片，看起来像页面坏了；
+ * 置 null 会让高亮整体消失，与"现在没有选中项"这个事实一致。
+ */
+watch([severityFilter, keyword], () => {
+  if (activeId.value !== null && !visibleIds.value.has(activeId.value)) activeId.value = null
+})
+
 // 有结果就不再给「开始审查」：后端会复用旧结果，用户点了只是白等两秒。
 const showStart = computed(() =>
   shouldOfferStart({
@@ -314,6 +359,57 @@ function focusFinding(f: Finding): void {
       .querySelector(`[data-finding="${f.id}"]`)
       ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   })
+}
+
+/** 把键盘焦点落到某张卡上，同时选中它（左右两栏共用 activeId）。 */
+function focusCard(f: Finding): void {
+  document.querySelector<HTMLElement>(`.cards [data-finding="${f.id}"]`)?.focus()
+  focusFinding(f)
+}
+
+/** ↑/↓ 在**当前可见**列表里换卡：边界停住，不绕回另一端（绕回会让人失去位置感）。 */
+function moveCardFocus(delta: 1 | -1, index: number): void {
+  const next = visible.value[index + delta]
+  if (!next) return
+  focusCard(next)
+}
+
+/**
+ * 卡片上的键：Enter / 空格选中，↑/↓ 换卡。
+ *
+ * 不用模板里的 .prevent 修饰符：卡片里还嵌着「复制改法」「就问这条」和两个
+ * <details>，键盘事件会冒泡上来，.prevent 会把这些控件自己的空格/回车吃掉。
+ * 所以只处理"焦点正好在卡片本身"的情况，其余交给子控件。
+ */
+function onCardKey(evt: KeyboardEvent, f: Finding, index: number): void {
+  if (evt.target !== evt.currentTarget) return
+  if (evt.key === 'Enter' || evt.key === ' ') {
+    evt.preventDefault()
+    focusFinding(f)
+    return
+  }
+  if (evt.key === 'ArrowDown' || evt.key === 'ArrowUp') {
+    evt.preventDefault()
+    moveCardFocus(evt.key === 'ArrowDown' ? 1 : -1, index)
+  }
+}
+
+/**
+ * 图上点一个框。被筛掉的框（mark--muted）照常可点。
+ *
+ * 选了「点它就把挡路的筛选撤掉」而不是「只 focusFinding」：用户在原文里看见一处
+ * 问题，想立刻在右侧看到它，这时让他先回上面找 chip 是反人性。撤的方式是先复位
+ * 严重度，关键词仍然挡着就一并清空——只复位一半会出现"左边亮了、右边没有卡"。
+ * 高亮本身仍走 focusFinding，与点卡片完全同一条路径。
+ */
+function onMarkClick(f: Finding): void {
+  if (filtering.value && !visibleIds.value.has(f.id)) {
+    severityFilter.value = 'all'
+    if (filterFindings([f], { severity: 'all', query: keyword.value }).length === 0) {
+      keyword.value = ''
+    }
+  }
+  focusFinding(f)
 }
 
 /** 卡片底边与卡片容器底边之间留的空，比「就问这条」那一排按钮略高一点。 */
@@ -679,10 +775,13 @@ void load()
               :key="f.id"
               type="button"
               class="mark"
-              :class="[`mark--${f.severity}`, { 'mark--active': activeId === f.id }]"
+              :class="[
+                `mark--${f.severity}`,
+                { 'mark--active': activeId === f.id, 'mark--muted': filtering && !visibleIds.has(f.id) },
+              ]"
               :style="markStyle(f)"
               :title="f.title"
-              @click="focusFinding(f)"
+              @click="onMarkClick(f)"
             />
           </div>
           <p v-if="pdfError" class="pdf-error">{{ pdfError }}</p>
@@ -776,51 +875,83 @@ void load()
           还没有审查结果。点「开始审查」，8 条规则通常几秒内跑完；合同要素要靠模型补齐时会久一些。
         </p>
 
-        <ul v-else class="cards">
-          <li
-            v-for="f in sorted"
-            :key="f.id"
-            class="card"
-            :class="{ 'card--active': activeId === f.id }"
-            :data-finding="f.id"
-            @click="focusFinding(f)"
-          >
-            <div class="card-head">
-              <span class="tag" :class="`tag--${f.severity}`">{{ SEVERITY_LABEL[f.severity] }}</span>
-              <span class="card-title">{{ f.title }}</span>
-              <span v-if="f.clause_ref.section" class="card-section">{{ f.clause_ref.section }}</span>
-            </div>
-
-            <p class="card-evidence">{{ f.evidence }}</p>
-
-            <details v-if="f.legal_basis.length" class="fold" @toggle="onFoldToggle(f)">
-              <summary>{{ legalBasisTitle(f) }}</summary>
-              <div v-for="(b, i) in f.legal_basis" :key="i" class="basis">
-                <p class="basis-head">{{ b.law }} {{ b.article }}</p>
-                <p class="basis-text">{{ b.text }}</p>
-              </div>
-            </details>
-
-            <details class="fold" @toggle="onFoldToggle(f)">
-              <summary>修改建议</summary>
-              <p v-if="f.suggestion.original" class="sug-original">{{ f.suggestion.original }}</p>
-              <p v-if="f.suggestion.revised" class="sug-revised">{{ f.suggestion.revised }}</p>
-              <p v-if="f.suggestion.reason" class="sug-reason">{{ f.suggestion.reason }}</p>
-            </details>
-
-            <div class="card-actions">
+        <template v-else>
+          <div class="filters" role="group" aria-label="筛选风险项">
+            <div class="chips">
               <button
-                v-if="f.suggestion.revised"
+                v-for="c in chips"
+                :key="c.value"
                 type="button"
-                class="copy-sug"
-                @click.stop="copySuggestion(f)"
-              >
-                {{ copiedId === f.id ? '已复制' : '复制改法' }}
-              </button>
-              <button type="button" class="ask-this" @click.stop="askThis(f)">就问这条</button>
+                class="chip"
+                :class="{ 'chip--on': severityFilter === c.value }"
+                :aria-pressed="severityFilter === c.value"
+                @click="severityFilter = c.value"
+              >{{ c.label }} {{ c.n }}</button>
             </div>
-          </li>
-        </ul>
+            <input
+              v-model="keyword"
+              class="filter-search"
+              type="search"
+              placeholder="搜索风险或条款"
+              aria-label="搜索风险或条款"
+            />
+          </div>
+
+          <p v-if="!visible.length" class="empty empty--filter">
+            没有匹配的风险项
+            <button type="button" class="clear-filter" @click="clearFilters">清除筛选</button>
+          </p>
+
+          <ul v-else class="cards">
+            <li
+              v-for="(f, i) in visible"
+              :key="f.id"
+              class="card"
+              :class="{ 'card--active': activeId === f.id }"
+              :data-finding="f.id"
+              tabindex="0"
+              role="button"
+              :aria-current="activeId === f.id"
+              @click="focusFinding(f)"
+              @keydown="onCardKey($event, f, i)"
+            >
+              <div class="card-head">
+                <span class="tag" :class="`tag--${f.severity}`">{{ SEVERITY_LABEL[f.severity] }}</span>
+                <span class="card-title">{{ f.title }}</span>
+                <span v-if="f.clause_ref.section" class="card-section">{{ f.clause_ref.section }}</span>
+              </div>
+
+              <p class="card-evidence">{{ f.evidence }}</p>
+
+              <details v-if="f.legal_basis.length" class="fold" @toggle="onFoldToggle(f)">
+                <summary>{{ legalBasisTitle(f) }}</summary>
+                <div v-for="(b, bi) in f.legal_basis" :key="bi" class="basis">
+                  <p class="basis-head">{{ b.law }} {{ b.article }}</p>
+                  <p class="basis-text">{{ b.text }}</p>
+                </div>
+              </details>
+
+              <details class="fold" @toggle="onFoldToggle(f)">
+                <summary>修改建议</summary>
+                <p v-if="f.suggestion.original" class="sug-original">{{ f.suggestion.original }}</p>
+                <p v-if="f.suggestion.revised" class="sug-revised">{{ f.suggestion.revised }}</p>
+                <p v-if="f.suggestion.reason" class="sug-reason">{{ f.suggestion.reason }}</p>
+              </details>
+
+              <div class="card-actions">
+                <button
+                  v-if="f.suggestion.revised"
+                  type="button"
+                  class="copy-sug"
+                  @click.stop="copySuggestion(f)"
+                >
+                  {{ copiedId === f.id ? '已复制' : '复制改法' }}
+                </button>
+                <button type="button" class="ask-this" @click.stop="askThis(f)">就问这条</button>
+              </div>
+            </li>
+          </ul>
+        </template>
         </template>
 
         <!-- 抽屉放在 panel 里而不是盖在它上面：同一个 flex 列里上下分，
@@ -997,7 +1128,13 @@ void load()
   background: transparent;
   cursor: pointer;
   /* 浅在底色上，不浅在边框上：框要一直看得见，条文也要一直读得清 */
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+/* 被当前筛选挡在外面的框：只压透明度，不碰 --ll-mark-high/medium/low——
+   那三个色值是逐像素验收过的，改一个数值整张纸上的配色就得重验。 */
+.mark--muted {
+  opacity: 0.25;
 }
 
 .mark--high {
@@ -1131,11 +1268,96 @@ void load()
 }
 
 .empty {
-  margin: 16px;
+  margin: 0;
+  padding: 32px 16px;
   /* 空态说明 */
-  font-size: var(--ll-fs-meta);
+  font-size: var(--ll-fs-body);
   line-height: 1.7;
   color: var(--ll-text-faint);
+}
+
+/* ---- 筛选条 --------------------------------------------------------------
+   夹在面板头与卡片之间：先定"看哪一档"，再看列表。四个 chip 的数字来自
+   countBySeverity（全部结果），所以切档之后数字不动，只有下面的卡在变。 */
+.filters {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--ll-hairline-2);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 2px 10px;
+  border: 1px solid var(--ll-border-muted);
+  border-radius: var(--ll-radius-pill);
+  background: var(--ll-surface);
+  color: var(--ll-text-mid);
+  /* 筛选 chip：标签 */
+  font-size: var(--ll-fs-tag);
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--ll-primary);
+  color: var(--ll-primary);
+}
+
+.chip--on {
+  border-color: var(--ll-primary);
+  background: var(--ll-primary-weak);
+  color: var(--ll-primary);
+}
+
+.chip:focus-visible,
+.clear-filter:focus-visible {
+  outline: 2px solid var(--ll-primary);
+  outline-offset: 2px;
+}
+
+.filter-search {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--ll-border-muted);
+  border-radius: var(--ll-radius-sm);
+  background: var(--ll-surface);
+  color: var(--ll-text-body);
+  /* 搜索框：说明文字 */
+  font-size: var(--ll-fs-meta);
+  font-family: inherit;
+}
+
+.filter-search:focus-visible {
+  outline: 2px solid var(--ll-primary);
+  outline-offset: 1px;
+}
+
+/* 筛空了：一行说完，别撑成一大块空白——下面还有筛选条，用户要能立刻改条件。 */
+.empty--filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  /* 无匹配：说明文字 */
+  font-size: var(--ll-fs-meta);
+}
+
+.clear-filter {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ll-accent);
+  /* 文字按钮：说明文字 */
+  font-size: var(--ll-fs-meta);
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .cards {
@@ -1153,6 +1375,14 @@ void load()
   border-radius: var(--ll-radius-md);
   cursor: pointer;
   transition: border-color 0.15s ease;
+}
+
+/* 卡片是 tabindex=0 的 role=button：键盘 Tab 进来必须看得见停在哪。
+   用 outline 而不是 box-shadow——深色底上阴影几乎不可见，而 .card--active
+   已经占用了 box-shadow，两件事也不该抢同一个属性。 */
+.card:focus-visible {
+  outline: 2px solid var(--ll-primary);
+  outline-offset: 2px;
 }
 
 .card--active {

@@ -12,6 +12,7 @@ import { ElMessage } from 'element-plus'
 import { ApiError } from '@/api/client'
 import { uploadFile } from '@/api/files'
 import { MAX_UPLOAD_LABEL, validateUpload } from '@/utils/upload-validate'
+import { canRetryUpload } from '@/utils/upload-retry'
 import { breadcrumbFor } from '@/utils/breadcrumb'
 import {
   clampSideWidth,
@@ -101,6 +102,10 @@ const uploading = ref(false)
 /** null 表示拿不到总大小：不显示百分比，只显示"上传中…" */
 const percent = ref<number | null>(null)
 const errorText = ref('')
+/** 这次失败值不值得再点一次：由 ApiError.code 定，详见 utils/upload-retry.ts。 */
+const canRetry = ref(false)
+/** 当前这次「开始审查」是不是从「重试」点出来的：只影响按钮文案。 */
+const retrying = ref(false)
 
 const sizeText = computed(() => {
   const f = picked.value
@@ -111,6 +116,7 @@ const sizeText = computed(() => {
 
 function onFileChange(uploadFile_: { raw?: File }): void {
   errorText.value = ''
+  canRetry.value = false
   percent.value = null
   const file = uploadFile_.raw ?? null
   // 选完就判一次：不合格的文件不进"待上传"状态，用户不必点一次"开始上传"
@@ -140,11 +146,14 @@ async function start(): Promise<void> {
   const invalid = validateUpload(file)
   if (invalid) {
     errorText.value = invalid
+    // 体积/类型不合规是确定性失败：重试同一个文件只会拿到同一句话。
+    canRetry.value = false
     ElMessage.error(invalid)
     return
   }
   uploading.value = true
   errorText.value = ''
+  canRetry.value = false
   percent.value = null
   try {
     const record = await uploadFile(file, (p) => {
@@ -167,9 +176,28 @@ async function start(): Promise<void> {
     }
     const message = err instanceof ApiError ? err.message : '上传失败，请重试'
     errorText.value = message
+    // 给不给「重试」按错误码定：断网/超时/5xx 再试一次有意义；
+    // 41301（超 5MB）、41501（不是 PDF）、42201（扫描件无文字层）点一百次也一样。
+    canRetry.value = err instanceof ApiError ? canRetryUpload(err.code) : true
     ElMessage.error(message)
   } finally {
     uploading.value = false
+  }
+}
+
+/**
+ * 重试沿用已选中的文件：不弹文件选择框。
+ *
+ * 用户要重试的正是刚才那份合同，再让他从磁盘里找一遍是多余的负担，
+ * 也容易选错。文件还在 picked 里，start() 本来就不读文件系统。
+ */
+async function retry(): Promise<void> {
+  if (uploading.value || !picked.value) return
+  retrying.value = true
+  try {
+    await start()
+  } finally {
+    retrying.value = false
   }
 }
 </script>
@@ -253,7 +281,16 @@ async function start(): Promise<void> {
           </div>
         </div>
 
-        <p v-if="errorText" class="error">{{ errorText }}</p>
+        <div v-if="errorText" class="error-block">
+          <p class="error">{{ errorText }}</p>
+          <el-button
+            v-if="canRetry"
+            size="small"
+            :disabled="uploading"
+            :loading="uploading && retrying"
+            @click="retry"
+          >{{ uploading && retrying ? '重试中…' : '重试' }}</el-button>
+        </div>
       </main>
     </div>
   </div>
@@ -502,6 +539,18 @@ async function start(): Promise<void> {
   /* 错误提示：说明文字 */
   font-size: var(--ll-fs-meta);
   color: var(--ll-danger);
+}
+
+/* 失败文案与「重试」并排：按钮要贴着那句话，读的时候是一件事，不是两件。 */
+.error-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.error-block .error {
+  margin: 0;
 }
 
 /* 单栏之后再钉一次：三段式 grid 若被任何后续规则改回，这里兜住，
