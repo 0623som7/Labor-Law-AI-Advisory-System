@@ -62,6 +62,25 @@ test('原话不带条款时解析为空串', () => {
   assert.deepEqual(parseAskTitle('合同到期不续签有补偿吗'), { section: '', ruleId: '' })
 })
 
+test('新形态（后端 structuredTitle）：· 规则号 也能解析出来', () => {
+  // 后端存的是 `合同「第七条」 · R-PROBATION-ONCE`，没有「结论」两个字
+  assert.deepEqual(parseAskTitle('合同「第七条」 · R-PROBATION-ONCE'), {
+    section: '第七条',
+    ruleId: 'R-PROBATION-ONCE',
+  })
+})
+
+test('新形态接到 sessionTitle：侧栏显示 条款 · 规则号', () => {
+  const parsed = parseAskTitle('合同「第七条」 · R-PROBATION-ONCE')
+  assert.equal(sessionTitle({ section: parsed.section, ruleId: parsed.ruleId }), '第七条 · R-PROBATION-ONCE')
+})
+
+test('负例：括号里没有规则号时不硬认', () => {
+  const parsed = parseAskTitle('合同「第七条」 · 合同中有 2 处（无规则号）')
+  assert.equal(parsed.ruleId, '')
+  assert.equal(sessionTitle({ section: parsed.section, ruleId: parsed.ruleId }), '第七条')
+})
+
 test('同名去重：第二次起追加 #2 #3，顺序不变', () => {
   assert.deepEqual(dedupeTitles(['第七条', '第十二条', '第七条', '第七条']), ['第七条', '第十二条', '第七条 #2', '第七条 #3'])
 })

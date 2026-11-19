@@ -33,10 +33,28 @@ export function stripExtension(name: string): string {
   return trimmed.slice(0, dot)
 }
 
-/** 从一段"原话标题"里认出条款号与规则号；认不出就返回空串。 */
+/**
+ * 规则号的形状：`R-PROBATION-ONCE`。
+ *
+ * 不允许 `R-` 后面直接跟 `-`，否则 `合同「第七条」 · -` 这种残片也会被当成规则号。
+ */
+const RULE_ID = '[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+'
+
+/**
+ * 从一段"原话标题"里认出条款号与规则号；认不出就返回空串。
+ *
+ * 两种形态都要认，因为它们同时存在于库里的历史会话中：
+ * - 老形态（`buildAskContext` 时代）：`… · 结论 R-PROBATION-ONCE`
+ * - 新形态（后端 `structuredTitle` 时代）：`合同「第七条」 · R-PROBATION-ONCE`
+ * 只认「结论」前缀时，新形态会解析出空规则号，侧栏退回只剩「第七条」——
+ * 等于后端的 T4 修复在页面上没发生。
+ */
 export function parseAskTitle(raw: string): { section: string; ruleId: string } {
   const section = /合同「([^」]*)」/.exec(raw)?.[1]?.trim() ?? ''
-  const ruleId = /结论\s+([A-Z][A-Z0-9-]{2,})/.exec(raw)?.[1]?.trim() ?? ''
+  const ruleId =
+    new RegExp(`结论\\s+(${RULE_ID})`).exec(raw)?.[1]?.trim() ??
+    new RegExp(`·\\s*(${RULE_ID})\\s*$`).exec(raw)?.[1]?.trim() ??
+    ''
   return { section, ruleId }
 }
 
