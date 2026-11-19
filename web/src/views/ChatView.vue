@@ -736,7 +736,13 @@ onMounted(() => {
   <div ref="chatPageEl" class="chat-page" :class="{ 'is-resizing': sideDragging }">
     <aside class="sidebar" :class="{ collapsed }">
       <div class="sidebar-head">
-        <el-button type="primary" class="new-btn" :disabled="sending" @click="startNewSession">
+        <el-button
+          type="primary"
+          class="new-btn"
+          :disabled="sending"
+          aria-label="新对话"
+          @click="startNewSession"
+        >
           ＋ 新对话
         </el-button>
         <!--
@@ -1030,6 +1036,40 @@ onMounted(() => {
 
 .sidebar.collapsed {
   width: 56px;
+}
+
+/* 折叠态只放得下 32px 的方块：横排 + flex:1 会把按钮撑到 92px 顶出侧栏 */
+.sidebar.collapsed .sidebar-head {
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  align-items: center;
+  overflow: visible; /* 不要 hidden，会裁掉 focus 环 */
+}
+
+.sidebar.collapsed .new-btn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
+/* el-button 把槽内容包在自己的 <span> 里，scoped 下要用 :deep 才打得进去 */
+.sidebar.collapsed .new-btn :deep(span) {
+  display: none;
+}
+
+/* 文字藏起来后按钮里只剩一个 ＋，读屏靠上面的 aria-label */
+.sidebar.collapsed .new-btn::before {
+  content: '＋';
+  font-size: 16px;
+  line-height: 1;
+}
+
+.sidebar.collapsed .collapse-btn {
+  width: 32px;
+  height: 32px;
 }
 
 .sidebar-head {
