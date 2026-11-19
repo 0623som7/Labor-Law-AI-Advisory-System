@@ -1,72 +1,72 @@
 @import 'element-plus/theme-chalk/dark/css-vars.css';
 
 :root {
-  --ll-bg: #f6f7f9;
-  --ll-surface: #ffffff;
-  --ll-border: #e3e6eb;
-  --ll-text: #1f2329;
-  --ll-text-weak: #646a73;
-  --ll-primary: #2f6feb;
-  --ll-primary-weak: #eaf1fe;
-  --ll-user-bubble: #2f6feb;
+  --ll-bg: #F7F5F0;
+  --ll-surface: #FFFFFF;
+  --ll-border: #E4DED2;
+  --ll-text: #1A1A18;
+  --ll-text-weak: #57544B;
+  --ll-primary: #1F3A5F;
+  --ll-primary-weak: #E8EEF5;
+  --ll-user-bubble: #1F3A5F;
   --ll-radius: 10px;
   /* 表面层级 */
-  --ll-surface-muted: #f9fafb;
-  --ll-surface-sunken: #f3f4f6;
+  --ll-surface-muted: #FBFAF7;
+  --ll-surface-sunken: #F1EEE7;
   /* 边框 */
-  --ll-border-muted: #e5e7eb;
-  --ll-border-strong: #d0d5dd;
+  --ll-border-muted: #E7E2D8;
+  --ll-border-strong: #CFC8B9;
   /* 文字 */
-  --ll-text-strong: #111827;
-  --ll-text-body: #1f2937;
-  --ll-text-mid: #374151;
-  --ll-text-soft: #4b5563;
-  --ll-text-subtle: #6b7280;
-  --ll-text-faint: #6f7683;
+  --ll-text-strong: #12120F;
+  --ll-text-body: #23231F;
+  --ll-text-mid: #33322C;
+  --ll-text-soft: #46453D;
+  --ll-text-subtle: #5F5D54;
+  --ll-text-faint: #75716A;
   /* 蓝色（注意两个蓝值不同，不要合并） */
-  --ll-accent: #2563eb;
-  --ll-primary-wash: #dbeafe;
+  --ll-accent: #2C5282;
+  --ll-primary-wash: #E3EBF3;
   /* 语义色 */
-  --ll-danger: #d93026;
-  --ll-danger-strong: #b91c1c;
-  --ll-warn: #d97706;
-  --ll-warn-strong: #b45309;
-  --ll-warn-mid: #ca8a04;
-  --ll-ok-wash: #ecfdf5;
+  --ll-danger: #A32B22;
+  --ll-danger-strong: #8C231C;
+  --ll-warn: #8A5A00;
+  --ll-warn-strong: #6F4800;
+  --ll-warn-mid: #A06A00;
+  --ll-ok-wash: #EAF4EF;
   /* 纸面与反白：这两个不随主题变 */
   --ll-paper: #ffffff;
   --ll-on-primary: #ffffff;
   /* 中性细分 */
-  --ll-hairline-1: #f0f1f3;
-  --ll-hairline-2: #f1f2f4;
-  --ll-hairline-3: #f1f3f5;
-  --ll-page-alt: #f5f7fa;
-  --ll-row-hover: #f8fafc;
-  --ll-text-hint: #909399;
-  --ll-disabled-text: #c0c4cc;
-  --ll-disabled-bg: #ebeef5;
-  --ll-btn-text: #475467;
-  --ll-text-statute: #3b4048;
+  --ll-hairline-1: #F1EEE7;
+  --ll-hairline-2: #F2EFE9;
+  --ll-hairline-3: #F3F0EA;
+  --ll-page-alt: #F2EFE8;
+  --ll-row-hover: #FAF8F4;
+  --ll-text-hint: #A8A399;
+  --ll-disabled-text: #C6C1B6;
+  --ll-disabled-bg: #EDEAE3;
+  --ll-btn-text: #45443D;
+  --ll-text-statute: #34332E;
   /* 蓝色家族（与既有 --ll-accent #2563eb 并列） */
-  --ll-accent-line: #c7d2fe;
-  --ll-accent-strong: #3b82f6;
-  --ll-accent-deep: #1d4ed8;
-  --ll-accent-wash-1: #eef4ff;
-  --ll-accent-wash-2: #eff6ff;
-  --ll-accent-wash-3: #eef2ff;
-  --ll-indigo: #4f46e5;
+  --ll-accent-line: #C3D2E2;
+  --ll-accent-strong: #3A6EA5;
+  --ll-accent-deep: #17324F;
+  --ll-accent-wash-1: #EDF2F8;
+  --ll-accent-wash-2: #EEF3F9;
+  --ll-accent-wash-3: #EFF1F6;
+  --ll-indigo: #4A4E8C;
   /* 状态色补齐 */
-  --ll-ok-strong: #047857;
-  --ll-ok-deep: #065f46;
-  --ll-danger-mid: #dc2626;
-  --ll-danger-wash-1: #fef2f2;
-  --ll-danger-wash-2: #fdecea;
-  --ll-warn-wash: #fffbeb;
-  --ll-warn-line: #fde68a;
+  --ll-ok-strong: #1D6B4F;
+  --ll-ok-deep: #14523C;
+  --ll-danger-mid: #B03A2E;
+  --ll-danger-wash-1: #FBF1EF;
+  --ll-danger-wash-2: #F7E9E6;
+  --ll-warn-wash: #FBF6EA;
+  --ll-warn-line: #EADFC0;
   /* 顶部免责条 */
-  --ll-notice-bg: #fcf8e3;
-  --ll-notice-text: #8a6d3b;
-  --ll-notice-line: #faebcc;
+  --ll-notice-bg: #FBF6E8;
+  --ll-notice-text: #6E5320;
+  --ll-notice-line: #E8D9B6;
   /* 纸面上的风险框：永不随主题变 */
   --ll-mark-medium: #d97706;
   --ll-mark-low: #ca8a04;
@@ -91,13 +91,13 @@
 /* element-plus 主题桥接：组件取色统一走品牌令牌。
    写成 html:root 是因为 EP 自己也用 :root 定义同名变量，同优先级只能靠加载顺序取胜。 */
 html:root {
-  --el-color-primary: var(--ll-primary); /* #2f6feb，白字 4.57:1 */
-  --el-color-primary-dark-2: #2659bc; /* active，白字 6.49:1 */
-  --el-color-primary-light-3: #2a63d2; /* hover，白字 5.51:1（EP 原 #5a8bf0 只有 3.29） */
-  --el-color-primary-light-5: #86aaf4; /* disabled 底 */
-  --el-color-primary-light-7: #b1c8f8;
-  --el-color-primary-light-8: #c7d7fa;
-  --el-color-primary-light-9: #e6edfd;
+  --el-color-primary: var(--ll-primary); /* #1F3A5F，白字 11.48:1 */
+  --el-color-primary-dark-2: #19304E; /* active，白字 13.34:1 */
+  --el-color-primary-light-3: #3A5272; /* hover，白字 7.99:1 */
+  --el-color-primary-light-5: #8F9CAF; /* disabled 底的基准档 */
+  --el-color-primary-light-7: #BCC4CF;
+  --el-color-primary-light-8: #D2D8DF;
+  --el-color-primary-light-9: #E9EBEF;
   --el-border-radius-base: var(--ll-radius-sm); /* 6px */
   --el-border-radius-small: var(--ll-radius-sm);
   --el-border-radius-round: 999px;
@@ -107,9 +107,9 @@ html:root {
 .el-button--primary.is-disabled,
 .el-button--primary.is-disabled:hover,
 .el-button--primary.is-disabled:active {
-  --el-button-disabled-bg-color: #c7d7fa;
-  --el-button-disabled-text-color: #475467;
-  --el-button-disabled-border-color: #c7d7fa;
+  --el-button-disabled-bg-color: #D2D8DF;
+  --el-button-disabled-text-color: #45443D;
+  --el-button-disabled-border-color: #D2D8DF;
 }
 
 * {
