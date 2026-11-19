@@ -71,6 +71,20 @@ func TestRepairTruncatedObject(t *testing.T) {
 			want: "",
 			ok:   false,
 		},
+		{
+			// 线上 40 页合同的形态：标量抽完了，正在写 clauses 数组。
+			// 只按深度补 `}` 会得到 `[{"x": 1}}}`，方括号没闭合、JSON 非法。
+			name: "截在对象数组里（线上 40 页合同的形态）",
+			in:   `{"a": 1, "clauses": [{"x": 1}, {"y": "东`,
+			want: `{"a": 1, "clauses": [{"x": 1}]}`,
+			ok:   true,
+		},
+		{
+			name: "括号不配对（多一个右方括号）",
+			in:   `{"a": 1]`,
+			want: "",
+			ok:   false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,6 +96,37 @@ func TestRepairTruncatedObject(t *testing.T) {
 				t.Fatalf("修复结果 = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestParseSurvivesTruncatedClauses 守住"截断点落在条款数组里"的形态。
+//
+// 这是线上 40 页合同真正的形态：标量全抽完了，正在写 raw_clauses，
+// token 到顶被切在数组中间。只按深度补右括号会得到非法 JSON，
+// 修复函数便对条款数组从未生效——这条用例把发令枪钉在这里。
+func TestParseSurvivesTruncatedClauses(t *testing.T) {
+	const truncated = `{
+  "party_a": "东莞某某科技有限公司",
+  "party_b": "张三",
+  "salary_monthly": 8000,
+  "raw_clauses": [{"section": "第一条", "text": "本合同为固定期限劳动合同"}, {"section": "第二条", "te`
+
+	doc, err := Parse(truncated)
+	if err != nil {
+		t.Fatalf("截在条款数组里的正文应当被修复，实际报错：%v", err)
+	}
+	// 截断之前的标量一个都不许丢：丢了它们就会进 Missing，规则层当成"合同没写"。
+	if doc.PartyA != "东莞某某科技有限公司" || doc.PartyB != "张三" || doc.SalaryMonthly != 8000 {
+		t.Fatalf("已闭合标量丢失：%+v", doc.Contract)
+	}
+	for _, key := range []string{"party_a", "party_b", "salary_monthly"} {
+		if hasField(doc.Missing, key) {
+			t.Fatalf("%s 明明救回来了，不该进 Missing：%v", key, doc.Missing)
+		}
+	}
+	// 数组里已闭合的那一条也要留下，残尾那一条丢掉。
+	if len(doc.Clauses) != 1 || doc.Clauses[0].Section != "第一条" {
+		t.Fatalf("条款数组应只保留已闭合的一条，实际：%+v", doc.Clauses)
 	}
 }
 
