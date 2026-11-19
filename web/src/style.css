@@ -22,7 +22,7 @@
   --ll-text-mid: #374151;
   --ll-text-soft: #4b5563;
   --ll-text-subtle: #6b7280;
-  --ll-text-faint: #9ca3af;
+  --ll-text-faint: #6f7683;
   /* 蓝色（注意两个蓝值不同，不要合并） */
   --ll-accent: #2563eb;
   --ll-primary-wash: #dbeafe;
@@ -168,7 +168,7 @@ button {
   --ll-text-mid: #cbd2dc;
   --ll-text-soft: #b3bcc9;
   --ll-text-subtle: #98a2b3;
-  --ll-text-faint: #6b7480;
+  --ll-text-faint: #7f8794;
   --ll-text-hint: #78828f;
   --ll-text-statute: #3b4048;
   --ll-primary: #4c8dff;
