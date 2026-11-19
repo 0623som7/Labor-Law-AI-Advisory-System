@@ -234,7 +234,8 @@ onBeforeUnmount(stopPolling)
 
 .history-title {
   margin: 0 0 10px;
-  font-size: 15px;
+  /* 审查历史标题：面板标题 */
+  font-size: var(--ll-fs-title);
   font-weight: 600;
   color: var(--ll-text-body);
 }
@@ -268,7 +269,9 @@ onBeforeUnmount(stopPolling)
 
 .row-name {
   font-weight: 600;
-  font-size: 13px;
+  /* 文件名：表格单元 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
   color: var(--ll-text-body);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -280,17 +283,18 @@ onBeforeUnmount(stopPolling)
   align-items: center;
   gap: 6px;
   margin-top: 6px;
-  font-size: 12px;
+  /* 表头：说明文字 */
+  font-size: var(--ll-fs-meta);
 }
 
 /* 340px 宽度下三行必须放得下：状态、风险、时间挤在一行里也靠 margin-left:auto 顶开 */
 .row-status {
   flex: none;
-  padding: 1px 8px;
+  padding: 0px 8px;
   font-weight: 500;
   color: var(--ll-text-body);
   background: var(--ll-surface-sunken);
-  border-radius: 999px;
+  border-radius: var(--ll-radius-pill);
 }
 
 /* 配色与 ReviewsView 原页一致，不另定一套 */
@@ -311,8 +315,8 @@ onBeforeUnmount(stopPolling)
 
 .row-risk {
   flex: none;
-  padding: 1px 8px;
-  border-radius: 999px;
+  padding: 0px 8px;
+  border-radius: var(--ll-radius-pill);
 }
 
 .risk-high {
@@ -345,7 +349,8 @@ onBeforeUnmount(stopPolling)
   display: flex;
   gap: 8px;
   margin-top: 4px;
-  font-size: 11px;
+  /* 条目计数：字数统计 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-faint);
 }
 
@@ -371,12 +376,14 @@ onBeforeUnmount(stopPolling)
   padding: 24px 16px;
   text-align: center;
   color: var(--ll-text-subtle);
-  font-size: 13px;
+  /* 状态徽标文字：标签 */
+  font-size: var(--ll-fs-tag);
 }
 
 .state .hint {
   margin-top: 6px;
-  font-size: 12px;
+  /* 状态补充说明 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-faint);
 }
 
@@ -395,7 +402,8 @@ onBeforeUnmount(stopPolling)
   flex: none;
   margin: 0;
   padding: 8px 16px;
-  font-size: 12px;
+  /* 卡住提示：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-warn-strong);
   background: var(--ll-warn-wash);
   border-top: 1px solid var(--ll-warn-line);

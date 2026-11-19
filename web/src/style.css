@@ -68,6 +68,21 @@
   /* 纸面上的风险框：永不随主题变 */
   --ll-mark-medium: #d97706;
   --ll-mark-low: #ca8a04;
+  /* 字号五级：一级只服务一类东西，避免再次出现"全站正文 12px" */
+  --ll-fs-display: 20px; /* 页面主标题，600 */
+  --ll-fs-title: 16px; /* 卡片/面板/页头标题、会话标题，600 */
+  --ll-fs-body: 14px; /* 正文、消息、法条正文、表单、表格单元 */
+  --ll-fs-meta: 13px; /* 时间、页码、说明、字数统计 */
+  --ll-fs-tag: 12px; /* 徽标、chip、按钮小字、标签 */
+  --ll-lh-body: 1.7;
+  /* 圆角三档；--ll-radius 保留为 md 的别名，老代码不必全改 */
+  --ll-radius-sm: 6px;
+  --ll-radius-md: 10px;
+  --ll-radius-pill: 999px;
+  /* 阴影三档 */
+  --ll-shadow-card: 0 1px 2px rgb(15 23 42 / 6%);
+  --ll-shadow-float: 0 8px 24px rgb(15 23 42 / 10%);
+  --ll-shadow-focus: 0 0 0 3px rgb(37 99 235 / 18%);
   color-scheme: light;
 }
 
@@ -85,7 +100,8 @@ body,
 body {
   font-family:
     'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  font-size: 14px;
+  /* 全局正文基线 */
+  font-size: var(--ll-fs-body);
   line-height: 1.6;
   color: var(--ll-text);
   background: var(--ll-bg);

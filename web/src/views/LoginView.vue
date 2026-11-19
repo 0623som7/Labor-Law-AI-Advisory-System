@@ -174,29 +174,32 @@ function switchMode(next: 'login' | 'register'): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  /* 页面级左右内边距统一 32px */
+  padding: 32px;
   overflow: auto;
 }
 
 .login-card {
   width: 100%;
   max-width: 380px;
-  padding: 28px 28px 20px;
+  padding: 32px 32px 24px;
   background: var(--ll-surface);
   border: 1px solid var(--ll-border);
   border-radius: var(--ll-radius);
-  box-shadow: 0 8px 24px rgb(31 35 41 / 6%);
+  box-shadow: var(--ll-shadow-float);
 }
 
 .login-head h1 {
   margin: 0 0 6px;
-  font-size: 20px;
+  /* 登录页主标题 */
+  font-size: var(--ll-fs-display);
   font-weight: 600;
 }
 
 .login-sub {
   margin: 0;
-  font-size: 12px;
+  /* 登录页副标题：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-weak);
 }
 
@@ -204,26 +207,27 @@ function switchMode(next: 'login' | 'register'): void {
   display: flex;
   gap: 4px;
   margin: 20px 0 16px;
-  padding: 3px;
+  padding: 4px;
   background: var(--ll-bg);
-  border-radius: 8px;
+  border-radius: var(--ll-radius-md);
 }
 
 .login-tab {
   flex: 1;
-  padding: 6px 0;
-  font-size: 13px;
+  padding: 8px 0;
+  /* 登录/注册切换：tab */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-text-weak);
   cursor: pointer;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
 }
 
 .login-tab.active {
   color: var(--ll-text);
   background: var(--ll-surface);
-  box-shadow: 0 1px 2px rgb(31 35 41 / 8%);
+  box-shadow: var(--ll-shadow-card);
 }
 
 .login-form {
@@ -239,18 +243,22 @@ function switchMode(next: 'login' | 'register'): void {
 }
 
 .field-label {
-  font-size: 13px;
+  /* 表单标签 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
   color: var(--ll-text-weak);
 }
 
 .field-error {
-  font-size: 12px;
+  /* 字段错误：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-danger);
 }
 
 .form-error {
   margin: 0;
-  font-size: 13px;
+  /* 表单错误：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-danger);
 }
 
@@ -261,7 +269,8 @@ function switchMode(next: 'login' | 'register'): void {
 
 .login-foot {
   margin-top: 16px;
-  font-size: 12px;
+  /* 页脚说明 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-weak);
   text-align: center;
 }

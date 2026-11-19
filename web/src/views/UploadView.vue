@@ -258,15 +258,6 @@ async function start(): Promise<void> {
 </template>
 
 <style scoped>
-.upload-page {
-  /* 同 .review-page：外层 .app-shell 已是 100vh，这里再要 100vh 会多出一条纵向滚动条。 */
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-  background: var(--ll-page-alt);
-}
-
 .topbar {
   /* 吸顶同审查页；分隔线用 box-shadow，避免滚动时 1px 抖动。 */
   position: sticky;
@@ -287,8 +278,19 @@ async function start(): Promise<void> {
   color: var(--ll-text-body);
 }
 
+.upload-page {
+  /* 同 .review-page：外层 .app-shell 已是 100vh，这里再要 100vh 会多出一条纵向滚动条。 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--ll-page-alt);
+}
+
 .links {
-  font-size: 14px;
+  /* 面包屑：正文导航 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
 }
 
 .crumbs {
@@ -358,7 +360,7 @@ async function start(): Promise<void> {
 .pane-work {
   min-height: 0;
   overflow-y: auto;
-  padding: 40px 32px 64px;
+  padding: 32px 32px 32px;
 }
 
 /* 右栏内容保持原来的居中宽度，只是不再居中于整页 */
@@ -387,26 +389,29 @@ async function start(): Promise<void> {
   }
 
   .pane-work {
-    padding: 24px 20px 48px;
+    /* 页面级左右内边距统一 32px */
+    padding: 32px;
   }
 }
 
 .title {
   margin: 0 0 8px;
-  font-size: 22px;
+  /* 上传页主标题 */
+  font-size: var(--ll-fs-display);
   color: var(--ll-text-body);
 }
 
 .subtitle {
   margin: 0 0 24px;
-  font-size: 14px;
+  /* 上传页副标题：说明文字 */
+  font-size: var(--ll-fs-meta);
   line-height: 1.7;
   color: var(--ll-text-subtle);
 }
 
 .drop :deep(.el-upload-dragger) {
   padding: 32px 16px;
-  border-radius: 10px;
+  border-radius: var(--ll-radius-md);
   background: var(--ll-surface);
 }
 
@@ -421,16 +426,19 @@ async function start(): Promise<void> {
   width: 44px;
   height: 44px;
   line-height: 44px;
-  border-radius: 10px;
+  border-radius: var(--ll-radius-md);
   background: var(--ll-accent-wash-3);
   color: var(--ll-indigo);
-  font-size: 12px;
+  /* 拖拽区图标：标签 */
+  font-size: var(--ll-fs-tag);
   font-weight: 700;
 }
 
 .drop-main {
   margin: 6px 0 0;
-  font-size: 14px;
+  /* 拖拽区主文案 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
   color: var(--ll-text-mid);
 }
 
@@ -441,7 +449,8 @@ async function start(): Promise<void> {
 
 .drop-hint {
   margin: 0;
-  font-size: 12px;
+  /* 拖拽区提示：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-faint);
 }
 
@@ -450,7 +459,7 @@ async function start(): Promise<void> {
   padding: 16px;
   background: var(--ll-surface);
   border: 1px solid var(--ll-border-muted);
-  border-radius: 10px;
+  border-radius: var(--ll-radius-md);
 }
 
 .picked-file {
@@ -460,13 +469,16 @@ async function start(): Promise<void> {
 }
 
 .picked-name {
-  font-size: 14px;
+  /* 已选文件名：正文 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
   color: var(--ll-text-strong);
   word-break: break-all;
 }
 
 .picked-size {
-  font-size: 12px;
+  /* 已选文件大小：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-faint);
 }
 
@@ -482,13 +494,15 @@ async function start(): Promise<void> {
 }
 
 .hint {
-  font-size: 13px;
+  /* 页脚提示：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-subtle);
 }
 
 .error {
   margin-top: 16px;
-  font-size: 13px;
+  /* 错误提示：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-danger);
 }
 

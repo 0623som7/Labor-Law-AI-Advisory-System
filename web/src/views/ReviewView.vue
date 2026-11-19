@@ -109,6 +109,7 @@ const summary = computed(() => summarizeFindings(findings.value))
 
 const crumbs = breadcrumbFor('review')
 
+
 // ---- 右栏折叠 ------------------------------------------------------------
 // 投屏时想给合同原文更多横向空间，但完全藏掉清单会看不见"有几条高风险"，
 // 所以折叠成 40px 的图标条：数字还在，正文让开。折叠不改 panelWidth，
@@ -125,7 +126,7 @@ function togglePanel(): void {
 // 面板宽度存 localStorage：答辩前会反复调这个宽度（投屏投影比例跟本地不一样），
 // 每次刷新都回到 420 很烦。默认值 420 是改动前的硬编码宽度，必须保持一致。
 const PANEL_KEY = 'laborlaw.review.panelWidth'
-const PANEL_DEFAULT = 420
+const PANEL_DEFAULT = 460
 const panelWidth = ref(readSideWidth(PANEL_KEY, PANEL_DEFAULT, MIN_SIDE, MAX_SIDE))
 const bodyEl = ref<HTMLElement | null>(null)
 const maxPanelWidth = computed(() =>
@@ -881,7 +882,8 @@ void load()
 }
 
 .file-name {
-  font-size: 14px;
+  /* 合同文件名：页头标题 */
+  font-size: var(--ll-fs-title);
   color: var(--ll-text-strong);
   max-width: 40vw;
   overflow: hidden;
@@ -890,13 +892,16 @@ void load()
 }
 
 .file-pages {
-  font-size: 12px;
+  /* 页数：页码 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-faint);
 }
 
 .links {
   margin-left: auto;
-  font-size: 14px;
+  /* 面包屑：正文导航 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
 }
 
 .crumbs {
@@ -940,18 +945,21 @@ void load()
   align-items: center;
   justify-content: center;
   gap: 12px;
-  padding: 64px 24px;
+  /* 页面级左右内边距统一 32px */
+  padding: 32px;
 }
 
 .blocked-title {
   margin: 0;
-  font-size: 16px;
+  /* 阻断标题：卡片标题 */
+  font-size: var(--ll-fs-title);
   color: var(--ll-text-mid);
 }
 
 .blocked-hint {
   margin: 0;
-  font-size: 13px;
+  /* 阻断说明：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-faint);
 }
 
@@ -989,8 +997,9 @@ void load()
   display: flex;
   align-items: baseline;
   gap: 12px;
-  padding: 12px 20px;
-  font-size: 13px;
+  padding: 12px 24px;
+  /* 查看器页头：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-subtle);
 }
 
@@ -1002,14 +1011,15 @@ void load()
 .pages {
   flex: 1;
   overflow: auto;
-  padding: 0 20px 32px;
+  /* 页面级左右内边距统一 32px */
+  padding: 0 32px 32px;
 }
 
 .page {
   position: relative;
   margin: 0 auto 20px;
   background: var(--ll-paper);
-  box-shadow: 0 1px 6px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--ll-shadow-card);
 }
 
 .page-canvas {
@@ -1019,7 +1029,7 @@ void load()
 .mark {
   position: absolute;
   padding: 0;
-  border-radius: 2px;
+  border-radius: var(--ll-radius-sm);
   border: 2px solid;
   background: transparent;
   cursor: pointer;
@@ -1076,7 +1086,8 @@ void load()
 
 .pdf-error {
   text-align: center;
-  font-size: 13px;
+  /* PDF 错误：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-danger);
 }
 
@@ -1096,14 +1107,15 @@ void load()
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 16px 16px;
   border-bottom: 1px solid var(--ll-hairline-2);
 }
 
 .summary {
   display: flex;
   gap: 10px;
-  font-size: 13px;
+  /* 风险汇总徽标：标签 */
+  font-size: var(--ll-fs-tag);
 }
 
 .sum--high {
@@ -1124,13 +1136,15 @@ void load()
 
 .running-line {
   margin: 0 0 10px;
-  font-size: 12px;
+  /* 正在生成：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-faint);
 }
 
 .review-error {
   margin: 16px;
-  font-size: 13px;
+  /* 审查失败说明：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-danger);
 }
 
@@ -1148,13 +1162,15 @@ void load()
 .review-reason {
   display: block;
   margin-top: 4px;
-  font-size: 12px;
+  /* 失败原因小字：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-weak);
 }
 
 .empty {
   margin: 16px;
-  font-size: 13px;
+  /* 空态说明 */
+  font-size: var(--ll-fs-meta);
   line-height: 1.7;
   color: var(--ll-text-faint);
 }
@@ -1171,14 +1187,14 @@ void load()
   padding: 12px;
   margin-bottom: 10px;
   border: 1px solid var(--ll-border-muted);
-  border-radius: 8px;
+  border-radius: var(--ll-radius-md);
   cursor: pointer;
   transition: border-color 0.15s ease;
 }
 
 .card--active {
   border-color: var(--ll-accent);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--ll-shadow-focus);
 }
 
 .card-head {
@@ -1189,9 +1205,10 @@ void load()
 
 .tag {
   flex: none;
-  font-size: 12px;
-  padding: 0 5px;
-  border-radius: 3px;
+  /* 风险等级徽标：标签 */
+  font-size: var(--ll-fs-tag);
+  padding: 0 4px;
+  border-radius: var(--ll-radius-sm);
   color: var(--ll-on-primary);
 }
 
@@ -1208,20 +1225,23 @@ void load()
 }
 
 .card-title {
-  font-size: 14px;
+  /* 风险卡标题：卡片标题 */
+  font-size: var(--ll-fs-title);
   font-weight: 500;
   color: var(--ll-text-strong);
 }
 
 .card-section {
   margin-left: auto;
-  font-size: 12px;
+  /* 条款位置：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-faint);
 }
 
 .card-evidence {
   margin: 8px 0 0;
-  font-size: 13px;
+  /* 风险卡正文（证据句） */
+  font-size: var(--ll-fs-body);
   line-height: 1.7;
   color: var(--ll-text-mid);
   white-space: pre-wrap;
@@ -1230,12 +1250,13 @@ void load()
 
 .ask-this {
   margin-top: 8px;
-  padding: 4px 10px;
+  padding: 4px 12px;
   border: 1px solid var(--ll-border-strong);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
   background: var(--ll-surface);
   color: var(--ll-btn-text);
-  font-size: 12px;
+  /* 就问这条：按钮小字 */
+  font-size: var(--ll-fs-tag);
   cursor: pointer;
 }
 
@@ -1252,12 +1273,13 @@ void load()
 
 .copy-sug {
   margin-top: 8px;
-  padding: 4px 10px;
+  padding: 4px 12px;
   border: 1px solid var(--ll-border-strong);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
   background: var(--ll-surface);
   color: var(--ll-btn-text);
-  font-size: 12px;
+  /* 复制改法：按钮小字 */
+  font-size: var(--ll-fs-tag);
   cursor: pointer;
 }
 
@@ -1268,7 +1290,8 @@ void load()
 
 .fold {
   margin-top: 8px;
-  font-size: 13px;
+  /* 折叠三角：说明文字 */
+  font-size: var(--ll-fs-meta);
 }
 
 .fold summary {
@@ -1283,9 +1306,9 @@ void load()
 
 .basis {
   margin-top: 8px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   background: var(--ll-surface-muted);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
 }
 
 .basis-head {
@@ -1303,20 +1326,20 @@ void load()
 
 .sug-original {
   margin: 8px 0 0;
-  padding: 6px 8px;
+  padding: 8px 8px;
   background: var(--ll-surface-sunken);
   color: var(--ll-text-subtle);
   text-decoration: line-through;
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
   white-space: pre-wrap;
 }
 
 .sug-revised {
   margin: 6px 0 0;
-  padding: 6px 8px;
+  padding: 8px 8px;
   background: var(--ll-ok-wash);
   color: var(--ll-ok-deep);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
   white-space: pre-wrap;
 }
 
@@ -1362,7 +1385,7 @@ void load()
   color: var(--ll-text-weak);
   background: none;
   border: 1px solid var(--ll-border);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
   cursor: pointer;
 }
 
@@ -1387,7 +1410,8 @@ void load()
   justify-content: center;
   width: 24px;
   height: 24px;
-  font-size: 12px;
+  /* 图标条计数：标签 */
+  font-size: var(--ll-fs-tag);
   font-weight: 600;
   color: var(--ll-on-primary);
   border-radius: 50%;

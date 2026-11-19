@@ -25,8 +25,9 @@
 
 .app-notice {
   flex: none;
-  padding: 6px 16px;
-  font-size: 12px;
+  padding: 8px 16px;
+  /* 顶部免责声明：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-notice-text);
   background: var(--ll-notice-bg);
   border-bottom: 1px solid var(--ll-notice-line);
@@ -41,10 +42,11 @@
 
 .icp {
   flex: none;
-  font-size: 12px;
+  /* 页脚备案号：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-hint);
   text-align: center;
-  padding: 6px 0;
+  padding: 8px 0;
 }
 
 .icp a {

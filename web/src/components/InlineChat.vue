@@ -459,30 +459,34 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
    单行截断而不是折行——折成三行把抽屉里能看答案的高度吃掉一半。 */
 .ic-context {
   margin: 0;
-  padding: 6px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--ll-surface-sunken);
   background: var(--ll-surface-muted);
   color: var(--ll-text-soft);
-  font-size: 12px;
+  /* 追问上下文条：说明文字 */
+  font-size: var(--ll-fs-meta);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .ic-title {
-  font-size: 13px;
+  /* 抽屉标题：面板标题 */
+  font-size: var(--ll-fs-title);
   font-weight: 600;
   color: var(--ll-text-strong);
 }
 
 .ic-session {
-  font-size: 11px;
+  /* 会话号：标签 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-text-faint);
 }
 
 .ic-link {
   margin-left: auto;
-  font-size: 12px;
+  /* 去对话页链接：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-accent);
   text-decoration: none;
 }
@@ -495,10 +499,11 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   border: none;
   background: transparent;
   color: var(--ll-text-faint);
-  font-size: 16px;
+  /* 关闭符号 ×：按钮字形 */
+  font-size: var(--ll-fs-title);
   line-height: 1;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 4px 4px;
 }
 
 .ic-close:hover {
@@ -509,12 +514,13 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 12px;
+  padding: 12px 12px;
 }
 
 .ic-empty {
   margin: 0;
-  font-size: 12px;
+  /* 抽屉空态：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-faint);
 }
 
@@ -524,7 +530,8 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 
 .ic-text {
   margin: 0;
-  font-size: 13px;
+  /* 对话正文 */
+  font-size: var(--ll-fs-body);
   line-height: 1.6;
   color: var(--ll-text-body);
   white-space: pre-wrap;
@@ -532,8 +539,8 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 }
 
 .ic-user .ic-text {
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: 8px 12px;
+  border-radius: var(--ll-radius-md);
   background: var(--ll-surface-sunken);
 }
 
@@ -546,7 +553,8 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 
 .ic-error {
   margin: 6px 0 0;
-  font-size: 12px;
+  /* 错误行：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-danger-strong);
 }
 
@@ -554,19 +562,20 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
   display: flex;
   gap: 8px;
   align-items: flex-end;
-  padding: 8px 12px 10px;
+  padding: 8px 12px 12px;
   border-top: 1px solid var(--ll-hairline-1);
 }
 
 .ic-input {
   flex: 1;
   resize: none;
-  padding: 6px 8px;
+  padding: 8px 8px;
   font-family: inherit;
-  font-size: 13px;
+  /* 输入框值：表单 */
+  font-size: var(--ll-fs-body);
   line-height: 1.5;
   border: 1px solid var(--ll-border-strong);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
 }
 
 .ic-input:focus {
@@ -575,12 +584,13 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 }
 
 .ic-send {
-  padding: 6px 12px;
-  font-size: 13px;
+  padding: 8px 12px;
+  /* 发送按钮：按钮小字 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-on-primary);
   background: var(--ll-primary);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
   cursor: pointer;
 }
 

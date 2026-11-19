@@ -80,7 +80,7 @@ const collapsed = ref(false)
 // 但太宽会把回答挤窄，所以 220–420 之间交给用户拖。
 // 注意方向与审查页相反：侧栏在左，ArrowRight 是变宽。
 const SIDE_KEY = 'laborlaw.chat.sideWidth'
-const SIDE_DEFAULT = 280
+const SIDE_DEFAULT = 300
 const SIDE_MIN = 220
 const SIDE_MAX = 420
 const chatPageEl = ref<HTMLElement | null>(null)
@@ -1037,7 +1037,7 @@ onMounted(() => {
   flex: none;
   gap: 6px;
   align-items: center;
-  padding: 10px;
+  padding: 12px;
 }
 
 .new-btn {
@@ -1048,12 +1048,13 @@ onMounted(() => {
   flex: none;
   width: 26px;
   height: 26px;
-  font-size: 12px;
+  /* 侧栏收起按钮：按钮小字 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-text-weak);
   cursor: pointer;
   background: transparent;
   border: 1px solid var(--ll-border);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
 }
 
 .sidebar-body {
@@ -1066,7 +1067,8 @@ onMounted(() => {
 .sidebar-hint {
   padding: 8px;
   margin: 0;
-  font-size: 12px;
+  /* 侧栏提示：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-weak);
 }
 
@@ -1079,13 +1081,15 @@ onMounted(() => {
 /* 搜索框：左栏只有两百多像素，不加边框阴影，一条细线隔开就够。 */
 .session-search {
   width: 100%;
-  padding: 5px 8px;
+  padding: 4px 8px;
   margin: 0 0 6px;
-  font-size: 12px;
+  /* 搜索框值：表单 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
   color: var(--ll-text);
   background: var(--ll-bg);
   border: 1px solid var(--ll-border);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
   outline: none;
 }
 
@@ -1097,8 +1101,8 @@ onMounted(() => {
   display: flex;
   gap: 4px;
   align-items: center;
-  padding: 2px 4px;
-  border-radius: 6px;
+  padding: 4px 4px;
+  border-radius: var(--ll-radius-sm);
 }
 
 .session-item:hover {
@@ -1112,9 +1116,10 @@ onMounted(() => {
 .session-title {
   flex: 1;
   min-width: 0;
-  padding: 6px;
+  padding: 8px;
   overflow: hidden;
-  font-size: 13px;
+  /* 会话标题：会话标题 */
+  font-size: var(--ll-fs-title);
   color: var(--ll-text);
   text-align: left;
   cursor: pointer;
@@ -1133,7 +1138,8 @@ onMounted(() => {
 }
 
 .session-time {
-  font-size: 12px;
+  /* 会话时间：时间 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-hint);
 }
 
@@ -1141,13 +1147,14 @@ onMounted(() => {
   flex: none;
   width: 20px;
   height: 20px;
-  font-size: 14px;
+  /* 删除符号 ×：按钮字形 */
+  font-size: var(--ll-fs-tag);
   line-height: 1;
   color: var(--ll-text-weak);
   cursor: pointer;
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--ll-radius-sm);
   opacity: 0;
 }
 
@@ -1163,7 +1170,9 @@ onMounted(() => {
 .review-link {
   flex: none;
   padding: 8px 12px;
-  font-size: 13px;
+  /* 合同审查入口：正文导航 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
   color: var(--ll-accent);
   text-decoration: none;
   border-top: 1px solid var(--ll-border);
@@ -1178,8 +1187,9 @@ onMounted(() => {
   flex: none;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  font-size: 12px;
+  padding: 12px 12px;
+  /* 侧栏页脚：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-weak);
   border-top: 1px solid var(--ll-border);
 }
@@ -1191,7 +1201,8 @@ onMounted(() => {
 }
 
 .logout {
-  font-size: 12px;
+  /* 退出按钮：按钮小字 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-text-weak);
   cursor: pointer;
   background: transparent;
@@ -1215,7 +1226,7 @@ onMounted(() => {
   flex: none;
   gap: 8px;
   align-items: center;
-  padding: 10px 16px;
+  padding: 12px 16px;
   background: var(--ll-surface);
   border-bottom: 1px solid var(--ll-border);
 }
@@ -1223,7 +1234,8 @@ onMounted(() => {
 .main-title {
   margin: 0;
   overflow: hidden;
-  font-size: 14px;
+  /* 会话页头标题：页头标题 */
+  font-size: var(--ll-fs-title);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1233,7 +1245,8 @@ onMounted(() => {
   flex: none;
   padding: 8px 16px;
   margin: 0;
-  font-size: 12px;
+  /* 提示条：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-danger);
   background: var(--ll-danger-wash-2);
 }
@@ -1253,12 +1266,13 @@ onMounted(() => {
 
 .empty h3 {
   margin: 0 0 8px;
-  font-size: 15px;
+  /* 空态标题：卡片标题 */
+  font-size: var(--ll-fs-title);
   color: var(--ll-text);
 }
 
 .empty ul {
-  padding-left: 18px;
+  padding-left: 16px;
   margin: 4px 0 0;
 }
 
@@ -1281,7 +1295,7 @@ onMounted(() => {
 
 .bubble {
   max-width: min(720px, 82%);
-  padding: 10px 12px;
+  padding: 12px 12px;
   border-radius: var(--ll-radius);
 }
 
@@ -1309,7 +1323,8 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   align-items: center;
-  font-size: 13px;
+  /* 生成状态行：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-weak);
 }
 
@@ -1346,7 +1361,9 @@ onMounted(() => {
 
 .content {
   margin: 0;
-  font-size: 14px;
+  /* 消息正文 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
 }
 
 /* 状态行与正文之间留一点气口，正文第一行不要贴着点点。 */
@@ -1356,13 +1373,15 @@ onMounted(() => {
 
 .meta-line {
   margin: 6px 0 0;
-  font-size: 11px;
+  /* 消息脚注：字数统计 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-weak);
 }
 
 .error-line {
   margin: 6px 0 0;
-  font-size: 12px;
+  /* 错误行：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-danger);
 }
 
@@ -1397,12 +1416,13 @@ onMounted(() => {
 }
 
 .copy-btn {
-  font-size: 12px;
+  /* 复制按钮：按钮小字 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-text-subtle);
   background: none;
   border: 1px solid var(--ll-border-muted);
-  border-radius: 6px;
-  padding: 2px 8px;
+  border-radius: var(--ll-radius-sm);
+  padding: 4px 8px;
   cursor: pointer;
 }
 
@@ -1425,7 +1445,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   flex: none;
-  padding: 10px 16px 14px;
+  padding: 12px 16px 16px;
   background: var(--ll-surface);
   border-top: 1px solid var(--ll-border);
 }
@@ -1446,13 +1466,14 @@ onMounted(() => {
 }
 
 .attach-btn {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 4px 12px;
+  /* 附合同按钮：按钮小字 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-text-weak);
   cursor: pointer;
   background: transparent;
   border: 1px solid var(--ll-border);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
 }
 
 .attach-btn:hover:not(:disabled) {
@@ -1480,16 +1501,18 @@ onMounted(() => {
 }
 
 .ask-ctx-text {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 6px;
+  /* 追问来源文字：说明文字 */
+  font-size: var(--ll-fs-meta);
+  padding: 4px 12px;
+  border-radius: var(--ll-radius-sm);
   background: var(--ll-surface-muted);
   border: 1px solid var(--ll-border-muted);
   color: var(--ll-text-soft);
 }
 
 .ask-ctx-link {
-  font-size: 12px;
+  /* 查看原文：链接小字 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-accent);
   text-decoration: none;
 }
@@ -1502,10 +1525,11 @@ onMounted(() => {
   border: none;
   background: transparent;
   color: var(--ll-text-faint);
-  font-size: 14px;
+  /* 来源条关闭 ×：按钮字形 */
+  font-size: var(--ll-fs-tag);
   line-height: 1;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 4px 4px;
 }
 
 .ask-ctx-close:hover {
@@ -1519,10 +1543,11 @@ onMounted(() => {
   align-items: center;
   padding: 4px 8px;
   margin-bottom: 8px;
-  font-size: 12px;
+  /* 待发送文件芯片：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text);
   background: rgba(37, 99, 235, 0.08);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
 }
 
 .pending-name {
@@ -1534,7 +1559,8 @@ onMounted(() => {
 .pending-remove {
   flex: none;
   padding: 0 4px;
-  font-size: 14px;
+  /* 移除芯片 ×：按钮字形 */
+  font-size: var(--ll-fs-tag);
   line-height: 1;
   color: var(--ll-text-weak);
   cursor: pointer;
@@ -1557,13 +1583,13 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 8px 10px;
+  padding: 8px 12px;
   margin-bottom: 8px;
   color: var(--ll-text);
   cursor: pointer;
   background: var(--ll-surface);
   border: 1px solid var(--ll-border);
-  border-radius: 8px;
+  border-radius: var(--ll-radius-md);
 }
 
 .file-card:hover {
@@ -1581,20 +1607,23 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  /* 文件卡片文件名：正文 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .file-card-more {
   flex: none;
-  padding: 2px 8px;
-  font-size: 12px;
+  padding: 4px 8px;
+  /* 查看风险：按钮小字 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-primary);
   cursor: pointer;
   background: transparent;
   border: 1px solid var(--ll-border);
-  border-radius: 6px;
+  border-radius: var(--ll-radius-sm);
 }
 
 .file-card-more:hover {

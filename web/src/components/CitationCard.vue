@@ -77,7 +77,7 @@ function onKey(evt: KeyboardEvent): void {
   background: var(--ll-surface);
   border: 1px solid var(--ll-border);
   border-left: 3px solid var(--ll-primary);
-  border-radius: 8px;
+  border-radius: var(--ll-radius-md);
 }
 
 .citation-head {
@@ -97,16 +97,19 @@ function onKey(evt: KeyboardEvent): void {
 
 .citation-badge {
   flex: none;
-  padding: 1px 6px;
-  font-size: 11px;
+  padding: 0px 8px;
+  /* 引用卡徽标：标签 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-primary);
   background: var(--ll-primary-weak);
-  border-radius: 4px;
+  border-radius: var(--ll-radius-sm);
 }
 
 .citation-title {
   flex: none;
-  font-size: 13px;
+  /* 法条名称：主体信息 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
   font-weight: 600;
 }
 
@@ -114,7 +117,8 @@ function onKey(evt: KeyboardEvent): void {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 12px;
+  /* 条文预览：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-text-weak);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -122,7 +126,8 @@ function onKey(evt: KeyboardEvent): void {
 
 .citation-toggle {
   flex: none;
-  font-size: 12px;
+  /* 展开/收起：按钮小字 */
+  font-size: var(--ll-fs-tag);
   color: var(--ll-primary);
 }
 
@@ -132,14 +137,17 @@ function onKey(evt: KeyboardEvent): void {
 
 .citation-text {
   margin: 0;
-  font-size: 13px;
+  /* 法条正文 */
+  font-size: var(--ll-fs-body);
+  line-height: var(--ll-lh-body);
   color: var(--ll-text-statute);
 }
 
 .citation-link {
   display: inline-block;
   margin-top: 6px;
-  font-size: 12px;
+  /* 查看原文链接：说明文字 */
+  font-size: var(--ll-fs-meta);
   color: var(--ll-primary);
   text-decoration: none;
 }
