@@ -11,7 +11,7 @@
 //   2. 回答用 {{ }} 渲染，绝不 v-html：模型输出是不可信文本；
 //   3. 卸载时 abort()，否则离开页面后 SSE 连接还挂着。
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { ApiError } from '@/api/client'
@@ -30,8 +30,23 @@ import {
 } from '@/utils/inline-chat'
 import type { InlineState } from '@/utils/inline-chat'
 import { shouldSendOnKey } from '@/utils/send-key'
+import {
+  clampDrawerHeight,
+  defaultDrawerHeight,
+  KEY_STEP,
+  nextHeightByKey,
+  readSideWidth,
+  writeSideWidth,
+} from '@/utils/splitter'
 
-const props = defineProps<{ fileId: string; seed: string; seedSeq: number; section: string }>()
+/** resizable 由父级控制：右栏折叠成图标条时抽屉没有高度可言，拖拽条要一起消失。 */
+const props = defineProps<{
+  fileId: string
+  seed: string
+  seedSeq: number
+  section: string
+  resizable?: boolean
+}>()
 const emit = defineEmits<{ close: [] }>()
 
 const state = ref<InlineState>(initialInlineState())
@@ -44,6 +59,82 @@ const context = ref(props.seed)
 const sentContext = ref('')
 
 const inputEl = ref<HTMLTextAreaElement | null>(null)
+
+// ---- 抽屉高度 ------------------------------------------------------------
+// 抽屉贴底，拖动条在顶上：往上拖变高。高度存 localStorage。
+const HEIGHT_KEY = 'laborlaw.inlineChat.height'
+const chatRoot = ref<HTMLElement | null>(null)
+const chatHeight = ref(defaultDrawerHeight(typeof window === 'undefined' ? 900 : window.innerHeight))
+const resizing = ref(false)
+const narrow = ref(false)
+
+function measure() {
+  const panel = chatRoot.value?.parentElement?.clientHeight ?? 0
+  const viewport = typeof window === 'undefined' ? 0 : window.innerHeight
+  const upper = clampDrawerHeight(Number.MAX_SAFE_INTEGER, panel, viewport)
+  const lower = clampDrawerHeight(0, panel, viewport)
+  return { panel, viewport, upper, lower }
+}
+
+function applyHeight(next: number): void {
+  const { upper, lower } = measure()
+  chatHeight.value = Math.max(lower, Math.min(upper, Math.round(next)))
+}
+
+let stopDrag: (() => void) | null = null
+
+function onResizeDown(e: PointerEvent): void {
+  if (props.resizable === false) return
+  e.preventDefault()
+  const target = e.currentTarget as HTMLElement
+  target.setPointerCapture?.(e.pointerId)
+  const startY = e.clientY
+  const startHeight = chatHeight.value
+  const body = document.body
+  const prevSelect = body.style.userSelect
+  body.style.userSelect = 'none'
+  resizing.value = true
+
+  const onMove = (ev: PointerEvent): void => {
+    // 往上拖（clientY 变小）高度变大
+    applyHeight(startHeight + (startY - ev.clientY))
+  }
+  const onUp = (): void => {
+    resizing.value = false
+    body.style.userSelect = prevSelect
+    writeSideWidth(HEIGHT_KEY, chatHeight.value)
+    stopDrag?.()
+    stopDrag = null
+  }
+  target.addEventListener('pointermove', onMove)
+  target.addEventListener('pointerup', onUp)
+  target.addEventListener('pointercancel', onUp)
+  stopDrag = () => {
+    target.removeEventListener('pointermove', onMove)
+    target.removeEventListener('pointerup', onUp)
+    target.removeEventListener('pointercancel', onUp)
+  }
+}
+
+function onResizeKey(e: KeyboardEvent): void {
+  const { upper, lower } = measure()
+  const next = nextHeightByKey(chatHeight.value, e.key, { step: KEY_STEP, min: lower, max: upper })
+  if (next === null) return
+  applyHeight(next)
+  writeSideWidth(HEIGHT_KEY, chatHeight.value)
+  e.preventDefault()
+}
+
+function resetHeight(): void {
+  applyHeight(defaultDrawerHeight(typeof window === 'undefined' ? 900 : window.innerHeight))
+  writeSideWidth(HEIGHT_KEY, chatHeight.value)
+}
+
+/** 窄屏锁默认高度：手机上拖抽屉和滚页面会打架。 */
+const renderedHeight = computed(() =>
+  narrow.value ? defaultDrawerHeight(typeof window === 'undefined' ? 900 : window.innerHeight) : chatHeight.value,
+)
+const resizerVisible = computed(() => props.resizable !== false && !narrow.value)
 
 async function focusInput(): Promise<void> {
   await nextTick()
@@ -182,7 +273,24 @@ watch(busy, (sending) => {
   void send(next)
 })
 
+const media = typeof window !== 'undefined' ? window.matchMedia('(max-width: 900px)') : null
+function syncNarrow(): void {
+  narrow.value = media?.matches ?? false
+}
+
+onMounted(() => {
+  syncNarrow()
+  media?.addEventListener('change', syncNarrow)
+  // 读出来再夹一次：换分辨率或换机器时，旧值可能已经超出当前面板能给的区间。
+  const { viewport } = measure()
+  applyHeight(readSideWidth(HEIGHT_KEY, defaultDrawerHeight(viewport), 120, 560))
+})
+
 onBeforeUnmount(() => {
+  media?.removeEventListener('change', syncNarrow)
+  document.body.style.userSelect = ''
+  stopDrag?.()
+  stopDrag = null
   // 离开页面必须断开：SSE 挂着会一直占着连接与后端的一条 goroutine。
   controller?.abort()
   controller = null
@@ -197,7 +305,23 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 </script>
 
 <template>
-  <section class="inline-chat" aria-label="就这份合同提问">
+  <section ref="chatRoot" class="inline-chat" :class="{ 'is-resizing': resizing }" aria-label="就这份合同提问">
+    <div
+      v-if="resizerVisible"
+      class="ic-resizer"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="调整追问面板高度"
+      :aria-valuenow="Math.round(renderedHeight)"
+      :aria-valuemin="Math.round(measure().lower)"
+      :aria-valuemax="Math.round(measure().upper)"
+      title="拖动调高，双击复位"
+      tabindex="0"
+      @pointerdown="onResizeDown"
+      @keydown="onResizeKey"
+      @dblclick="resetHeight"
+    />
+
     <header class="ic-head">
       <span class="ic-title">就这份合同提问</span>
       <span v-if="sessionLabel !== ''" class="ic-session" :title="state.sessionId">
@@ -269,11 +393,35 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 .inline-chat {
   flex: none;
   width: 100%;
-  height: min(40vh, 360px);
-  border-top: 1px solid #e5e7eb;
+  height: v-bind('renderedHeight + "px"');
   display: flex;
   flex-direction: column;
   background: #fff;
+}
+
+/* 拖拽条 6px，border-top 挪到这里（留在 .inline-chat 上会叠成 2px）。 */
+.ic-resizer {
+  flex: none;
+  height: 6px;
+  cursor: ns-resize;
+  border-top: 1px solid #e5e7eb;
+}
+
+.ic-resizer:hover,
+.ic-resizer:focus-visible {
+  background: var(--ll-primary-weak, #dbeafe);
+  outline: none;
+}
+
+.inline-chat.is-resizing {
+  user-select: none;
+}
+
+@media (max-width: 900px) {
+  /* 窄屏由 JS 把高度锁成默认值，这里只保证手柄不出现（模板里也 v-if 掉了，双保险）。 */
+  .ic-resizer {
+    display: none;
+  }
 }
 
 .ic-head {

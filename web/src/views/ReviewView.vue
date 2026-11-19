@@ -30,13 +30,16 @@ import InlineChat from '@/components/InlineChat.vue'
 import { buildAskContext } from '@/utils/ask-this'
 import { reviewProgressLine } from '@/utils/review-progress'
 import { shouldAutostart, shouldOfferStart } from '@/utils/review-restore'
+import { breadcrumbFor } from '@/utils/breadcrumb'
 import {
   clampSideWidth,
   KEY_STEP,
   MAX_SIDE,
   MIN_SIDE,
   nextWidthByKey,
+  readFlag,
   readSideWidth,
+  writeFlag,
   writeSideWidth,
 } from '@/utils/splitter'
 import {
@@ -103,6 +106,20 @@ let reviewId: string | null = null
 const progressLine = computed(() => reviewProgressLine({ elapsedMs: elapsedMs.value, running: running.value }))
 
 const summary = computed(() => summarizeFindings(findings.value))
+
+const crumbs = breadcrumbFor('review')
+
+// ---- 右栏折叠 ------------------------------------------------------------
+// 投屏时想给合同原文更多横向空间，但完全藏掉清单会看不见"有几条高风险"，
+// 所以折叠成 40px 的图标条：数字还在，正文让开。折叠不改 panelWidth，
+// 展开后回到用户上次拖的宽度。
+const PANEL_COLLAPSED_KEY = 'laborlaw.review.panelCollapsed'
+const panelCollapsed = ref(readFlag(PANEL_COLLAPSED_KEY, false))
+
+function togglePanel(): void {
+  panelCollapsed.value = !panelCollapsed.value
+  writeFlag(PANEL_COLLAPSED_KEY, panelCollapsed.value)
+}
 
 // ---- 两栏分隔条 ----------------------------------------------------------
 // 面板宽度存 localStorage：答辩前会反复调这个宽度（投屏投影比例跟本地不一样），
@@ -615,9 +632,13 @@ void load()
         <span class="file-name">{{ file.filename }}</span>
         <span class="file-pages">{{ file.page_count }} 页</span>
       </div>
-      <nav class="links">
-        <router-link :to="{ name: 'chat' }">对话咨询</router-link>
-        <router-link :to="{ name: 'upload' }">合同审查</router-link>
+      <nav class="links" aria-label="面包屑">
+        <ol class="crumbs">
+          <li v-for="c in crumbs" :key="c.label" class="crumb">
+            <router-link v-if="c.to" :to="{ name: c.to }">{{ c.label }}</router-link>
+            <span v-else class="current" aria-current="page">{{ c.label }}</span>
+          </li>
+        </ol>
       </nav>
     </header>
 
@@ -665,6 +686,7 @@ void load()
       </section>
 
       <div
+        v-if="!panelCollapsed"
         class="splitter"
         role="separator"
         aria-orientation="vertical"
@@ -679,16 +701,48 @@ void load()
         @dblclick="resetPanelWidth"
       />
 
-      <aside class="panel">
-        <div class="panel-head">
+      <aside id="review-panel" class="panel" :class="{ 'panel--collapsed': panelCollapsed }">
+        <!-- 折叠态：只剩一列图标条，数字还在，点任意位置展开。 -->
+        <div v-if="panelCollapsed" class="panel-rail" @click="togglePanel">
+          <button
+            type="button"
+            class="rail-btn"
+            :aria-expanded="false"
+            aria-controls="review-panel"
+            title="展开风险清单"
+          >
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+              <path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="rail-count rail-count--high" :title="`高风险 ${summary.high} 条`">{{ summary.high }}</span>
+          <span class="rail-count rail-count--medium" :title="`中风险 ${summary.medium} 条`">{{ summary.medium }}</span>
+          <span class="rail-count rail-count--low" :title="`低风险 ${summary.low} 条`">{{ summary.low }}</span>
+        </div>
+
+        <div v-else class="panel-head">
           <div class="summary">
             <span class="sum sum--high">高风险 {{ summary.high }}</span>
             <span class="sum sum--medium">中风险 {{ summary.medium }}</span>
             <span class="sum sum--low">低风险 {{ summary.low }}</span>
           </div>
-          <el-button v-if="showStart" type="primary" :loading="running" @click="startReview">
-            开始审查
-          </el-button>
+          <div class="panel-head-actions">
+            <el-button v-if="showStart" type="primary" :loading="running" @click="startReview">
+              开始审查
+            </el-button>
+            <button
+              type="button"
+              class="panel-fold"
+              :aria-expanded="true"
+              aria-controls="review-panel"
+              title="收起风险清单"
+              @click="togglePanel"
+            >
+              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                <path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div v-if="running" class="running">
@@ -776,6 +830,7 @@ void load()
           :seed="chatSeed"
           :seed-seq="chatSeedSeq"
           :section="chatSection"
+          :resizable="!panelCollapsed"
           @close="closeChat"
         />
       </aside>
@@ -799,13 +854,18 @@ void load()
 }
 
 .topbar {
+  /* 吸顶：长合同往下滚时还能看见文件名与折叠按钮。
+     分隔线用 box-shadow 而不是 border-bottom：border 会在滚动时让高度跳 1px。 */
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 0 24px;
   height: 56px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--ll-surface);
+  box-shadow: 0 1px 0 var(--ll-border);
 }
 
 .brand {
@@ -836,14 +896,40 @@ void load()
 
 .links {
   margin-left: auto;
-  display: flex;
-  gap: 16px;
   font-size: 14px;
 }
 
-.links a {
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.crumb + .crumb::before {
+  content: '/';
+  color: var(--ll-border);
+}
+
+.crumbs a {
   color: #2563eb;
   text-decoration: none;
+}
+
+.crumbs a:hover {
+  text-decoration: underline;
+}
+
+.crumbs .current {
+  color: var(--ll-text-weak);
 }
 
 .loading,
@@ -1248,4 +1334,72 @@ void load()
   }
 }
 
+
+/* ---- 右栏折叠 ------------------------------------------------------------ */
+/* 收成图标条而不是 display:none：数字还在，用户知道有几条风险；也不改
+   panelWidth，展开就回到上次拖的宽度。 */
+.panel.panel--collapsed {
+  width: 40px;
+  padding: 0;
+}
+
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-fold,
+.rail-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--ll-text-weak);
+  background: none;
+  border: 1px solid var(--ll-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.panel-fold:hover,
+.rail-btn:hover {
+  color: var(--ll-primary);
+  border-color: var(--ll-primary);
+}
+
+.panel-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  cursor: pointer;
+}
+
+.rail-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  border-radius: 50%;
+}
+
+.rail-count--high {
+  background: #d93026;
+}
+
+.rail-count--medium {
+  background: #d97706;
+}
+
+.rail-count--low {
+  background: #ca8a04;
+}
 </style>

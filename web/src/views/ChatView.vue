@@ -35,6 +35,13 @@ import CitationCard from '@/components/CitationCard.vue'
 import { useAuthStore } from '@/stores/auth'
 import { createStreamSession, type StreamSession } from '@/utils/stream-session'
 import { shouldSendOnKey } from '@/utils/send-key'
+import {
+  clampSideWidth,
+  KEY_STEP,
+  nextWidthByKey,
+  readSideWidth,
+  writeSideWidth,
+} from '@/utils/splitter'
 import { dedupeTitles, parseAskTitle, sessionTitle } from '@/utils/session-title'
 
 /** 页面上的一条消息。历史消息与流式消息共用这个形状，差别只在有没有引用。 */
@@ -67,6 +74,74 @@ const messages = ref<UiMessage[]>([])
 const input = ref('')
 const sending = ref(false)
 const collapsed = ref(false)
+
+// ---- 侧栏宽度 ------------------------------------------------------------
+// 会话标题长短差很多（「第七条」vs 一句完整提问），280 宽经常要截断，
+// 但太宽会把回答挤窄，所以 220–420 之间交给用户拖。
+// 注意方向与审查页相反：侧栏在左，ArrowRight 是变宽。
+const SIDE_KEY = 'laborlaw.chat.sideWidth'
+const SIDE_DEFAULT = 280
+const SIDE_MIN = 220
+const SIDE_MAX = 420
+const chatPageEl = ref<HTMLElement | null>(null)
+const sideWidth = ref(readSideWidth(SIDE_KEY, SIDE_DEFAULT, SIDE_MIN, SIDE_MAX))
+const sideDragging = ref(false)
+
+/** 容器宽度要减去分隔条自己占的 6px，否则夹出来的宽度会把主区挤出横向滚动条。 */
+function availableWidth(): number {
+  const w = chatPageEl.value?.clientWidth ?? 0
+  return w > 0 ? w - 6 : 0
+}
+
+function applySideWidth(desired: number): void {
+  sideWidth.value = clampSideWidth(desired, availableWidth(), { min: SIDE_MIN, max: SIDE_MAX })
+}
+
+let stopSideDrag: (() => void) | null = null
+
+function onSideDown(e: PointerEvent): void {
+  e.preventDefault()
+  const target = e.currentTarget as HTMLElement
+  target.setPointerCapture?.(e.pointerId)
+  const rect = chatPageEl.value?.getBoundingClientRect()
+  if (!rect) return
+  const startWidth = sideWidth.value
+  const startX = e.clientX
+  document.body.style.userSelect = 'none'
+  sideDragging.value = true
+
+  const onMove = (ev: PointerEvent): void => {
+    applySideWidth(startWidth + (ev.clientX - startX))
+  }
+  const onUp = (): void => {
+    sideDragging.value = false
+    document.body.style.userSelect = ''
+    writeSideWidth(SIDE_KEY, sideWidth.value)
+    stopSideDrag?.()
+    stopSideDrag = null
+  }
+  target.addEventListener('pointermove', onMove)
+  target.addEventListener('pointerup', onUp)
+  target.addEventListener('pointercancel', onUp)
+  stopSideDrag = () => {
+    target.removeEventListener('pointermove', onMove)
+    target.removeEventListener('pointerup', onUp)
+    target.removeEventListener('pointercancel', onUp)
+  }
+}
+
+function onSideKey(e: KeyboardEvent): void {
+  const next = nextWidthByKey(sideWidth.value, e.key, { step: KEY_STEP, min: SIDE_MIN, max: SIDE_MAX })
+  if (next === null) return
+  applySideWidth(next)
+  writeSideWidth(SIDE_KEY, sideWidth.value)
+  e.preventDefault()
+}
+
+function resetSideWidth(): void {
+  applySideWidth(SIDE_DEFAULT)
+  writeSideWidth(SIDE_KEY, sideWidth.value)
+}
 // 初值 true：首屏本来就在"还没拉到列表"的状态，先显示「加载中…」再落空态，
 // 不要先闪一下「还没有会话」。后续 refreshSessions() 不清这个标记（列表已有内容时不显示提示）。
 const listLoading = ref(true)
@@ -646,11 +721,19 @@ onBeforeUnmount(() => {
   alive = false
   session?.close()
   session = null
+  document.body.style.userSelect = ''
+  stopSideDrag?.()
+  stopSideDrag = null
+})
+
+// 挂载后再夹一次：localStorage 里存的是上次那台机器的值，当前窗口可能更窄。
+onMounted(() => {
+  void nextTick(() => applySideWidth(sideWidth.value))
 })
 </script>
 
 <template>
-  <div class="chat-page">
+  <div ref="chatPageEl" class="chat-page" :class="{ 'is-resizing': sideDragging }">
     <aside class="sidebar" :class="{ collapsed }">
       <div class="sidebar-head">
         <el-button type="primary" class="new-btn" :disabled="sending" @click="startNewSession">
@@ -733,6 +816,22 @@ onBeforeUnmount(() => {
         <button type="button" class="logout" :disabled="sending" @click="signOut">退出</button>
       </div>
     </aside>
+
+    <div
+      v-if="!collapsed"
+      class="splitter"
+      role="separator"
+      aria-orientation="vertical"
+      :aria-valuenow="Math.round(sideWidth)"
+      :aria-valuemin="SIDE_MIN"
+      :aria-valuemax="SIDE_MAX"
+      aria-label="调整会话列表与对话区的宽度"
+      title="拖动调宽，双击复位"
+      tabindex="0"
+      @pointerdown="onSideDown"
+      @keydown="onSideKey"
+      @dblclick="resetSideWidth"
+    />
 
     <section class="main">
       <header class="main-head">
@@ -923,7 +1022,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   flex: none;
-  width: 280px;
+  width: v-bind('sideWidth + "px"');
   background: var(--ll-surface);
   border-right: 1px solid var(--ll-border);
   transition: width 0.2s ease;
@@ -1506,5 +1605,30 @@ onBeforeUnmount(() => {
 .bubble-plain {
   padding: 0;
   background: transparent;
+}
+
+.splitter {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.splitter:hover,
+.splitter:focus-visible {
+  background: var(--ll-primary-weak, #dbeafe);
+  outline: none;
+}
+
+.chat-page.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* 窄屏不做拖拽：两栏本来就快没地方了，锁回默认宽度。 */
+@media (max-width: 900px) {
+  .splitter {
+    display: none;
+  }
 }
 </style>

@@ -1,4 +1,4 @@
-// 两栏分隔条的纯函数。
+// 两栏分隔条 / 追问抽屉的纯函数。
 //
 // 为什么不把它写进组件里：拖拽、键盘、持久化这三件事各自都有边界条件（负宽度、
 // 对侧被压没、localStorage 里存了脏值），留在 SFC 里就只能靠浏览器实测，
@@ -66,6 +66,27 @@ export function writeSideWidth(key: string, width: number): void {
   }
 }
 
+/** 布尔型开关（例如"风险清单是否折叠"）的读写，脏值一律当默认值。 */
+export function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw === null) return fallback
+    if (raw === '1' || raw === 'true') return true
+    if (raw === '0' || raw === 'false') return false
+    return fallback
+  } catch {
+    return fallback
+  }
+}
+
+export function writeFlag(key: string, value: boolean): void {
+  try {
+    localStorage.setItem(key, value ? '1' : '0')
+  } catch {
+    // 同上：记不住不影响本次操作。
+  }
+}
+
 /**
  * 键盘调整：ArrowLeft/ArrowRight 平移一步，Home/End 到两端，其余键返回 null
  * （null 表示"这个键不归我管"，调用方据此决定要不要 preventDefault）。
@@ -91,4 +112,54 @@ export function nextWidthByKey(
     default:
       return null
   }
+}
+
+/**
+ * 上下方向（抽屉高度）的键盘调整。ArrowUp 变高——手柄在抽屉顶上，
+ * 往上推就是把抽屉拉高，方向跟鼠标拖动一致。
+ */
+export function nextHeightByKey(
+  current: number,
+  key: string,
+  opts: { step?: number; min?: number; max?: number } = {},
+): number | null {
+  const step = opts.step ?? KEY_STEP
+  const min = opts.min ?? 240
+  const max = opts.max ?? 560
+
+  switch (key) {
+    case 'ArrowUp':
+      return Math.min(max, Math.round(current + step))
+    case 'ArrowDown':
+      return Math.max(min, Math.round(current - step))
+    case 'Home':
+      return min
+    case 'End':
+      return max
+    default:
+      return null
+  }
+}
+
+/**
+ * 追问抽屉的高度夹取。
+ *
+ * 三个上限里取最紧的：视口 70%（否则高屏上抽屉能吃掉整页）、560（再高也不像抽屉了）、
+ * 面板高 - 160（卡片列表必须留着能看两行摘要在哪）。
+ * 下限跟着上限走：面板本身只有 300 高时，上限是 140，下限就不能还是 240——
+ * 否则 lower > upper，夹取函数会返回一个比上限还大的值，抽屉直接盖住卡片。
+ */
+export function clampDrawerHeight(desired: number, panelHeight: number, viewportHeight: number): number {
+  const panel = Number.isFinite(panelHeight) && panelHeight > 0 ? panelHeight : 0
+  const viewport = Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0
+  const upper = Math.max(0, Math.min(Math.round(viewport * 0.7), 560, Math.round(panel - 160)))
+  const lower = Math.min(240, upper)
+  const want = Number.isFinite(desired) ? desired : lower
+  return Math.round(Math.max(lower, Math.min(upper, want)))
+}
+
+/** 抽屉默认高度：只在第一次进页面时算一次（0.4 视口高，封顶 360）。 */
+export function defaultDrawerHeight(viewportHeight: number): number {
+  const viewport = Number.isFinite(viewportHeight) && viewportHeight > 0 ? viewportHeight : 0
+  return Math.min(360, Math.round(viewport * 0.4))
 }

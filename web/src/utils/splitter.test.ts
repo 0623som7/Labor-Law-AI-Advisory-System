@@ -2,11 +2,16 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  clampDrawerHeight,
   clampSideWidth,
+  defaultDrawerHeight,
   MAX_SIDE,
   MIN_SIDE,
+  nextHeightByKey,
   nextWidthByKey,
+  readFlag,
   readSideWidth,
+  writeFlag,
   writeSideWidth,
 } from './splitter.ts'
 
@@ -44,6 +49,12 @@ test('clampSideWidth：对侧至少留 minOpposite', () => {
   assert.equal(clampSideWidth(720, 900, { minOpposite: 400 }), 500)
 })
 
+test('clampSideWidth：自定义上下限（对话页侧栏 220/420）', () => {
+  assert.equal(clampSideWidth(120, 1440, { min: 220, max: 420 }), 220)
+  assert.equal(clampSideWidth(999, 1440, { min: 220, max: 420 }), 420)
+  assert.equal(clampSideWidth(300, 1440, { min: 220, max: 420 }), 300)
+})
+
 test('clampSideWidth：容器尺寸不可用时退回下限，不产生 NaN', () => {
   assert.equal(clampSideWidth(500, 0), MIN_SIDE)
   assert.equal(clampSideWidth(Number.NaN, 1440), MIN_SIDE)
@@ -77,4 +88,56 @@ test('nextWidthByKey：左右平移、Home/End 到两端、其余返回 null', (
   assert.equal(nextWidthByKey(420, 'End', { max: 500 }), 500)
   assert.equal(nextWidthByKey(420, 'Enter'), null)
   assert.equal(nextWidthByKey(420, 'a'), null)
+})
+
+test('nextHeightByKey：向上变高、向下变矮，Home/End 到两端', () => {
+  assert.equal(nextHeightByKey(360, 'ArrowUp'), 384)
+  assert.equal(nextHeightByKey(384, 'ArrowDown'), 360)
+  assert.equal(nextHeightByKey(240, 'ArrowDown'), 240) // 不越过下限
+  assert.equal(nextHeightByKey(540, 'ArrowUp'), 560) // 不越过上限
+  assert.equal(nextHeightByKey(360, 'Home'), 240)
+  assert.equal(nextHeightByKey(360, 'End', { max: 520 }), 520)
+  assert.equal(nextHeightByKey(360, 'ArrowLeft'), null) // 横向键不归它管
+})
+
+test('clampDrawerHeight：正常区间原样返回', () => {
+  // 视口 900 → 0.7*900=630；面板 780 → 780-160=620；上限 560 最紧
+  assert.equal(clampDrawerHeight(400, 780, 900), 400)
+  assert.equal(clampDrawerHeight(600, 780, 900), 560)
+})
+
+test('clampDrawerHeight：面板过矮时下限跟着压，绝不返回颠倒区间', () => {
+  // 面板 300 → upper = 140；lower 必须 ≤ upper
+  const h = clampDrawerHeight(400, 300, 900)
+  assert.equal(h, 140)
+  assert.ok(h <= 140)
+  assert.equal(clampDrawerHeight(10, 300, 900), 140) // 低于下限也抬到 lower=upper=140
+})
+
+test('clampDrawerHeight：视口过矮时上限被 0.7 * 视口 压住', () => {
+  // 视口 500 → 350；面板 780 → 620；560 → 上限 350
+  assert.equal(clampDrawerHeight(500, 780, 500), 350)
+})
+
+test('clampDrawerHeight：脏输入不产生 NaN', () => {
+  assert.equal(clampDrawerHeight(Number.NaN, 780, 900), 240)
+  assert.equal(clampDrawerHeight(300, Number.NaN, 900), 0) // 面板高未知 → 上下限都为 0
+})
+
+test('defaultDrawerHeight：0.4 视口高，封顶 360', () => {
+  assert.equal(defaultDrawerHeight(900), 360)
+  assert.equal(defaultDrawerHeight(700), 280)
+  assert.equal(defaultDrawerHeight(Number.NaN), 0)
+})
+
+test('readFlag / writeFlag：只有 1/0/true/false 认，其余回 fallback', () => {
+  const key = 'laborlaw.test.flag'
+  writeFlag(key, true)
+  assert.equal(readFlag(key, false), true)
+  writeFlag(key, false)
+  assert.equal(readFlag(key, true), false)
+  localStorage.setItem(key, '随便什么')
+  assert.equal(readFlag(key, true), true)
+  localStorage.removeItem(key)
+  assert.equal(readFlag(key, true), true)
 })

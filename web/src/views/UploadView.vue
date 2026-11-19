@@ -12,6 +12,7 @@ import { ElMessage } from 'element-plus'
 import { ApiError } from '@/api/client'
 import { uploadFile } from '@/api/files'
 import { MAX_UPLOAD_LABEL, validateUpload } from '@/utils/upload-validate'
+import { breadcrumbFor } from '@/utils/breadcrumb'
 import {
   clampSideWidth,
   KEY_STEP,
@@ -24,6 +25,8 @@ import {
 import ReviewHistoryList from '@/components/ReviewHistoryList.vue'
 
 const router = useRouter()
+
+const crumbs = breadcrumbFor('upload')
 
 // 左栏（审查历史）宽度：默认 340 与改动前 grid 的第一列一致。
 // 历史条目标题长短差别很大，窄了要截断、宽了压上传区，所以给人一条拖拽线。
@@ -174,9 +177,13 @@ async function start(): Promise<void> {
   <div class="upload-page">
     <header class="topbar">
       <div class="brand">劳动法 AI 顾问</div>
-      <nav class="links">
-        <router-link :to="{ name: 'chat' }">对话咨询</router-link>
-        <span class="current">合同审查</span>
+      <nav class="links" aria-label="面包屑">
+        <ol class="crumbs">
+          <li v-for="c in crumbs" :key="c.label" class="crumb">
+            <router-link v-if="c.to" :to="{ name: c.to }">{{ c.label }}</router-link>
+            <span v-else class="current" aria-current="page">{{ c.label }}</span>
+          </li>
+        </ol>
       </nav>
     </header>
 
@@ -261,14 +268,18 @@ async function start(): Promise<void> {
 }
 
 .topbar {
+  /* 吸顶同审查页；分隔线用 box-shadow，避免滚动时 1px 抖动。 */
+  position: sticky;
+  top: 0;
+  z-index: 10;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
   height: 56px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--ll-surface);
+  box-shadow: 0 1px 0 var(--ll-border);
 }
 
 .brand {
@@ -277,18 +288,40 @@ async function start(): Promise<void> {
 }
 
 .links {
-  display: flex;
-  gap: 16px;
   font-size: 14px;
 }
 
-.links a {
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.crumb + .crumb::before {
+  content: '/';
+  color: var(--ll-border);
+}
+
+.crumbs a {
   color: #2563eb;
   text-decoration: none;
 }
 
+.crumbs a:hover {
+  text-decoration: underline;
+}
+
 .current {
-  color: #6b7280;
+  color: var(--ll-text-weak);
 }
 
 .workspace {
