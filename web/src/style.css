@@ -36,6 +36,8 @@
   /* 纸面与反白：这两个不随主题变 */
   --ll-paper: #ffffff;
   --ll-on-primary: #ffffff;
+  /* 登录页品牌栏：深浅两套都保持深藏青，白字 11.48:1（深色下 --ll-primary 会变亮蓝） */
+  --ll-brand-bg: #1f3a5f;
   /* 中性细分 */
   --ll-hairline-1: #F1EEE7;
   --ll-hairline-2: #F2EFE9;
@@ -213,6 +215,7 @@ button {
   --ll-text-statute: #3b4048;
   --ll-mark-medium: #d97706;
   --ll-mark-low: #ca8a04;
+  --ll-brand-bg: #1b2b45;
   --ll-paper-shadow: 0 8px 24px rgb(0 0 0 / 45%);
 }
 

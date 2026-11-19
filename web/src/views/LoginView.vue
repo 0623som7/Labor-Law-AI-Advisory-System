@@ -89,6 +89,27 @@ function switchMode(next: 'login' | 'register'): void {
 
 <template>
   <div class="login-page">
+    <!-- 左栏品牌：只放静态文案，不参与登录逻辑 -->
+    <section class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 4v16" />
+          <path d="M5 8h14" />
+          <path d="M5 8 2 15h6L5 8Z" />
+          <path d="M19 8l-3 7h6l-3-7Z" />
+          <path d="M8 20h8" />
+        </svg>
+      </span>
+      <h1>劳动法 AI 顾问</h1>
+      <p class="brand-tagline">条文可溯源 · 风险定位到原文 · 修改建议可直接复制</p>
+      <ul class="brand-points">
+        <li class="brand-point"><span class="brand-dot" aria-hidden="true"></span>回答逐条标注法条出处，不凭空生成</li>
+        <li class="brand-point"><span class="brand-dot" aria-hidden="true"></span>上传合同自动比对 20 条规则，风险框标到条款上</li>
+        <li class="brand-point"><span class="brand-dot" aria-hidden="true"></span>不确定的地方直接给出边界条件，不含糊其辞</li>
+      </ul>
+    </section>
+
+    <div class="login-shell">
     <section class="login-card">
       <header class="login-head">
         <h1>劳动法 AI 顾问</h1>
@@ -165,18 +186,113 @@ function switchMode(next: 'login' | 'register'): void {
         <span v-else>已有账号？<a href="#" @click.prevent="switchMode('login')">去登录</a></span>
       </footer>
     </section>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .login-page {
   flex: 1;
+  display: grid;
+  /* 左品牌栏固定占比，右栏吃掉剩余；420px 下限保证品牌语不断成单字 */
+  grid-template-columns: minmax(420px, 44%) 1fr;
+  padding: 0;
+  overflow: auto;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  padding: 0 56px;
+  color: var(--ll-on-primary);
+  /* 品牌栏底色单独一个令牌：深色主题下 --ll-primary 是亮蓝，白字只有 2.6:1 */
+  background: var(--ll-brand-bg);
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid color-mix(in srgb, var(--ll-on-primary) 45%, transparent);
+  border-radius: var(--ll-radius-sm);
+}
+
+.brand h1 {
+  margin: 0;
+  /* 品牌栏主标题 */
+  font-size: var(--ll-fs-display);
+  font-weight: 600;
+}
+
+.brand-tagline {
+  margin: 0;
+  /* 品牌定位语 */
+  font-size: var(--ll-fs-body);
+  opacity: 0.82;
+}
+
+.brand-points {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.brand-point {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  /* 品牌三点：说明文字 */
+  font-size: var(--ll-fs-meta);
+  line-height: var(--ll-lh-body);
+  opacity: 0.85;
+}
+
+.brand-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 7px;
+  background: var(--ll-on-primary);
+  border-radius: 999px;
+  opacity: 0.7;
+}
+
+.login-shell {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 页面级左右内边距统一 32px */
-  padding: 32px;
-  overflow: auto;
+  padding: 48px 32px;
+  background: var(--ll-bg);
+}
+
+/* 窄屏：品牌栏改顶部横条，不许藏起来 */
+@media (max-width: 960px) {
+  .login-page {
+    grid-template-columns: 1fr;
+  }
+
+  .brand {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 20px 24px;
+  }
+
+  .brand-points {
+    display: none;
+  }
+
+  .login-shell {
+    padding: 24px 16px 40px;
+  }
 }
 
 .login-card {
