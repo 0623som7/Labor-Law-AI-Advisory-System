@@ -31,6 +31,15 @@ import { buildAskContext } from '@/utils/ask-this'
 import { reviewProgressLine } from '@/utils/review-progress'
 import { shouldAutostart, shouldOfferStart } from '@/utils/review-restore'
 import {
+  clampSideWidth,
+  KEY_STEP,
+  MAX_SIDE,
+  MIN_SIDE,
+  nextWidthByKey,
+  readSideWidth,
+  writeSideWidth,
+} from '@/utils/splitter'
+import {
   findingPage,
   inflateRect,
   pdfBBoxToViewport,
@@ -94,6 +103,70 @@ let reviewId: string | null = null
 const progressLine = computed(() => reviewProgressLine({ elapsedMs: elapsedMs.value, running: running.value }))
 
 const summary = computed(() => summarizeFindings(findings.value))
+
+// ---- 两栏分隔条 ----------------------------------------------------------
+// 面板宽度存 localStorage：答辩前会反复调这个宽度（投屏投影比例跟本地不一样），
+// 每次刷新都回到 420 很烦。默认值 420 是改动前的硬编码宽度，必须保持一致。
+const PANEL_KEY = 'laborlaw.review.panelWidth'
+const PANEL_DEFAULT = 420
+const panelWidth = ref(readSideWidth(PANEL_KEY, PANEL_DEFAULT, MIN_SIDE, MAX_SIDE))
+const bodyEl = ref<HTMLElement | null>(null)
+const maxPanelWidth = computed(() =>
+  bodyEl.value ? Math.min(MAX_SIDE, Math.round(bodyEl.value.clientWidth * 0.6)) : MAX_SIDE,
+)
+
+const dragging = ref(false)
+let stopDrag: (() => void) | null = null
+
+function onSplitterDown(e: PointerEvent): void {
+  if (!bodyEl.value) return
+  e.preventDefault()
+  const target = e.currentTarget as HTMLElement
+  target.setPointerCapture?.(e.pointerId)
+  const rect = bodyEl.value.getBoundingClientRect()
+  // 拖拽期间禁掉选中：否则鼠标划过条文会选中文字，看起来像页面卡住了。
+  // 类挂在根节点而不是 document.body：样式是 scoped 的，挂 body 上没人给它写规则。
+  dragging.value = true
+
+  const onMove = (ev: PointerEvent): void => {
+    panelWidth.value = clampSideWidth(rect.right - ev.clientX, rect.width, {
+      min: MIN_SIDE,
+      max: MAX_SIDE,
+      minOpposite: 320,
+    })
+  }
+  const onUp = (): void => {
+    dragging.value = false
+    writeSideWidth(PANEL_KEY, panelWidth.value)
+    stopDrag?.()
+    stopDrag = null
+  }
+  target.addEventListener('pointermove', onMove)
+  target.addEventListener('pointerup', onUp)
+  target.addEventListener('pointercancel', onUp)
+  stopDrag = () => {
+    target.removeEventListener('pointermove', onMove)
+    target.removeEventListener('pointerup', onUp)
+    target.removeEventListener('pointercancel', onUp)
+  }
+}
+
+function onSplitterKey(e: KeyboardEvent): void {
+  const next = nextWidthByKey(panelWidth.value, e.key, {
+    step: KEY_STEP,
+    min: MIN_SIDE,
+    max: maxPanelWidth.value,
+  })
+  if (next === null) return
+  panelWidth.value = next
+  writeSideWidth(PANEL_KEY, next)
+  e.preventDefault()
+}
+
+function resetPanelWidth(): void {
+  panelWidth.value = PANEL_DEFAULT
+  writeSideWidth(PANEL_KEY, PANEL_DEFAULT)
+}
 const sorted = computed(() => sortBySeverity(findings.value))
 // 有结果就不再给「开始审查」：后端会复用旧结果，用户点了只是白等两秒。
 const showStart = computed(() =>
@@ -526,13 +599,16 @@ onBeforeUnmount(() => {
   disposed = true
   if (pollTimer !== null) window.clearTimeout(pollTimer)
   stopTicking()
+  dragging.value = false
+  stopDrag?.()
+  stopDrag = null
 })
 
 void load()
 </script>
 
 <template>
-  <div class="review-page">
+  <div class="review-page" :class="{ 'is-resizing': dragging }">
     <header class="topbar">
       <div class="brand">劳动法 AI 顾问</div>
       <div class="file-meta" v-if="file">
@@ -558,7 +634,7 @@ void load()
       <el-button type="primary" @click="router.push({ name: 'upload' })">重新上传</el-button>
     </div>
 
-    <main v-else class="body">
+    <main v-else ref="bodyEl" class="body">
       <section class="viewer">
         <div class="viewer-head">
           <span class="viewer-title">合同原文</span>
@@ -587,6 +663,21 @@ void load()
           <p v-if="pdfError" class="pdf-error">{{ pdfError }}</p>
         </div>
       </section>
+
+      <div
+        class="splitter"
+        role="separator"
+        aria-orientation="vertical"
+        :aria-valuenow="panelWidth"
+        :aria-valuemin="MIN_SIDE"
+        :aria-valuemax="maxPanelWidth"
+        aria-label="调整合同原文与风险面板的宽度"
+        title="拖动调宽，双击复位"
+        tabindex="0"
+        @pointerdown="onSplitterDown"
+        @keydown="onSplitterKey"
+        @dblclick="resetPanelWidth"
+      />
 
       <aside class="panel">
         <div class="panel-head">
@@ -693,6 +784,11 @@ void load()
 </template>
 
 <style scoped>
+.review-page.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .review-page {
   /* 页面在 height:100vh 的 .app-shell 里，上方还有一条 24px 的提示条：
      min-height:100vh 会让它比容器高 24px，永远多出一条不该有的纵向滚动条。 */
@@ -777,6 +873,23 @@ void load()
   flex: 1;
   display: flex;
   min-height: 0;
+  position: relative;
+}
+
+/* 分隔条是 body 的普通 flex 子项（6px），不叠在画布上：
+   叠上去会挡住 PDF 右边缘，而 40 页合同正好在那一侧有条文。 */
+.splitter {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid #e5e7eb;
+}
+
+.splitter:hover,
+.splitter:focus-visible {
+  background: #dbeafe;
+  outline: none;
 }
 
 .viewer {
@@ -880,7 +993,9 @@ void load()
 }
 
 .panel {
-  width: 420px;
+  /* 宽度由分隔条控制（默认 420，与改动前一致）；flex: none 不能省，
+     否则它会变成可伸缩项，拖拽立刻失效。 */
+  width: v-bind('panelWidth + "px"');
   flex: none;
   display: flex;
   flex-direction: column;
@@ -1122,4 +1237,15 @@ void load()
   color: #6b7280;
   line-height: 1.7;
 }
+/* 窄屏：分隔条消失、面板回到改动前的 420，等于退回原来的固定两栏。 */
+@media (max-width: 1100px) {
+  .splitter {
+    display: none;
+  }
+
+  .panel {
+    width: 420px;
+  }
+}
+
 </style>

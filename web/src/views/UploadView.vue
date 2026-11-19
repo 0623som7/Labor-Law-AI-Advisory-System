@@ -5,16 +5,92 @@
 // 校验放在上传前不是为了性能，是为了 5MB 的包在慢网上飞完几十秒才被后端拒。
 // file.type 在部分系统上是空串（尤其是从网盘拖下来的 pdf），所以后缀再判一次。
 
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { ApiError } from '@/api/client'
 import { uploadFile } from '@/api/files'
 import { MAX_UPLOAD_LABEL, validateUpload } from '@/utils/upload-validate'
+import {
+  clampSideWidth,
+  KEY_STEP,
+  MAX_SIDE,
+  MIN_SIDE,
+  nextWidthByKey,
+  readSideWidth,
+  writeSideWidth,
+} from '@/utils/splitter'
 import ReviewHistoryList from '@/components/ReviewHistoryList.vue'
 
 const router = useRouter()
+
+// 左栏（审查历史）宽度：默认 340 与改动前 grid 的第一列一致。
+// 历史条目标题长短差别很大，窄了要截断、宽了压上传区，所以给人一条拖拽线。
+const SIDE_KEY = 'laborlaw.upload.sideWidth'
+const SIDE_DEFAULT = 340
+const sideWidth = ref(readSideWidth(SIDE_KEY, SIDE_DEFAULT, MIN_SIDE, MAX_SIDE))
+const workEl = ref<HTMLElement | null>(null)
+const dragging = ref(false)
+const maxSideWidth = computed(() =>
+  workEl.value ? Math.min(MAX_SIDE, Math.round(workEl.value.clientWidth * 0.6)) : MAX_SIDE,
+)
+
+let stopDrag: (() => void) | null = null
+
+function onSplitterDown(e: PointerEvent): void {
+  if (!workEl.value) return
+  e.preventDefault()
+  const target = e.currentTarget as HTMLElement
+  target.setPointerCapture?.(e.pointerId)
+  const rect = workEl.value.getBoundingClientRect()
+  dragging.value = true
+
+  const onMove = (ev: PointerEvent): void => {
+    sideWidth.value = clampSideWidth(ev.clientX - rect.left, rect.width, {
+      min: MIN_SIDE,
+      max: MAX_SIDE,
+      minOpposite: 320,
+    })
+  }
+  const onUp = (): void => {
+    dragging.value = false
+    writeSideWidth(SIDE_KEY, sideWidth.value)
+    stopDrag?.()
+    stopDrag = null
+  }
+  target.addEventListener('pointermove', onMove)
+  target.addEventListener('pointerup', onUp)
+  target.addEventListener('pointercancel', onUp)
+  stopDrag = () => {
+    target.removeEventListener('pointermove', onMove)
+    target.removeEventListener('pointerup', onUp)
+    target.removeEventListener('pointercancel', onUp)
+  }
+}
+
+function onSplitterKey(e: KeyboardEvent): void {
+  const next = nextWidthByKey(sideWidth.value, e.key, {
+    step: KEY_STEP,
+    min: MIN_SIDE,
+    max: maxSideWidth.value,
+  })
+  if (next === null) return
+  sideWidth.value = next
+  writeSideWidth(SIDE_KEY, next)
+  e.preventDefault()
+}
+
+function resetSideWidth(): void {
+  sideWidth.value = SIDE_DEFAULT
+  writeSideWidth(SIDE_KEY, SIDE_DEFAULT)
+}
+
+onBeforeUnmount(() => {
+  dragging.value = false
+  stopDrag?.()
+  stopDrag = null
+})
 
 const picked = ref<File | null>(null)
 const uploading = ref(false)
@@ -104,10 +180,25 @@ async function start(): Promise<void> {
       </nav>
     </header>
 
-    <div class="workspace">
+    <div ref="workEl" class="workspace" :class="{ 'is-resizing': dragging }">
       <aside class="pane-history">
         <ReviewHistoryList @open="openReview" />
       </aside>
+
+      <div
+        class="splitter"
+        role="separator"
+        aria-orientation="vertical"
+        :aria-valuenow="sideWidth"
+        :aria-valuemin="MIN_SIDE"
+        :aria-valuemax="maxSideWidth"
+        aria-label="调整审查历史与上传区的宽度"
+        title="拖动调宽，双击复位"
+        tabindex="0"
+        @pointerdown="onSplitterDown"
+        @keydown="onSplitterKey"
+        @dblclick="resetSideWidth"
+      />
 
       <main class="pane-work">
         <h1 class="title">上传劳动合同</h1>
@@ -204,7 +295,25 @@ async function start(): Promise<void> {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 340px 1fr;
+  /* 中间 6px 是分隔条（第三列 1fr 是上传区）；默认第一列 340 与改动前一致。 */
+  grid-template-columns: v-bind('sideWidth + "px"') 6px 1fr;
+}
+
+.workspace.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.splitter {
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid #e5e7eb;
+}
+
+.splitter:hover,
+.splitter:focus-visible {
+  background: #dbeafe;
+  outline: none;
 }
 
 .pane-history {
@@ -232,6 +341,11 @@ async function start(): Promise<void> {
   .workspace {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(180px, 34vh) 1fr;
+  }
+
+  /* 单栏时没有第二条栏，分隔条留着会多一条 6px 的空白列。 */
+  .splitter {
+    display: none;
   }
 
   .pane-history {
@@ -343,5 +457,13 @@ async function start(): Promise<void> {
   margin-top: 16px;
   font-size: 13px;
   color: #d93026;
+}
+
+/* 900 以下再钉一次单栏：三段式 grid 若被任何后续规则改回，这里兜住，
+   不会出现「1fr 6px 1fr」在窄屏里挤出横向滚动条。 */
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
