@@ -111,11 +111,6 @@ function switchMode(next: 'login' | 'register'): void {
 
     <div class="login-shell">
     <section class="login-card">
-      <header class="login-head">
-        <h1>劳动法 AI 顾问</h1>
-        <p class="login-sub">基于法条原文的劳动法咨询，回答逐条标注出处。</p>
-      </header>
-
       <div class="login-tabs">
         <button
           type="button"
@@ -303,20 +298,6 @@ function switchMode(next: 'login' | 'register'): void {
   border: 1px solid var(--ll-border);
   border-radius: var(--ll-radius);
   box-shadow: var(--ll-shadow-float);
-}
-
-.login-head h1 {
-  margin: 0 0 6px;
-  /* 登录页主标题 */
-  font-size: var(--ll-fs-display);
-  font-weight: 600;
-}
-
-.login-sub {
-  margin: 0;
-  /* 登录页副标题：说明文字 */
-  font-size: var(--ll-fs-meta);
-  color: var(--ll-text-weak);
 }
 
 .login-tabs {

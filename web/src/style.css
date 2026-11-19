@@ -3,7 +3,7 @@
 :root {
   --ll-bg: #F7F5F0;
   --ll-surface: #FFFFFF;
-  --ll-border: #E4DED2;
+  --ll-border: #D8D0C0;
   --ll-text: #1A1A18;
   --ll-text-weak: #57544B;
   --ll-primary: #1F3A5F;
@@ -14,8 +14,8 @@
   --ll-surface-muted: #FBFAF7;
   --ll-surface-sunken: #F1EEE7;
   /* 边框 */
-  --ll-border-muted: #E7E2D8;
-  --ll-border-strong: #CFC8B9;
+  --ll-border-muted: #DFD8C9;
+  --ll-border-strong: #C7BEAB;
   /* 文字 */
   --ll-text-strong: #12120F;
   --ll-text-body: #23231F;
@@ -44,7 +44,7 @@
   --ll-hairline-3: #F3F0EA;
   --ll-page-alt: #F2EFE8;
   --ll-row-hover: #FAF8F4;
-  --ll-text-hint: #A8A399;
+  --ll-text-hint: #8F8A7E;
   --ll-disabled-text: #C6C1B6;
   --ll-disabled-bg: #EDEAE3;
   --ll-btn-text: #45443D;
