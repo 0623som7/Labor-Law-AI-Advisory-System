@@ -34,8 +34,8 @@ func mustHit(t *testing.T, r Rule, c Contract, n int) []Fragment {
 
 func TestRuleRegistry(t *testing.T) {
 	all := All()
-	if len(all) != 20 {
-		t.Fatalf("规则数 %d，期望 20", len(all))
+	if len(all) != 21 {
+		t.Fatalf("规则数 %d，期望 21", len(all))
 	}
 	seen := make(map[string]bool, len(all))
 	for _, r := range all {
@@ -54,8 +54,8 @@ func TestRuleRegistry(t *testing.T) {
 		}
 	}
 	ids := RuleIDs()
-	if len(ids) != 20 {
-		t.Fatalf("RuleIDs 返回 %d 个，期望 20", len(ids))
+	if len(ids) != 21 {
+		t.Fatalf("RuleIDs 返回 %d 个，期望 21", len(ids))
 	}
 }
 
@@ -315,11 +315,17 @@ func TestNoSocialInsuranceEvidenceMatchesBoxedClause(t *testing.T) {
 		},
 	}
 	fa := mustHit(t, r, selfPaid, 1)
-	if !strings.Contains(fa[0].Evidence, "自行缴纳") {
-		t.Fatalf("A 的说明应包含「自行缴纳」，实际 %q", fa[0].Evidence)
+	// evidence 与竞业限制、离职违约金两条同格式：「合同约定：」+ 框住的原文。
+	wantEvidence := "合同约定：乙方自行办理社会保险参保手续并缴纳社会保险费，甲方不再另行承担。"
+	if fa[0].Evidence != wantEvidence {
+		t.Fatalf("A 的说明应逐字等于框住的原文，实际 %q，期望 %q", fa[0].Evidence, wantEvidence)
 	}
 	if strings.Contains(fa[0].Evidence, "未见") {
 		t.Fatalf("A 的说明不应包含「未见」，实际 %q", fa[0].Evidence)
+	}
+	// 法律结论挪进 Reason，不再混在 evidence 里。
+	if !strings.Contains(fa[0].Suggestion.Reason, "强制参保义务") {
+		t.Fatalf("A 的 Reason 应含法律结论，实际 %q", fa[0].Suggestion.Reason)
 	}
 	if fa[0].Section != "第六条" || fa[0].BBox != [4]float64{57, 520, 520, 545} {
 		t.Fatalf("A 的框应落在第六条，实际 %s %v", fa[0].Section, fa[0].BBox)
@@ -633,7 +639,7 @@ func TestCheckOrderAndFilter(t *testing.T) {
 	if len(only) != 1 || only[0].ID != "R-DEPOSIT" {
 		t.Fatalf("Filter 结果错误：%+v", only)
 	}
-	if got := Filter(nil); len(got) != 20 {
+	if got := Filter(nil); len(got) != 21 {
 		t.Fatalf("空过滤器应返回全部规则，实际 %d", len(got))
 	}
 	if got := Filter([]string{"R-NOT-EXIST"}); len(got) != 0 {

@@ -23,9 +23,13 @@ const (
 //
 // 文本规则天然有边界，宁可少报也不把“依法办理”“不得安排”这类保护性表述误判成风险。
 var (
-	penaltyRe         = regexp.MustCompile(`违约金`)
-	servicePeriodRe   = regexp.MustCompile(`服务期|竞业限制|保密`)
-	employeePenaltyRe = regexp.MustCompile(`(?:乙方|劳动者)[^。；]{0,6}(?:应当?|须|有义务)?(?:向甲方)?(?:支付|承担|赔偿)违约金`)
+	penaltyRe       = regexp.MustCompile(`违约金`)
+	servicePeriodRe = regexp.MustCompile(`服务期|竞业限制|保密`)
+	// 窗口取 30 而不是 6：合同里常见「乙方在合同期内未经甲方同意擅自离职的，应当……」
+	// 这种「主体 + 一长串情形 + 后果」的写法，主体到「应当」之间隔十几个字，
+	// 窗口太小会整条漏报（演示合同第十二条就是 19 个字）。
+	// 放宽只影响「乙方」到「应当」的跨度，句读仍然被 [^。；] 挡住，不会跨句误伤。
+	employeePenaltyRe = regexp.MustCompile(`(?:乙方|劳动者)[^。；]{0,30}(?:应当?|须|有义务)?(?:向甲方)?(?:支付|承担|赔偿)违约金`)
 
 	invalidExemptionRes = []*regexp.Regexp{
 		regexp.MustCompile(`工伤[^。；]{0,12}概不负责`),
@@ -34,6 +38,11 @@ var (
 		regexp.MustCompile(`人身[^。；]{0,8}(?:后果|损失)[^。；]{0,12}(?:自负|自行承担|乙方承担)`),
 		regexp.MustCompile(`(?:放弃|不得行使)[^。；]{0,10}(?:仲裁|诉讼)[^。；]{0,6}权利`),
 	}
+
+	// 竞业限制：只认「约定了竞业 + 写了违约金 + 没提补偿」这一种组合。
+	// 单独出现「竞业限制」不报——合法条款也会提这四个字。
+	competeRe    = regexp.MustCompile(`竞业限制|竞业禁止|不得在与甲方有竞争|自营与甲方同类`)
+	competePayRe = regexp.MustCompile(`经济补偿|补偿金|按月支付[^。；]{0,8}补偿|竞业限制补偿|给予补偿`)
 
 	overtimeLowRateRes = []*regexp.Regexp{
 		regexp.MustCompile(`(?:加班|延长工作时间)[^。；]{0,24}(?:^|[^0-9])(?:0\.5倍|50%|一倍|百分之五十|百分之百|100%)`),
@@ -72,7 +81,7 @@ var (
 	}
 )
 
-// AllExtended 返回新增的 12 条扩展规则。
+// AllExtended 返回新增的 13 条扩展规则。
 //
 // 单独导出是为了让测试逐条定位；All() 仍保持固定顺序，数据库里的 finding
 // 顺序也因此可复现。
@@ -90,6 +99,7 @@ func AllExtended() []Rule {
 		ruleFemaleHazardWork(),
 		ruleDismissalCompensationWaiver(),
 		ruleCertificateRefusal(),
+		ruleCompeteNoPay(),
 	}
 }
 
@@ -103,7 +113,12 @@ func rulePenaltyUnlawful() Rule {
 		Check: func(c Contract) []Fragment {
 			var frags []Fragment
 			for _, cl := range c.Clauses {
+				// competeRe 也在此放行：竞业条款常常不写「竞业限制」四个字，而是写
+				// 「不得在与甲方有竞争性的单位任职」——这种写法 servicePeriodRe 挡不住，
+				// 窗口放宽到 30 之后就会被当成本条命中，与 R-COMPETE-NO-PAY 重复报同一个框。
+				// 竞业违约金本身是第二十五条允许的，缺补偿的问题归 R-COMPETE-NO-PAY 管。
 				if !penaltyRe.MatchString(cl.Text) || servicePeriodRe.MatchString(cl.Text) ||
+					competeRe.MatchString(cl.Text) ||
 					isEmployerPenaltyClause(cl.Text) || !employeePenaltyRe.MatchString(cl.Text) {
 					continue
 				}
@@ -127,6 +142,45 @@ func isEmployerPenaltyClause(text string) bool {
 	return strings.Contains(text, "甲方违约") ||
 		strings.Contains(text, "向乙方支付违约金") ||
 		strings.Contains(text, "向劳动者支付违约金")
+}
+
+// ruleCompeteNoPay 检查「约定了竞业限制违约金却没约定经济补偿」。
+//
+// 劳动合同法第二十三条：对负有保密义务的劳动者约定竞业限制的，应在竞业限制期限内
+// 按月给予经济补偿。没约定补偿的竞业限制条款对劳动者不具约束力——这是劳动者一侧
+// 最容易忽略的坑，合同里往往只写「违约金 5 万」，一个字不提单位该付的补偿。
+//
+// 判据是三个条件的与：提到竞业 + 写了违约金 + 没提补偿。
+// 少了「写了违约金」这一条，会把「双方约定竞业限制，期限两年」这种合规表述也挂红灯。
+func ruleCompeteNoPay() Rule {
+	return Rule{
+		ID:       "R-COMPETE-NO-PAY",
+		Severity: port.SeverityHigh,
+		Title:    "竞业限制未约定经济补偿",
+		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第二十三条"}},
+		Check: func(c Contract) []Fragment {
+			var frags []Fragment
+			for _, cl := range c.Clauses {
+				if !competeRe.MatchString(cl.Text) {
+					continue
+				}
+				if !penaltyRe.MatchString(cl.Text) {
+					continue
+				}
+				if competePayRe.MatchString(cl.Text) {
+					continue
+				}
+				frags = append(frags, newFragmentAt(cl, "合同约定："+strings.TrimSpace(cl.Text),
+					port.Suggestion{
+						Type:     "add",
+						Original: strings.TrimSpace(cl.Text),
+						Revised:  strings.TrimSpace(cl.Text) + " 甲方应在竞业限制期限内按月向乙方支付经济补偿。",
+						Reason:   "劳动合同法第二十三条规定，对负有保密义务的劳动者约定竞业限制的，应在竞业限制期限内按月给予经济补偿。未约定补偿的竞业限制条款对劳动者不具约束力。",
+					}))
+			}
+			return frags
+		},
+	}
 }
 
 // ruleInvalidExemption 检查免除工伤/人身责任或排除仲裁、诉讼权利的无效条款。

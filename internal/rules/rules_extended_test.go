@@ -21,8 +21,8 @@ func findExtendedRule(t *testing.T, id string) Rule {
 
 func TestExtendedRuleRegistry(t *testing.T) {
 	all := All()
-	if len(all) != 20 {
-		t.Fatalf("规则数 %d，期望 20", len(all))
+	if len(all) != 21 {
+		t.Fatalf("规则数 %d，期望 21", len(all))
 	}
 	seen := make(map[string]bool)
 	for _, r := range all {
@@ -34,8 +34,8 @@ func TestExtendedRuleRegistry(t *testing.T) {
 			t.Fatalf("规则字段不完整：%+v", r)
 		}
 	}
-	if len(AllExtended()) != 12 {
-		t.Fatalf("扩展规则数 %d，期望 12", len(AllExtended()))
+	if len(AllExtended()) != 13 {
+		t.Fatalf("扩展规则数 %d，期望 13", len(AllExtended()))
 	}
 }
 
@@ -155,4 +155,75 @@ func TestTextRuleProtectiveStatements(t *testing.T) {
 		[]*regexp.Regexp{regexp.MustCompile("加班")}, "测试命中",
 		port.Suggestion{Type: "rewrite"})
 	mustHit(t, rule, Contract{Clauses: []Clause{{Text: "不得安排加班。"}}}, 0)
+}
+
+// 演示合同第十二条：乙方与「应当」之间隔 19 个字（「在合同期内未经甲方同意擅自离职的，」），
+// 旧窗口 {0,6} 抓不到，整条漏报。窗口放宽到 {0,30} 后必须命中。
+func TestPenaltyUnlawfulCatchesResignWithoutNotice(t *testing.T) {
+	r := findExtendedRule(t, "R-PENALTY-UNLAWFUL")
+	frags := mustHit(t, r, Contract{Clauses: []Clause{{
+		Section: "第十二条",
+		Text:    "乙方在合同期内未经甲方同意擅自离职的，应当向甲方支付违约金人民币 20000 元。",
+	}}}, 1)
+	if frags[0].Section != "第十二条" {
+		t.Fatalf("命中条款 = %q，期望第十二条", frags[0].Section)
+	}
+	if !strings.Contains(frags[0].Evidence, "违约金人民币 20000 元") {
+		t.Fatalf("evidence 未指向该条原文：%q", frags[0].Evidence)
+	}
+}
+
+// 窗口从 6 放宽到 30，必须配负用例：超出窗口、甲方违约金、法定可约定情形都不能命中。
+func TestPenaltyUnlawfulWindowStaysBounded(t *testing.T) {
+	r := findExtendedRule(t, "R-PENALTY-UNLAWFUL")
+	// 中间 40 个字，仍应在窗口之外。
+	mustHit(t, r, Contract{Clauses: []Clause{{Text: "乙方在本合同存续期间未经甲方书面许可且未完成任何工作交接手续擅自离开岗位的，应当向甲方支付违约金。"}}}, 0)
+	// 甲方违约金不归这条管。
+	mustHit(t, r, Contract{Clauses: []Clause{{Text: "甲方在合同期内未经乙方同意擅自调岗的，应当向乙方支付违约金人民币 20000 元。"}}}, 0)
+	// 服务期、竞业限制是法定可约定违约金的情形。
+	mustHit(t, r, Contract{Clauses: []Clause{{Text: "乙方违反服务期约定的，应当向甲方支付违约金。"}}}, 0)
+	mustHit(t, r, Contract{Clauses: []Clause{{Text: "乙方违反竞业限制约定的，应当向甲方支付违约金。"}}}, 0)
+}
+
+// 演示合同第十五条：约定了竞业限制和 5 万违约金，但一个字没提经济补偿。
+func TestCompeteWithoutPayReported(t *testing.T) {
+	r := findExtendedRule(t, "R-COMPETE-NO-PAY")
+	frags := mustHit(t, r, Contract{Clauses: []Clause{{
+		Section: "第十五条",
+		Text:    "乙方在任职期间及离职后两年内，不得在与甲方有竞争性的单位任职，亦不得自营与甲方同类的业务。乙方违反前述约定的，应当向甲方支付违约金人民币 50000 元。",
+	}}}, 1)
+	if frags[0].Section != "第十五条" {
+		t.Fatalf("命中条款 = %q，期望第十五条", frags[0].Section)
+	}
+	if !strings.Contains(frags[0].Suggestion.Revised, "按月向乙方支付经济补偿") {
+		t.Fatalf("修改建议未补充经济补偿：%q", frags[0].Suggestion.Revised)
+	}
+}
+
+// 约定了补偿就合法，不报。
+func TestCompeteWithPayNotReported(t *testing.T) {
+	r := findExtendedRule(t, "R-COMPETE-NO-PAY")
+	mustHit(t, r, Contract{Clauses: []Clause{{
+		Text: "乙方在任职期间及离职后两年内，不得在与甲方有竞争性的单位任职。乙方违反前述约定的，应当向甲方支付违约金人民币 50000 元。甲方按月支付经济补偿 3000 元。",
+	}}}, 0)
+}
+
+// 只提竞业限制、没写违约金：不进这条规则，避免把合规条款当风险。
+func TestCompeteMentionWithoutPenalty(t *testing.T) {
+	r := findExtendedRule(t, "R-COMPETE-NO-PAY")
+	mustHit(t, r, Contract{Clauses: []Clause{{Text: "双方约定竞业限制，期限两年。"}}}, 0)
+}
+
+// 竞业条款常写成「不得在与甲方有竞争性的单位任职」，不含「竞业限制」四个字，
+// servicePeriodRe 挡不住。这类条款的违约金是第二十五条允许的场景，
+// 缺补偿的问题归 R-COMPETE-NO-PAY，不能被 R-PENALTY-UNLAWFUL 再报一次（同一个框报两条）。
+func TestPenaltyUnlawfulLeavesCompeteClauseToCompeteRule(t *testing.T) {
+	penalty := findExtendedRule(t, "R-PENALTY-UNLAWFUL")
+	c := Contract{Clauses: []Clause{{
+		Section: "第十五条",
+		Text:    "乙方在任职期间及离职后两年内，不得在与甲方有竞争性的单位任职，亦不得自营与甲方同类的业务。乙方违反前述约定的，应当向甲方支付违约金人民币 50000 元。",
+	}}}
+	mustHit(t, penalty, c, 0)
+	compete := findExtendedRule(t, "R-COMPETE-NO-PAY")
+	mustHit(t, compete, c, 1)
 }
