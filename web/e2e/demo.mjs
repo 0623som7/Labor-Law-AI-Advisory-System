@@ -305,7 +305,7 @@ try {
 
   // ── 6. findings 断言 ────────────────────────────────────────
   const findings = await rest(`/reviews/${reviewId}/findings`, { token })
-  must(findings.length === 5, `findings 应为 5 条，实际 ${findings.length}`)
+  must(findings.length === 7, `findings 应为 7 条，实际 ${findings.length}`)
   must(
     findings.some((f) => f.rule_id === 'R-PROBATION-MATCH'),
     'findings 里没有 R-PROBATION-MATCH',
@@ -332,7 +332,7 @@ try {
 
   const fresh = await openPage()
   must(!fresh.start, '已有审查结果时不应显示「开始审查」')
-  must(fresh.marks === 5, `风险框应为 5 个，实际 ${fresh.marks}`)
+  must(fresh.marks === 7, `风险框应为 7 个，实际 ${fresh.marks}`)
   step('7 审查页', `页数=${fresh.pages} 框=${fresh.marks} 卡片=${fresh.cards} 无开始按钮=${!fresh.start} 汇总=${fresh.summary}`)
 
   // ── 8. 刷新后再来一次 ───────────────────────────────────────
@@ -347,7 +347,7 @@ try {
     }))()
   `)
   must(!reloaded.start, '刷新后不应出现「开始审查」')
-  must(reloaded.marks === 5, `刷新后风险框应为 5 个，实际 ${reloaded.marks}`)
+  must(reloaded.marks === 7, `刷新后风险框应为 7 个，实际 ${reloaded.marks}`)
   must(reloaded.localKeys === 0, '刷新后不应依赖 localStorage 里的审查指针')
   step('8 刷新', `框=${reloaded.marks} 无开始按钮=${!reloaded.start} 本地指针=${reloaded.localKeys}`)
 

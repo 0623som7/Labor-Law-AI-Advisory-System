@@ -104,7 +104,7 @@ function switchMode(next: 'login' | 'register'): void {
       <p class="brand-tagline">条文可溯源 · 风险定位到原文 · 修改建议可直接复制</p>
       <ul class="brand-points">
         <li class="brand-point"><span class="brand-dot" aria-hidden="true"></span>回答逐条标注法条出处，不凭空生成</li>
-        <li class="brand-point"><span class="brand-dot" aria-hidden="true"></span>上传合同自动比对 20 条规则，风险框标到条款上</li>
+        <li class="brand-point"><span class="brand-dot" aria-hidden="true"></span>上传合同自动比对 21 条规则，风险框标到条款上</li>
         <li class="brand-point"><span class="brand-dot" aria-hidden="true"></span>不确定的地方直接给出边界条件，不含糊其辞</li>
       </ul>
     </section>

@@ -11,9 +11,9 @@ test('第一档：0 到 1499ms 说在解析文字层', () => {
   assert.equal(reviewStage(REVIEW_STAGE_MS.parse - 1), '正在解析文字层…')
 })
 
-test('第二档：1500 到 3999ms 说要比对 20 条规则', () => {
-  assert.equal(reviewStage(REVIEW_STAGE_MS.parse), '正在比对试用期、社保、押金、最低工资等 20 条规则…')
-  assert.equal(reviewStage(REVIEW_STAGE_MS.rules - 1), '正在比对试用期、社保、押金、最低工资等 20 条规则…')
+test('第二档：1500 到 3999ms 说要比对 21 条规则', () => {
+  assert.equal(reviewStage(REVIEW_STAGE_MS.parse), '正在比对试用期、社保、押金、最低工资等 21 条规则…')
+  assert.equal(reviewStage(REVIEW_STAGE_MS.rules - 1), '正在比对试用期、社保、押金、最低工资等 21 条规则…')
 })
 
 test('第三档：4000 到 8999ms 说正在逐条定位原文位置', () => {
@@ -36,6 +36,6 @@ test('审查一结束整行就不可见，不留残影', () => {
   assert.deepEqual(reviewProgressLine({ elapsedMs: 30_000, running: false }), { visible: false, text: '' })
   assert.deepEqual(reviewProgressLine({ elapsedMs: 2000, running: true }), {
     visible: true,
-    text: '正在比对试用期、社保、押金、最低工资等 20 条规则…',
+    text: '正在比对试用期、社保、押金、最低工资等 21 条规则…',
   })
 })
