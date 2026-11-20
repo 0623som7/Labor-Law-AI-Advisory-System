@@ -245,7 +245,7 @@ async function retry(): Promise<void> {
       <main class="pane-work">
         <h1 class="title">上传劳动合同</h1>
         <p class="subtitle">
-          上传后会先解析文字层，再逐条核对试用期、社保、押金、最低工资等 8 类风险，命中的每一条都能定位到原文位置。
+          上传后会先解析文字层，再逐条核对试用期、社保、押金、最低工资等 20 条规则，命中的每一条都能定位到原文位置。
         </p>
 
         <el-upload

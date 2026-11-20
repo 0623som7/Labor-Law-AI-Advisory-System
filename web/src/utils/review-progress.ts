@@ -9,7 +9,7 @@
 
 /** 四档文案，逐字固定——对话页那两档也是这么写的，同一个产品不要两种口气。 */
 const STAGE_PARSE = '正在解析文字层…'
-const STAGE_RULES = '正在比对试用期、社保、押金、最低工资等 8 类风险…'
+const STAGE_RULES = '正在比对试用期、社保、押金、最低工资等 20 条规则…'
 const STAGE_LOCATE = '正在逐条定位原文位置…'
 const STAGE_SLOW = '这一步比平时慢，仍在处理，请不要关闭页面…'
 
