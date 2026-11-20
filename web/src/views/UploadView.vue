@@ -152,13 +152,18 @@ async function start(): Promise<void> {
     return
   }
   uploading.value = true
-  errorText.value = ''
-  canRetry.value = false
+  // 不在这里清 errorText、也不清 canRetry：
+  // 清 errorText 会让整块 .error-block 消失，里面的「重试」按钮跟着没了；
+  // 清 canRetry 会让按钮被 v-if 摘掉——两个都会让「正在重试…」永远看不到，
+  // 用户点完重试看到的是"错误块突然不见"，而不是"正在重试"。
+  // 换了文件时 onFileChange 会把这两项重置；成功后在 try 里清 errorText，
+  // 失败时由 catch 覆盖文案并重新定 canRetry。
   percent.value = null
   try {
     const record = await uploadFile(file, (p) => {
       percent.value = p
     })
+    errorText.value = ''
     // 同内容文件会命中后端缓存、拿回同一个 id，这不是错误，照常跳转。
     // autostart=1 让审查页自己开跑：不带上它，用户传完不点按钮就走人，
     // files 表有行、reviews 没有行，文件在左栏（读 GET /reviews）里就消失了。
@@ -286,10 +291,10 @@ async function retry(): Promise<void> {
           <el-button
             v-if="canRetry"
             size="small"
-            :disabled="uploading"
-            :loading="uploading && retrying"
+            :disabled="retrying"
+            :loading="retrying"
             @click="retry"
-          >{{ uploading && retrying ? '重试中…' : '重试' }}</el-button>
+          >{{ retrying ? '正在重试…' : '重试' }}</el-button>
         </div>
       </main>
     </div>
