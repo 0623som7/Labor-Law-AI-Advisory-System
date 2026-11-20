@@ -231,7 +231,42 @@ docker exec deploy-mysql-1 sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "s
 #      库里已是 596 条，79 条新法条（保障农民工工资支付条例 64 + 最低工资规定 15）
 #      对语义层完全失聪，而 /readyz 照回 ok。
 
-# 3.6.3 上传接口对无文字层文件回 422（2026-11-18 契约变更）
+# 3.6.3 挂载目录与静默失败（2026-11-20 的事故）
+#   1) 经过：为清服务器脏工作区执行了 rm -rf deploy/nginx/snippets，git merge 把三个
+#      snippet 重建回来时目录 inode 变了，而 nginx 容器更早创建、握的仍是旧目录 →
+#      容器内 /etc/nginx/snippets 是空的，default.conf 里三处 include 全部打不开 →
+#      nginx -t 一直失败 → 任何 reload 都会 emerg 退出。线上从 13:0x 到 15:24 处于
+#      "能跑但不能 reload"：进程拿内存里的旧配置继续服务，所有返回码都正常，直到
+#      下一次必须 reload 时才暴露。
+#      处置（只重建 nginx，不动 api / mysql / redis）：
+#      cd deploy && export APP_ENV=production
+#      docker compose --env-file ../.env up -d --force-recreate --no-deps nginx
+#      docker exec deploy-nginx-1 ls /etc/nginx/snippets/     # 三个 conf 必须在
+#      docker exec deploy-nginx-1 nginx -t                    # 必须 syntax is ok
+#      注意：不带 --force-recreate 的 up -d nginx 判不出差异，容器根本不会被重建。
+#   2) 规矩：任何被 bind mount 的目录都不许 rm -rf 整个目录，清理只能 rm -rf dir/* 或
+#      原地覆盖文件。已踩过两次：删 web/dist 目录后 nginx 变 403（compose 绑的是 inode）；
+#      删 deploy/nginx/snippets 目录后 nginx -t 直接失败（就是本节这次）。
+#   3) 改完证书、改完 nginx include、或动过任何挂载目录之后，必须走闭环，不能只看
+#      reload 的返回码。做法是造一次真陈旧再跑守卫：
+#      sudo md5sum deploy/nginx/certs/{fullchain.pem,privkey.pem}    # 记录基线
+#      sudo cp -L deploy/nginx/certs/server.crt deploy/nginx/certs/fullchain.pem
+#      sudo cp -L deploy/nginx/certs/server.key deploy/nginx/certs/privkey.pem
+#      sudo /usr/local/bin/laborlaw-check-cert.sh; echo "exit=$?"
+#      sudo tail -4 /var/log/laborlaw-cert.log   # 必须两行：副本陈旧，开始替换 / 替换并 reload 成功
+#      sudo cmp -s /etc/letsencrypt/live/laborlaw-ai.cn/fullchain.pem deploy/nginx/certs/fullchain.pem \
+#        && echo 已恢复一致
+#      curl -s -o /dev/null -w '%{http_code}\n' https://laborlaw-ai.cn/   # 必须 200
+#      造陈旧必须用**配对**的一份证书（8443 那套 server.crt + server.key）：证书与私钥不配对时
+#      nginx -t 会因 key mismatch 失败，那测的是回滚路径，不是替换路径。
+#      报告里要贴 docker exec deploy-nginx-1 nginx -t 的原样输出——nginx 的失败是静默的，
+#      它继续用内存里的旧配置服务，不回看这一步就只能等下次 reload 才知道。
+#   4) 守卫脚本在 /usr/local/bin/laborlaw-check-cert.sh（755），由 /etc/cron.d/laborlaw-cert
+#      每天 04:00 跑；备份落 /var/backups/laborlaw/。不许把 .bak 或临时脚本放进
+#      /opt/laborlaw：会脏 git（下次 git pull 报 "would be overwritten"），也会被执行
+#      上面那种目录清理时顺手删掉。
+
+# 3.6.4 上传接口对无文字层文件回 422（2026-11-18 契约变更）
 #   1) POST /api/v1/files 遇到没有文字层的扫描件，从 200（data 里给个空壳记录）
 #      改成 422 {"code":42201,"fields":{"file_id":"..."}}。旧前端配新后端时
 #      uploadFile() 会抛 ApiError，只弹一条错误、不会跳到阻断页 —— 所以
