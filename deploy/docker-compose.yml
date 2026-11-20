@@ -121,6 +121,12 @@ services:
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
+      # Let's Encrypt 的 HTTP-01 校验目录：宿主机可写（certbot --webroot 往这里写），
+      # 容器只读（nginx 只负责把它当静态文件吐出去）。
+      - ./acme:/var/www/acme:ro
+      # 两个 TLS server 块共用的 location 与公共指令。不能放进 conf.d：
+      # nginx.conf 只通配 conf.d/*.conf，snippet 落那里会被当成独立 server 文件解析。
+      - ./nginx/snippets:/etc/nginx/snippets:ro
       - ../web/dist:/usr/share/nginx/html:ro
     healthcheck:
       # 自签证书对容器内的 wget 不友好：--no-check-certificate 跳过校验，

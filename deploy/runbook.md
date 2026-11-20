@@ -265,8 +265,8 @@ sudo chmod 750 storage
 > 所以本机怎么试都正常，第一次上 Linux ECS 就会在上传那一刻炸。
 
 > `deploy/nginx/certs/` 在 `.gitignore` 里：证书与私钥绝不入库。
-> 换正式证书时把 cert/key 覆盖进去再 `docker compose ... restart nginx` 即可，配置不用改。
-> 自签证书浏览器会拦一次，演示时点"继续访问"；答辩前若买了域名，用 acme.sh 签发替换这两个文件。
+> 443 用 Let's Encrypt、8443 用自签现在分成两个 server 块，证书路径写在
+> `deploy/nginx/default.conf` 里，换证书不用改配置——详见 §3.10。
 
 > `AUTO_MIGRATE` 在 `production` 下会被 config 拒绝，这是故意的：schema 变更必须人工确认。
 > 迁移走 `api -migrate`：跑完即退出，不需要装 mysql 客户端，也不会在线上悄悄改表。
@@ -303,6 +303,76 @@ git branch -D incoming                             # 指向已合并的提交，
 
 > `git fetch /tmp/x.bundle main:incoming` 只更新 `incoming` 分支，**不会**动 `refs/remotes/origin/main`。
 > 这正是上面那行 `update-ref` 存在的原因：漏了它，`reset --hard origin/main` 会在下一次部署时把线上退回旧版本。
+
+# 3.10 证书（443 公信 + 8443 自签）
+
+443 是域名入口，用 Let's Encrypt；8443 是 IP 直连兜底，用自签。两套并存不是懒，
+是证书选择规则决定的：**IP 直连不带 SNI，nginx 只能按端口给默认证书**，
+一个 server 块里放两张证书也只会用第一张，所以必须两个块、两对证书。
+（历史原因：2026-11-20 之前这两个端口共用一对自签证书，域名访问浏览器会拦一次。）
+
+| 端口 | 证书 | 文件 | 谁在用 |
+|---|---|---|---|
+| 443 | Let's Encrypt（公信） | `deploy/nginx/certs/fullchain.pem` + `privkey.pem` | 域名 `laborlaw-ai.cn`、`www.laborlaw-ai.cn` |
+| 8443 | 自签（LaborLaw Local CA） | `deploy/nginx/certs/server.crt` + `server.key` | IP 直连 `https://<IP>:8443` |
+
+**四个自签文件（`ca.crt` / `ca.key` / `server.crt` / `server.key`）不许删、不许覆盖。**
+8443 是答辩兜底入口，删了域名一挂就彻底进不去。
+
+## 3.10.1 443 的证书怎么来的
+
+```bash
+# 80 段必须有 acme 豁免（deploy/nginx/default.conf 里 location ^~ /.well-known/acme-challenge/）
+# 否则 HTTP-01 校验会被 301 吞掉，certbot 报 "Invalid response"
+sudo apt-get install -y certbot
+sudo certbot certonly --webroot -w /opt/laborlaw/deploy/acme   -d laborlaw-ai.cn -d www.laborlaw-ai.cn --agree-tos --no-eff-email
+
+# 签出来的在 /etc/letsencrypt/live/laborlaw-ai.cn/，复制进 compose 能看到的目录
+sudo cp /etc/letsencrypt/live/laborlaw-ai.cn/fullchain.pem /opt/laborlaw/deploy/nginx/certs/
+sudo cp /etc/letsencrypt/live/laborlaw-ai.cn/privkey.pem   /opt/laborlaw/deploy/nginx/certs/
+sudo chmod 644 /opt/laborlaw/deploy/nginx/certs/fullchain.pem
+sudo chmod 600 /opt/laborlaw/deploy/nginx/certs/privkey.pem
+docker exec deploy-nginx-1 nginx -t && docker exec deploy-nginx-1 nginx -s reload
+```
+
+验证（`-servername` 不能省，否则拿到的是默认证书）：
+
+```bash
+openssl s_client -connect laborlaw-ai.cn:443 -servername laborlaw-ai.cn </dev/null 2>/dev/null   | openssl x509 -noout -issuer -subject -dates
+# 期望 issuer 含 Let's Encrypt、subject CN=laborlaw-ai.cn
+curl -sI https://laborlaw-ai.cn/ | head -1     # 200，不带 -k
+```
+
+## 3.10.2 续期
+
+certbot 自带 `certbot.timer`（每天两次），但**它只更新 `/etc/letsencrypt` 里的文件**，
+nginx 用的是 `deploy/nginx/certs/` 里的副本，两者不会自动同步。所以挂了 deploy hook：
+
+```bash
+sudo ls /etc/letsencrypt/renewal-hooks/deploy/laborlaw-reload.sh   # 复制副本 + nginx -t + reload
+sudo certbot renew --dry-run                                       # 只验续期流程
+sudo sh -x /etc/letsencrypt/renewal-hooks/deploy/laborlaw-reload.sh # 验 hook 本身（dry-run 不跑 hook）
+```
+
+> certbot 1.21 的 `--dry-run` **不会执行 deploy hook**（新版本才有 `--run-deploy-hooks`），
+> 所以 hook 要单独手工跑一次确认。别把"dry-run 通过"当成"续期后 nginx 会自动换证书"。
+
+证书过期后浏览器会直接拦，症状是全站打不开、`curl` 报 `certificate has expired`。
+手工续期：`sudo certbot renew`（hook 会自动复制并 reload）。
+
+## 3.10.3 回退到"全自签"
+
+```bash
+cd /opt/laborlaw/deploy
+sudo cp nginx/default.conf /tmp/default.conf.$(date +%F_%H%M)     # 先备份
+# 把 443 那个块的两行证书换回 server.crt / server.key，或直接从 git 取旧版本：
+sudo git -C /opt/laborlaw checkout -- deploy/nginx/default.conf
+export APP_ENV=production && docker compose --env-file ../.env up -d nginx
+docker exec deploy-nginx-1 nginx -t && docker exec deploy-nginx-1 nginx -s reload
+```
+
+回退后域名访问会重新出现"您的连接不是私密连接"，点"继续访问"仍可用；
+8443 全程不受影响（它一直用自签）。
 
 ---
 
