@@ -214,6 +214,22 @@ docker exec deploy-mysql-1 sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "s
 #      一律先怀疑漏跑迁移，不要去改 SQL 或手工 ALTER TABLE。
 #      2026-11-17 那次：线上 messages 缺 attachments 列，messages 停在 11-16 14:37，
 #      而会话数照涨（resolveSession 先建会话再写消息），一夜多了 12 条空会话。
+#   4) 重建法条库之后（2026-11-20 补）
+#
+#      statutes 与 embeddings 是两张表，而进程内的语义索引是**启动时快照**，没有热加载。
+#      所以 statuteseed -import + embeddingseed 之后必须重启 api：
+#
+#      docker compose --env-file ../.env restart api
+#
+#      并核对启动日志，两个数必须相等：
+#
+#      docker compose --env-file ../.env logs api --since 5m | grep "语义检索已启用"
+#      # 期望 vectors=596
+#
+#      不等就别继续部署——语义层会静默失明，日志里连 Warn 都不会有。
+#      2026-11-19 那次：先起 api、后灌库，进程停在 vectors=517（九部法时代），
+#      库里已是 596 条，79 条新法条（保障农民工工资支付条例 64 + 最低工资规定 15）
+#      对语义层完全失聪，而 /readyz 照回 ok。
 
 # 3.6.3 上传接口对无文字层文件回 422（2026-11-18 契约变更）
 #   1) POST /api/v1/files 遇到没有文字层的扫描件，从 200（data 里给个空壳记录）
