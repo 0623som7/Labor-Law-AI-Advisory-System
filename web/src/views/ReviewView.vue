@@ -54,8 +54,11 @@ import {
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
-/** 渲染缩放。A4 在 1.25 倍下是 744×1052px，四页 canvas 合计不到 8MB。 */
+/** 渲染缩放。A4 在 1.25 倍下是 744×1052 个 CSS 像素，框坐标与页面布局都以它为准。 */
 const SCALE = 1.25
+// 位图密度上限。四页 A4 在 DPR=2 下是 4×(1488×2104×4B) ≈ 50MB，
+// 手机常见的 DPR=3 会翻到 ~113MB 并让低端机直接掉帧，所以压到 2 倍为止。
+const MAX_RENDER_DPR = 2
 const POLL_INTERVAL = 2000
 // 320s > WORKER_TASK_TIMEOUT(300s)：前端不能比后端先放弃，
 // 否则慢任务表现为"失败"，刷新后又出现。
@@ -453,6 +456,11 @@ function onFoldToggle(f: Finding): void {
   void nextTick(() => revealCardIntoView(f.id))
 }
 
+/** 本次渲染使用的位图密度。上限 2 见 MAX_RENDER_DPR。 */
+function renderDensity(): number {
+  return Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR)
+}
+
 async function renderPdf(): Promise<void> {
   pdfError.value = ''
   try {
@@ -466,20 +474,26 @@ async function renderPdf(): Promise<void> {
       await nextTick()
     }
     const vps: ViewportLike[] = []
+    // 三个空间别混：viewport 是 CSS 空间（布局与框坐标都用它），
+    // renderViewport 是位图空间（只决定画布有多少物理像素）。
+    // dpr 在这里取一次：循环里每次读 window.devicePixelRatio 会让「滚动—>
+    // 偏移量回调—>再读 DPR」互相触发，白掉帧。
+    const dpr = renderDensity()
     for (let i = 1; i <= pdf.numPages; i += 1) {
       // getPage 是 1 起，pages[].index 是 0 起，这里两边都按自己的口径用。
       const page = await pdf.getPage(i)
       const viewport = page.getViewport({ scale: SCALE })
+      const renderViewport = page.getViewport({ scale: SCALE * dpr })
       vps.push(viewport)
       const canvas = canvases[i - 1]
       if (!canvas) continue
-      canvas.width = Math.floor(viewport.width)
-      canvas.height = Math.floor(viewport.height)
+      canvas.width = Math.floor(renderViewport.width)
+      canvas.height = Math.floor(renderViewport.height)
       canvas.style.width = `${viewport.width}px`
       canvas.style.height = `${viewport.height}px`
       const ctx = canvas.getContext('2d')
       if (!ctx) continue
-      await page.render({ canvasContext: ctx, viewport }).promise
+      await page.render({ canvasContext: ctx, viewport: renderViewport }).promise
     }
     if (!disposed) viewports.value = vps
   } catch (err) {
@@ -715,8 +729,23 @@ watch(fileId, () => {
 })
 }
 
+// 拖到另一块屏（DPR 变了）要重画一次，否则画布按 1 倍渲染继续发虚。
+// 用 matchMedia 的 resolution 查询而不是 resize：拖窗口边界时 resize 会连发几十次。
+let dprQuery: MediaQueryList | null = null
+function onDensityChange(): void {
+  watchDensity()
+  if (!disposed) void renderPdf()
+}
+function watchDensity(): void {
+  dprQuery?.removeEventListener('change', onDensityChange)
+  dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+  dprQuery.addEventListener('change', onDensityChange)
+}
+watchDensity()
+
 onBeforeUnmount(() => {
   disposed = true
+  dprQuery?.removeEventListener('change', onDensityChange)
   if (pollTimer !== null) window.clearTimeout(pollTimer)
   stopTicking()
   dragging.value = false

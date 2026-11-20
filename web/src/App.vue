@@ -1,9 +1,16 @@
 <script setup lang="ts">
 // 应用外壳。鉴权提示条放在这里而不是各页面：契约与产品要求它全局可见，
 // 写在对话页里的话，登录页就成了"看不到免责声明"的那一屏。
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
 import { THEME_KEY, applyTheme, nextTheme, readTheme, themeLabel } from '@/utils/theme'
+
+const route = useRoute()
+// 登录页左上是深藏青品牌栏，紧贴着免责条的 1px 浅色分隔线——
+// 在 DPR=2 的屏上那是 2 个物理像素的亮缝。这条线对其它页面有用（分隔两条浅色带），
+// 所以只在这一页把颜色透明化，高度保留，避免布局跳动。
+const flushNotice = computed(() => route.name === 'login')
 
 // 主题按钮放在免责条右侧：全局可用，且不占任何页面的头部高度。
 const theme = ref(readTheme())
@@ -21,7 +28,7 @@ function cycleTheme(): void {
 
 <template>
   <div class="app-shell">
-    <header class="app-notice">
+    <header class="app-notice" :class="{ 'app-notice--flush': flushNotice }">
       本系统输出仅供参考，不构成法律意见。
       <button
         type="button"
@@ -61,6 +68,11 @@ function cycleTheme(): void {
   background: var(--ll-notice-bg);
   border-bottom: 1px solid var(--ll-notice-line);
   text-align: center;
+}
+
+/* 见 flushNotice 的注释：只换颜色，不动宽度，否则整页会跳 1px */
+.app-notice--flush {
+  border-bottom-color: transparent;
 }
 
 .theme-btn {
