@@ -20,6 +20,8 @@ const WEB = process.env.WEB_BASE || 'http://127.0.0.1:5173'
 const CHROME = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const CDP_PORT = Number(process.env.CDP_PORT || 9481)
 const CONSOLE_WAIT = 60_000
+// 审查记录超过这个年龄就判定为「复用旧结果」：一次真审查是秒级，2 分钟足够宽松。
+const REUSE_LIMIT_MS = 120_000
 
 // 路径一律从脚本自身位置推，不依赖 cwd：从仓库根、从 web 目录、从任意地方跑都行。
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -182,13 +184,21 @@ async function waitFor(fn, timeoutMs, label, intervalMs = 250) {
 let cdp
 let summary = ''
 try {
-  // ── 1. 注册新账号 ───────────────────────────────────────────
-  const auth = await rest('/auth/register', {
-    method: 'POST',
-    body: { phone, password, nickname: '演示账号' },
-  })
+  // ── 1. 注册新账号（给了 DEMO_PHONE 就改用登录）────────────────
+  // 固定账号才有「同一用户重复上传同一份 PDF」这条路；只有它才可能撞上后端复用
+  // 旧审查，5c 的复用自检也才查得到东西。
+  const loginPhone = process.env.DEMO_PHONE
+  const auth = loginPhone
+    ? await rest('/auth/login', {
+        method: 'POST',
+        body: { phone: loginPhone, password: process.env.DEMO_PASSWORD || password },
+      })
+    : await rest('/auth/register', {
+        method: 'POST',
+        body: { phone, password, nickname: '演示账号' },
+      })
   const token = auth.access_token
-  step('1 注册', `${phone} user=${auth.user?.id ?? '?'}`)
+  step(loginPhone ? '1 登录' : '1 注册', `${loginPhone || phone} user=${auth.user?.id ?? '?'}`)
 
   // ── 2. 起浏览器，注入令牌，进对话页 ──────────────────────────
   await waitJSON(`http://127.0.0.1:${CDP_PORT}/json/version`)
@@ -299,6 +309,15 @@ try {
   })
   // 已有结果时后端回 200 整个 Review（没有 task_id），这条路也要能跑通。
   const reviewId = accepted.review_id ?? accepted.id
+  // 复用自检：同一份文件已有 succeeded 结果时，后端只回旧 review_id、不建新任务，
+  // 脚本照样跑得通，但跑的是上一版规则的结论——那种「绿」没有任何意义。
+  const detail = await rest(`/reviews/${reviewId}`, { token })
+  const ageMs = Date.now() - new Date(detail.created_at).getTime()
+  must(
+    !(ageMs > REUSE_LIMIT_MS),
+    `复用了一份 ${Math.round(ageMs / 1000)} 秒前创建的审查（${reviewId}），结果可能来自旧规则；请先删掉这条 review 再跑`,
+  )
+  step('5c 复用自检', `created_at=${detail.created_at} 距今 ${(ageMs / 1000).toFixed(1)}s`)
   let reviewMs = Date.now() - reviewStart
   if (accepted.task_id) reviewMs = await pollTask(token, accepted.task_id)
   step('5b 审查', `review=${reviewId} 耗时=${(reviewMs / 1000).toFixed(1)}s`)
@@ -360,7 +379,7 @@ try {
 
   summary = `DEMO OK  chat_first=${(firstDeltaAt / 1000).toFixed(1)}s chat_total=${(chatTotal / 1000).toFixed(1)}s review=${(reviewMs / 1000).toFixed(1)}s marks=${reloaded.marks}`
   console.log(summary)
-  console.log(`账号 ${phone} / ${password}；file=${file.id} review=${reviewId}`)
+  console.log(`账号 ${loginPhone || phone} / ${password}；file=${file.id} review=${reviewId}`)
 } catch (err) {
   console.error(`DEMO FAIL  ${err.message}`)
   if (cdp) {
