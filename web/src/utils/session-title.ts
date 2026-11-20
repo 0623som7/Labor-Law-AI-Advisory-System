@@ -70,7 +70,11 @@ export function sessionTitle(input: {
   ruleId?: string
   fallback?: string
 }): string {
-  const file = stripExtension(input.fileName ?? '')
+  // 文件名分支保留扩展名：侧栏这行字要回答"这条对话在说哪个文件"，
+  // 剥掉 .pdf 之后 contract-demo / sample-v5 / 劳动合同-李小雨 这些名字
+  // 光看前面分不出是文档还是表格。标题分支（只有条款号那种）仍走 stripExtension
+  // 之外的逻辑，一个字没动。
+  const file = (input.fileName ?? '').trim()
   const section = (input.section ?? '').trim()
   const ruleId = (input.ruleId ?? '').trim()
   const fallback = (input.fallback ?? '').trim()
@@ -89,7 +93,10 @@ export function sessionTitle(input: {
   }
 
   if (parts.length === 0) return clip(fallback, TITLE_MAX)
-  return clip(parts.join(' · '), TITLE_MAX)
+  // TITLE_MAX - 1：clip 截断时会把省略号追加在后面，用 TITLE_MAX 会得到
+  // TITLE_MAX + 1 个字符。保留扩展名后拼起来更容易触到这个边界，
+  // 顺手把"整条不超过 30 字"这条约束修成真的。
+  return clip(parts.join(' · '), TITLE_MAX - 1)
 }
 
 /**

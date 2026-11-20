@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { dedupeTitles, parseAskTitle, sessionTitle, stripExtension } from './session-title.ts'
 
-test('有文件名：文件名去扩展名 + 条款', () => {
-  assert.equal(sessionTitle({ fileName: '劳动合同.pdf', section: '第七条' }), '劳动合同 · 第七条')
+test('有文件名：文件名保留扩展名 + 条款', () => {
+  assert.equal(sessionTitle({ fileName: '劳动合同.pdf', section: '第七条' }), '劳动合同.pdf · 第七条')
 })
 
 test('没有文件名：条款 + 规则号', () => {
@@ -21,6 +21,23 @@ test('超长文件名按 18 字截断加省略号', () => {
   const long = '广州百联家政服务有限公司劳动合同（2026版）'
   // 18 字：广州百联家政服务有限公司劳动合同（2 —— 常见名如 contract-demo.pdf 能整个装下。
   assert.equal(sessionTitle({ fileName: long, section: '第七条' }), '广州百联家政服务有限公司劳动合同（2… · 第七条')
+})
+
+test('文件名分支保留扩展名：contract-demo.pdf 不被剥', () => {
+  assert.equal(sessionTitle({ fileName: 'contract-demo.pdf' }), 'contract-demo.pdf')
+  assert.ok(sessionTitle({ fileName: 'contract-demo.pdf' }).includes('.pdf'))
+})
+
+test('文件名没有扩展名：原样显示', () => {
+  assert.equal(sessionTitle({ fileName: '劳动合同' }), '劳动合同')
+})
+
+test('超过 18 字的带扩展名文件名：截断到 18 字加省略号，不切半个字', () => {
+  // 18 字刻度：广州百联家政服务有限公司劳动合同（2 —— 正好 18 个字符
+  const out = sessionTitle({ fileName: '广州百联家政服务有限公司劳动合同（2026版）.pdf' })
+  assert.equal(out, '广州百联家政服务有限公司劳动合同（2…')
+  assert.equal([...out].length, 19) // 18 字 + 省略号
+  assert.ok(out.endsWith('…'), out)
 })
 
 test('超长条款按 10 字截断', () => {
@@ -43,7 +60,7 @@ test('什么都没有时也不返回空串之外的脏值（空 fallback → 空
 })
 
 test('中文标点原样保留', () => {
-  assert.equal(sessionTitle({ fileName: '劳动合同（示范文本）.pdf', section: '第九条（一）' }), '劳动合同（示范文本） · 第九条（一）')
+  assert.equal(sessionTitle({ fileName: '劳动合同（示范文本）.pdf', section: '第九条（一）' }), '劳动合同（示范文本）.pdf · 第九条（一）')
 })
 
 test('扩展名只吃最后一段，且不误伤带点的中文名', () => {
@@ -93,11 +110,11 @@ test('去重不合并不同标题，也不给唯一的加后缀', () => {
 test('会话带了文件名：标题以文件名开头（侧栏据此分辨是哪份合同）', () => {
   const withFile = sessionTitle({ fileName: '劳动合同.pdf', section: '第七条', ruleId: 'R-PROBATION-ONCE' })
   assert.ok(withFile.startsWith('劳动合同'), withFile)
-  assert.equal(withFile, '劳动合同 · 第七条')
+  assert.equal(withFile, '劳动合同.pdf · 第七条')
   // 同一份合同同一条款的三次追问，靠 dedupe 才能分开
   assert.deepEqual(dedupeTitles([withFile, withFile, withFile]), [
-    '劳动合同 · 第七条',
-    '劳动合同 · 第七条 #2',
-    '劳动合同 · 第七条 #3',
+    '劳动合同.pdf · 第七条',
+    '劳动合同.pdf · 第七条 #2',
+    '劳动合同.pdf · 第七条 #3',
   ])
 })
