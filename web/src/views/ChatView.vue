@@ -43,11 +43,12 @@ import {
   writeSideWidth,
 } from '@/utils/splitter'
 import { dedupeTitles, parseAskTitle, sessionTitle } from '@/utils/session-title'
+import { isNetworkFailure, isOfflineError } from '@/utils/net-error'
 
 /** 页面上的一条消息。历史消息与流式消息共用这个形状，差别只在有没有引用。 */
 interface UiMessage {
   key: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   content: string
   /** 只有本轮实时生成的消息会有；历史消息恒为空数组 */
   citations: Citation[]
@@ -284,6 +285,19 @@ function nextKey(prefix: string): string {
 }
 
 /**
+ * 插一条系统提示（role='system'）。
+ *
+ * 断网这类"这一轮根本没发出去"的情况不能只把红字贴在回答气泡里：
+ * 用户需要一句正常的人话，而且输入框里的字必须还在。复用 UiMessage 的
+ * 形状与 .row 布局，不新造组件。系统提示不进库里，刷新就没了——
+ * 它描述的是当下这台机器的网络，不是会话内容。
+ */
+function pushSystemNotice(text: string): void {
+  messages.value.push(newMessage('system', text))
+  void scrollToBottom()
+}
+
+/**
  * toUiMessages 把历史消息映射成气泡。
  *
  * 映射本身在 utils/chat-history.ts 里（纯函数，可单测）；这里只负责补上
@@ -299,7 +313,11 @@ function toUiMessages(items: readonly ChatMessage[]): UiMessage[] {
   })
 }
 
-function newMessage(role: 'user' | 'assistant', content: string, fromHistory = false): UiMessage {
+function newMessage(
+  role: 'user' | 'assistant' | 'system',
+  content: string,
+  fromHistory = false,
+): UiMessage {
   return {
     key: nextKey(role),
     role,
@@ -526,6 +544,13 @@ async function send(): Promise<void> {
   const text = typed !== '' ? typed : attached ? DEFAULT_ATTACH_INPUT : ''
   if (text === '' || sending.value) return
 
+  // 断网时一个请求都不发：先给一句明确的话，并把刚打的字原样留在输入框里。
+  // 静默失败最糟——用户分不清是网断了还是产品坏了，会去反复点发送。
+  if (isOfflineError(null)) {
+    pushSystemNotice('网络已断开，请检查网络后重新发送')
+    return
+  }
+
   banner.value = ''
   input.value = ''
   pendingFile.value = null
@@ -617,7 +642,13 @@ async function send(): Promise<void> {
       // 这里只管收尾，不往气泡上写第二份错误文案。
       return
     }
-    const message = error instanceof Error ? error.message : '发送失败'
+    // 请求发出去之后才断网：这一轮的 SSE 已经断了，回答补不回来，
+    // 直接说"未完成、可重发"，比把 fetch 的原文（Failed to fetch）糊给用户强。
+    const message = isNetworkFailure(error)
+      ? '网络连接中断，本轮回答未完成，可重新发送'
+      : error instanceof Error
+        ? error.message
+        : '发送失败'
     push({ type: 'error', message })
     assistant.error = message
     if (assistant.content === '') assistant.content = '（没有收到回答）'
@@ -894,9 +925,11 @@ onMounted(() => {
           v-for="m in messages"
           :key="m.key"
           class="row"
-          :class="m.role === 'user' ? 'row-user' : 'row-assistant'"
+          :class="m.role === 'user' ? 'row-user' : m.role === 'system' ? 'row-notice' : 'row-assistant'"
         >
+          <p v-if="m.role === 'system'" class="notice-line" role="alert">{{ m.content }}</p>
           <div
+            v-else
             class="bubble"
             :class="[
               m.role === 'user' ? 'bubble-user' : 'bubble-assistant',
@@ -1364,6 +1397,20 @@ onMounted(() => {
 
 .row-assistant {
   justify-content: flex-start;
+}
+
+/* 系统提示（断网等）：居中一行，不进气泡。它不是任何一方说的话。 */
+.row-notice {
+  justify-content: center;
+}
+
+.notice-line {
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: var(--ll-radius-pill);
+  background: var(--ll-danger-wash-1);
+  color: var(--ll-danger);
+  font-size: var(--ll-fs-meta);
 }
 
 .bubble {
