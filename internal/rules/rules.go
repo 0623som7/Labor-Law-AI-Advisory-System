@@ -357,8 +357,18 @@ func ruleNoSocialInsurance() Rule {
 					at = strong[0]
 				}
 			}
+			// 框落在"乙方自行缴纳"那一条上，说明里就必须说"约定由劳动者自行缴纳"，
+			// 否则卡片右边写"未见约定"、左边框里写着"乙方自行办理社会保险参保手续"，
+			// 用户第一眼以为是产品认错了。判定条件一个字不动，只改说明文案。
+			evidence := "合同中未见用人单位为劳动者缴纳社会保险的约定"
+			for _, mark := range []string{"自行缴纳", "自行办理", "自愿放弃", "不再另行承担", "不再承担"} {
+				if strings.Contains(at.Text, mark) {
+					evidence = "约定由劳动者自行缴纳社会保险：合同约定社会保险由劳动者自行缴纳、单位不再承担，与社会保险的强制参保义务相冲突"
+					break
+				}
+			}
 			return []Fragment{newFragmentAt(at,
-				"合同中未见用人单位为劳动者缴纳社会保险的约定",
+				evidence,
 				port.Suggestion{
 					Type:    "add",
 					Revised: "甲方自用工之日起为乙方办理社会保险登记并按时足额缴纳基本养老保险、基本医疗保险、失业保险、工伤保险和生育保险。",

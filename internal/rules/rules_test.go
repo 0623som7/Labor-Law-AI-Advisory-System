@@ -302,6 +302,47 @@ func TestNoSocialInsurance(t *testing.T) {
 	mustHit(t, r, Contract{SocialInsurance: boolPtr(true)}, 0)
 }
 
+func TestNoSocialInsuranceEvidenceMatchesBoxedClause(t *testing.T) {
+	r := findRule(t, "R-NO-SOCIAL-INS")
+
+	// A：合同约定"乙方自行缴纳"。框落在第六条，说明必须跟着说"自行缴纳"，
+	// 不能还写"未见约定"——否则框里明明是"乙方自行办理社会保险参保手续"。
+	selfPaid := Contract{
+		SocialInsurance: boolPtr(false),
+		Clauses: []Clause{
+			{Section: "第三条", Page: 1, BBox: [4]float64{57, 300, 520, 312}, Text: "乙方月工资 8000 元，工资已包含社会保险个人缴纳部分。"},
+			{Section: "第六条", Page: 1, BBox: [4]float64{57, 520, 520, 545}, Text: "乙方自行办理社会保险参保手续并缴纳社会保险费，甲方不再另行承担。"},
+		},
+	}
+	fa := mustHit(t, r, selfPaid, 1)
+	if !strings.Contains(fa[0].Evidence, "自行缴纳") {
+		t.Fatalf("A 的说明应包含「自行缴纳」，实际 %q", fa[0].Evidence)
+	}
+	if strings.Contains(fa[0].Evidence, "未见") {
+		t.Fatalf("A 的说明不应包含「未见」，实际 %q", fa[0].Evidence)
+	}
+	if fa[0].Section != "第六条" || fa[0].BBox != [4]float64{57, 520, 520, 545} {
+		t.Fatalf("A 的框应落在第六条，实际 %s %v", fa[0].Section, fa[0].BBox)
+	}
+
+	// B：全篇只有"工资已包含社保个人缴纳部分"，没有"自行缴纳/不再承担"这类表述，
+	// 说明继续走旧分支（未见约定），框落在命中的那一条而不是第一行。
+	noEvidence := Contract{
+		SocialInsurance: boolPtr(false),
+		Clauses: []Clause{
+			{Section: "第一条", Page: 1, BBox: [4]float64{57, 100, 520, 112}, Text: "本合同为固定期限劳动合同。"},
+			{Section: "第三条", Page: 1, BBox: [4]float64{57, 380, 520, 392}, Text: "乙方月工资 8000 元，工资已包含社会保险个人缴纳部分。"},
+		},
+	}
+	fb := mustHit(t, r, noEvidence, 1)
+	if !strings.Contains(fb[0].Evidence, "未见") {
+		t.Fatalf("B 的说明应包含「未见」，实际 %q", fb[0].Evidence)
+	}
+	if fb[0].Section != "第三条" || fb[0].BBox != [4]float64{57, 380, 520, 392} {
+		t.Fatalf("B 的框应落在第三条，实际 %s %v", fb[0].Section, fb[0].BBox)
+	}
+}
+
 func TestWageUnderMin(t *testing.T) {
 	r := findRule(t, "R-WAGE-UNDER-MIN")
 	frags := mustHit(t, r, Contract{SalaryMonthly: 1500, Clauses: []Clause{{Section: "第三条", Text: "月工资 1500 元。"}}}, 1)
