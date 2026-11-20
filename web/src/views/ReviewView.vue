@@ -1552,6 +1552,29 @@ void load()
   }
 }
 
+/* 手机竖屏：右栏固定 420 比视口还宽，会把 .viewer 压成 0 宽——PDF 白页从 0 宽
+   的容器里溢出来盖在风险卡上（390 下能看到一条竖边，卡片左侧被切掉）。窄到
+   放不下两栏就改上下排：原文在上、清单在下，两栏都拿到完整宽度。 */
+@media (max-width: 640px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .viewer {
+    flex: none;
+    height: 38vh;
+    min-height: 200px;
+  }
+
+  .panel {
+    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
+    border-left: 0;
+    border-top: 1px solid var(--ll-border-muted);
+  }
+}
+
 
 /* ---- 右栏折叠 ------------------------------------------------------------ */
 /* 收成图标条而不是 display:none：数字还在，用户知道有几条风险；也不改

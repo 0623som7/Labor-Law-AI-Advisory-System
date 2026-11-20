@@ -22,6 +22,10 @@ const CDP_PORT = Number(process.env.CDP_PORT || 9481)
 const CONSOLE_WAIT = 60_000
 // 审查记录超过这个年龄就判定为「复用旧结果」：一次真审查是秒级，2 分钟足够宽松。
 const REUSE_LIMIT_MS = 120_000
+// 服务器比本机快超过 30 秒，说明两边时钟没对齐——这时「多久之前创建的」不可信，
+// 与其用一个可能为负的差值蒙过去，不如明确报错让人校准（或显式跳过）。
+const SKEW_LIMIT_MS = 30_000
+const NO_FRESHNESS = process.argv.includes('--no-freshness')
 
 // 路径一律从脚本自身位置推，不依赖 cwd：从仓库根、从 web 目录、从任意地方跑都行。
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -311,13 +315,29 @@ try {
   const reviewId = accepted.review_id ?? accepted.id
   // 复用自检：同一份文件已有 succeeded 结果时，后端只回旧 review_id、不建新任务，
   // 脚本照样跑得通，但跑的是上一版规则的结论——那种「绿」没有任何意义。
-  const detail = await rest(`/reviews/${reviewId}`, { token })
-  const ageMs = Date.now() - new Date(detail.created_at).getTime()
-  must(
-    !(ageMs > REUSE_LIMIT_MS),
-    `复用了一份 ${Math.round(ageMs / 1000)} 秒前创建的审查（${reviewId}），结果可能来自旧规则；请先删掉这条 review 再跑`,
-  )
-  step('5c 复用自检', `created_at=${detail.created_at} 距今 ${(ageMs / 1000).toFixed(1)}s`)
+  // 年龄必须带符号算：本机时钟慢于服务器时 now - created_at 会是负数，
+  // 用 Math.abs 抹平就等于永远判「新鲜」，旧结果照样混过去。
+  if (!NO_FRESHNESS) {
+    const detail = await rest(`/reviews/${reviewId}`, { token })
+    const createdAt = Date.parse(detail.created_at)
+    const skewMs = createdAt - Date.now()
+    must(
+      !(skewMs > SKEW_LIMIT_MS),
+      `服务器时间比本机快 ${Math.round(skewMs / 1000)} 秒，无法判断审查新旧，请先校准本机时钟或改用 --no-freshness 跳过本项`,
+    )
+    // 反方向（本机比服务器快）故意不判：本机时钟快 2 分钟以上时，刚生成的审查会被
+    // 算成「2 分钟前创建」，但那和「真的复用了旧审查」在数据上完全同形——再加一条
+    // 反方向的时钟判据，就会把「复用旧结果」这条主判据的报错吞掉、换成一句误导人的
+    // 时钟提示。这里的取舍是：宁可让它按「复用」报错，也不让真复用蒙混过关。
+    const ageMs = Date.now() - createdAt
+    must(
+      !(ageMs > REUSE_LIMIT_MS),
+      `复用了一份 ${Math.round(ageMs / 1000)} 秒前创建的审查（${reviewId}），结果可能来自旧规则；请先删掉这条 review 再跑`,
+    )
+    step('5c 复用自检', `created_at=${detail.created_at} 距今 ${(ageMs / 1000).toFixed(1)}s`)
+  } else {
+    step('5c 复用自检', '已按 --no-freshness 跳过')
+  }
   let reviewMs = Date.now() - reviewStart
   if (accepted.task_id) reviewMs = await pollTask(token, accepted.task_id)
   step('5b 审查', `review=${reviewId} 耗时=${(reviewMs / 1000).toFixed(1)}s`)

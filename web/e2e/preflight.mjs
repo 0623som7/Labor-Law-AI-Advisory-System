@@ -118,6 +118,7 @@ async function sseChat(token, input) {
   let citations = 0
   let chars = 0
   let done = false
+  const citedIds = new Set()
 
   for await (const chunk of res) {
     buf += chunk.toString('utf8').replace(/\r\n?/g, '\n')
@@ -133,13 +134,35 @@ async function sseChat(token, input) {
         if (firstDelta === null) firstDelta = Date.now() - started
         chars++
       }
-      if (event === 'citation') citations++
+      if (event === 'citation') {
+        citations++
+        // 判据要看「引了哪几条」而不是「引了几条」：同一条法条可能分帧推送，
+        // 用 Set 去重，最后排序拼串比较，顺序不同不算不一致。
+        // 帧形状是 {"seq":3,"citation":{"statute_id":"SIL-63",…}}，条文嵌套在 citation 里。
+        const raw = /^data: (.+)$/m.exec(frame)?.[1]
+        if (raw) {
+          try {
+            const payload = JSON.parse(raw)
+            const id = payload.citation?.statute_id || payload.statute_id || payload.id
+            if (id) citedIds.add(String(id))
+          } catch {
+            /* 帧里不是 JSON 就不参与判据，别让解析失败把整项打成失败 */
+          }
+        }
+      }
       if (event === 'done') done = true
     }
     if (done) break
   }
   res.destroy()
-  return { firstDeltaMs: firstDelta, totalMs: Date.now() - started, citations, chars, done }
+  return {
+    firstDeltaMs: firstDelta,
+    totalMs: Date.now() - started,
+    citations,
+    chars,
+    done,
+    citedIds: [...citedIds].sort(),
+  }
 }
 
 // 演示账号：固定号，先登录，账号不存在才注册。注册限流 5 次/分钟，
@@ -250,7 +273,7 @@ const checks = [
     },
   },
   {
-    name: '向量检索生效',
+    name: '同一问题两次回答引用的法条一致（检索稳定）',
     async run() {
       const token = await demoToken()
       const question = '公司不给我交社保怎么办'
@@ -262,16 +285,23 @@ const checks = [
       if (second.citations < 1) throw new Error('第二遍 0 条 citation')
 
       const fmt = (r) => `${(r.totalMs / 1000).toFixed(1)}s`
-      const faster = second.totalMs + 300 < first.totalMs
-      const detail =
-        `两遍各 ${first.citations} 条 citation · ` +
-        `第一遍 ${fmt(first)}（首字 ${first.firstDeltaMs === null ? '无' : (first.firstDeltaMs / 1000).toFixed(1) + 's'}）· ` +
-        `第二遍 ${fmt(second)}`
-      if (faster) return { note: detail + ' · 查询向量缓存生效' }
-      return {
-        warn: true,
-        note: detail + ' · 缓存未命中（不影响演示，但会慢 0.7s）',
+      // 耗时只当信息：同一句话跑两遍，第二次快多少取决于向量缓存、模型排队，
+      // 拿它当通过/失败判据会在演示前误报（答辩投屏上一条 ⚠ 很难解释）。
+      const timing = `（${fmt(first)} / ${fmt(second)}）`
+      const a = first.citedIds
+      const b = second.citedIds
+      const onlyFirst = a.filter((id) => !b.includes(id))
+      const onlySecond = b.filter((id) => !a.includes(id))
+      if (!a.length || !b.length) {
+        throw new Error(`没取到条文 ID（第一遍 ${a.length} 条，第二遍 ${b.length} 条）`)
       }
+      if (onlyFirst.length || onlySecond.length) {
+        throw new Error(
+          `两次引用不一致${timing} · 第一遍 ${a.join(' / ')} · 第二遍 ${b.join(' / ')}` +
+            ` · 只在第一遍：${onlyFirst.join(' / ') || '无'} · 只在第二遍：${onlySecond.join(' / ') || '无'}`,
+        )
+      }
+      return `${a.length} 条引用逐条一致 · ${a.join(' / ')} ${timing}`
     },
   },
   {
