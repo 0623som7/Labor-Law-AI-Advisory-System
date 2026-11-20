@@ -17,9 +17,10 @@ test('只有条款：就只显示条款', () => {
   assert.equal(sessionTitle({ section: '第三条' }), '第三条')
 })
 
-test('超长文件名按 12 字截断加省略号', () => {
+test('超长文件名按 18 字截断加省略号', () => {
   const long = '广州百联家政服务有限公司劳动合同（2026版）'
-  assert.equal(sessionTitle({ fileName: long, section: '第七条' }), '广州百联家政服务有限公司… · 第七条')
+  // 18 字：广州百联家政服务有限公司劳动合同（2 —— 常见名如 contract-demo.pdf 能整个装下。
+  assert.equal(sessionTitle({ fileName: long, section: '第七条' }), '广州百联家政服务有限公司劳动合同（2… · 第七条')
 })
 
 test('超长条款按 10 字截断', () => {
