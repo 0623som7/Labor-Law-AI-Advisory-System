@@ -95,3 +95,37 @@ export function takePending(pending: string, sending: boolean): string {
   if (sending || pending === '') return ''
   return pending
 }
+
+/**
+ * 生成期间输入框的锁形态。
+ *
+ * 为什么不是 disabled：disabled 的元素不可聚焦，浏览器会把焦点抛回 body，
+ * 于是 Esc 的 keydown 发不到抽屉里，用户只能去点右上角的 ×（D5b 的现场）。
+ * readonly 保留焦点与键盘事件，字符进不去、Esc 还能到。
+ */
+export interface InputLock {
+  readonly: boolean
+  disabled: boolean
+  ariaBusy: 'true' | 'false'
+}
+
+export function inputLock(busy: boolean): InputLock {
+  return { readonly: busy, disabled: false, ariaBusy: busy ? 'true' : 'false' }
+}
+
+/**
+ * 流结束后要不要把焦点还给输入框。
+ *
+ * 只在「刚刚还在生成、现在结束、焦点已经掉到 body」时抢回来；用户在别处
+ * 打字（比如搜合同）时不抢。抽成纯函数是为了能单测这条判定。
+ */
+export function shouldRestoreFocus(prevSending: boolean, sending: boolean, focusOnBody: boolean): boolean {
+  return prevSending && !sending && focusOnBody
+}
+
+/** 焦点归还：拿到元素才动，返回是否真的聚焦了。 */
+export function focusField(el: { focus: () => void } | null | undefined, when: boolean): boolean {
+  if (!when || !el) return false
+  el.focus()
+  return true
+}

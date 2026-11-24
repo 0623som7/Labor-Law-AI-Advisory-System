@@ -23,9 +23,12 @@ import {
   appendDelta,
   beginTurn,
   finishTurn,
+  focusField,
   initialInlineState,
+  inputLock,
   lastUserTextOf,
   setSession,
+  shouldRestoreFocus,
   takePending,
 } from '@/utils/inline-chat'
 import type { InlineState } from '@/utils/inline-chat'
@@ -155,6 +158,9 @@ const pending = ref('')
 
 const busy = computed(() => state.value.sending)
 
+/** 输入框在生成期间用 readonly 而不是 disabled：disabled 会把焦点赶到 body，Esc 就没人接。 */
+const lock = computed(() => inputLock(busy.value))
+
 async function scrollToBottom(): Promise<void> {
   const el = scroller.value
   if (!el) return
@@ -183,6 +189,10 @@ async function send(raw: string): Promise<void> {
   activeIndex.value = started.index
   input.value = ''
   await scrollToBottom()
+  // 发送按钮会因 busy 立刻 disabled，点它的那次焦点跟着掉到 body——此时按 Esc
+  // 事件发不到抽屉里（容器 keydown 收不到 body 上的按键）。把焦点放回输入框：
+  // 它此刻是 readonly，收键但不吃字符，Esc 照常冒泡到容器。
+  await focusInput()
 
   const withFile = !attachedOnce.value
   attachedOnce.value = true
@@ -251,6 +261,17 @@ function onKeydown(evt: KeyboardEvent): void {
   void send(input.value)
 }
 
+/**
+ * 容器级 Esc：焦点在抽屉里任何可聚焦处（readonly 的输入框、拖拽条、折叠块、
+ * 「在对话页继续」链接）都能关。输入框自己已经处理过的那一次会 preventDefault，
+ * 这里看到 defaultPrevented 就跳过，避免一次按键关两下。
+ */
+function onPanelKey(evt: KeyboardEvent): void {
+  if (evt.key !== 'Escape' || evt.defaultPrevented) return
+  evt.preventDefault()
+  emit('close')
+}
+
 // 点「就问这条」只更新上下文并聚焦输入框，绝不代发。
 // 用户点的是"我想就这一条提问"，不是"替我提问"。曾经这里直接 send(props.seed)，
 // 结果是每点一次就往历史里塞一句他没问过的话，还把他上一段问答顶出视口。
@@ -266,11 +287,16 @@ watch(
 
 // 一轮结束后把排队的那一句发出去。不 abort 当前请求：中断会留一句「已停止」，
 // 看着像系统出错，改成等它答完再接力。
-watch(busy, (sending) => {
+// 同时把焦点还给输入框：生成期间用户可能点走了（或锁形态换过一次），
+// 流一结束就掉在 body 上，键盘用户得从头 Tab 一遍才能接着输入。
+watch(busy, (sending, prev) => {
   const next = takePending(pending.value, sending)
-  if (next === '') return
-  pending.value = ''
-  void send(next)
+  if (next !== '') {
+    pending.value = ''
+    void send(next)
+  }
+  const onBody = typeof document !== 'undefined' && document.activeElement === document.body
+  focusField(inputEl.value, shouldRestoreFocus(prev === true, sending, onBody))
 })
 
 const media = typeof window !== 'undefined' ? window.matchMedia('(max-width: 900px)') : null
@@ -328,7 +354,13 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 </script>
 
 <template>
-  <section ref="chatRoot" class="inline-chat" :class="{ 'is-resizing': resizing }" aria-label="就这份合同提问">
+  <section
+    ref="chatRoot"
+    class="inline-chat"
+    :class="{ 'is-resizing': resizing }"
+    aria-label="就这份合同提问"
+    @keydown="onPanelKey"
+  >
     <div
       v-if="resizerVisible"
       class="ic-resizer"
@@ -400,7 +432,8 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
         rows="2"
         :placeholder="props.section !== '' ? `想问「${props.section}」什么？` : '就这份合同提问…'"
         title="Enter 发送，Shift+Enter 换行"
-        :disabled="busy"
+        :readonly="lock.readonly"
+        :aria-busy="lock.ariaBusy"
         @keydown="onKeydown"
       ></textarea>
       <button type="button" class="ic-send" :disabled="busy || input.trim() === ''" @click="onSendClick">
@@ -581,6 +614,12 @@ const lastUserText = computed(() => lastUserTextOf(state.value))
 .ic-input:focus {
   outline: none;
   border-color: var(--ll-primary);
+}
+
+/* 生成期间是 readonly 不是 disabled：字仍可选可复制，用弱化字色提示"暂时改不了"。
+   disabled 会把焦点抛回 body——Esc 就再也到不了抽屉（D5b）。 */
+.ic-input[readonly] {
+  color: var(--ll-text-subtle);
 }
 
 .ic-send {

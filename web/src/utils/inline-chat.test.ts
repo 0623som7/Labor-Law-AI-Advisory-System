@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import {
@@ -6,9 +7,12 @@ import {
   appendDelta,
   beginTurn,
   finishTurn,
+  focusField,
   initialInlineState,
+  inputLock,
   lastUserTextOf,
   setSession,
+  shouldRestoreFocus,
   takePending,
 } from './inline-chat.ts'
 import type { Citation } from '@/utils/sse'
@@ -147,4 +151,53 @@ test('takePending 空闲时出队', () => {
 
 test('takePending 队列为空返回空串', () => {
   assert.equal(takePending('', false), '')
+})
+
+test('inputLock 生成期间是 readonly 而不是 disabled', () => {
+  const busy = inputLock(true)
+  assert.equal(busy.readonly, true)
+  assert.equal(busy.disabled, false)
+  assert.equal(busy.ariaBusy, 'true')
+
+  const idle = inputLock(false)
+  assert.equal(idle.readonly, false)
+  assert.equal(idle.disabled, false)
+  assert.equal(idle.ariaBusy, 'false')
+})
+
+test('InlineChat 的输入框按 lock 绑定 readonly / aria-busy，抽屉根元素接容器级 Esc', () => {
+  // 不挂组件的渲染断言：直接读 SFC 模板，锁的形态写在模板上才算数，
+  // 只测纯函数而模板仍然 :disabled="busy" 时这条会红。
+  const sfc = readFileSync(new URL('../components/InlineChat.vue', import.meta.url), 'utf8')
+  const ta = sfc.slice(sfc.indexOf('<textarea'), sfc.indexOf('</textarea>'))
+  assert.match(ta, /:readonly="lock\.readonly"/)
+  assert.match(ta, /:aria-busy="lock\.ariaBusy"/)
+  assert.doesNotMatch(ta, /:disabled="busy"/)
+
+  const root = sfc.slice(sfc.indexOf('<section'), sfc.indexOf('</section>'))
+  assert.match(root, /@keydown="onPanelKey"/)
+})
+
+test('流结束时 only 在焦点掉到 body 时才归还焦点，且 takePending 复位不抛', () => {
+  const started = beginTurn(initialInlineState(), '问一句')
+  assert.equal(started.state.sending, true)
+
+  // 生成中：不出队、不抢焦点
+  assert.equal(takePending('排队的一问', true), '')
+  assert.equal(shouldRestoreFocus(false, true, true), false)
+
+  const done = finishTurn(started.state, '')
+  assert.equal(done.sending, false)
+  assert.equal(takePending('排队的一问', done.sending), '排队的一问')
+
+  let focused = 0
+  const el = { focus: () => { focused += 1 } }
+  assert.equal(focusField(el, shouldRestoreFocus(true, false, true)), true)
+  assert.equal(focused, 1)
+
+  // 焦点在别处（用户自己点的）不抢
+  assert.equal(focusField(el, shouldRestoreFocus(true, false, false)), false)
+  assert.equal(focused, 1)
+  // 没有元素时不炸
+  assert.equal(focusField(null, true), false)
 })
