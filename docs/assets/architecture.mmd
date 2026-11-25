@@ -1,0 +1,48 @@
+flowchart TB
+  %% 答辩 P4 架构图 —— mermaid 源（内容与 docs/assets/architecture.png 一致）
+  %% 为什么 PNG 不是这个文件直接渲染的：mermaid-cli 12.2.0 忽略 subgraph 内的 direction，
+  %% 实测「三段横排 + 右侧单列」拿不到（输出退化成 0.67 宽高比的竖堆叠）。
+  %% 因此 architecture.png 由 web/e2e/.tmp/ppt/make_arch.py 按本文件内容逐像素绘制（2400×1350）。
+  %% 这个 .mmd 保留为可渲染的同内容源，换工具时可原样复用。
+
+  subgraph R1["第一段 · 浏览器 与 接入层"]
+    direction LR
+    N1["① 浏览器 · Vue3 + TS<br/>上传页 / 审查页 / 对话页"]
+    N2["② nginx 1.27<br/>443 终止 · /api 反向代理 · 静态资源托管"]
+    N1 -->|443| N2
+    N1 -.->|8443 兜底| N2
+  end
+
+  subgraph R2["第三层 · 应用层 Go + Gin"]
+    direction LR
+    M1["③ 会话鉴权<br/>JWT 签发校验 · 双桶限流"]
+    M2["对话链路<br/>检索 → 提示词 → 流式输出"]
+    M3["审查链路<br/>21 条规则 → 坐标回填"]
+    M4["worker<br/>异步审查任务 · 重启不清零"]
+  end
+
+  subgraph R3["第四层 · 数据层（自建 Docker）"]
+    direction LR
+    D1[("④ MySQL 8<br/>596 条法条<br/>会话 / 审查 / 向量")]
+    D2[("Redis<br/>限流桶 · 向量缓存")]
+  end
+
+  subgraph R4["第五层 · 外部模型 DashScope"]
+    direction TB
+    G1["⑤ qwen-plus<br/>对话生成"]
+    G2["text-embedding-v3<br/>1024 维向量"]
+  end
+
+  N2 -->|/api| R2
+  R2 --> R3
+  R2 -->|生成| G1
+  R2 -->|向量召回| G2
+
+  style R1 fill:#FFFFFF,stroke:#1F3A5F,stroke-width:2px,color:#1F3A5F
+  style R2 fill:#E8EEF6,stroke:#1F3A5F,stroke-width:2px,color:#1F3A5F
+  style R3 fill:#F2F5F3,stroke:#1F3A5F,stroke-width:2px,color:#1F3A5F
+  style R4 fill:#F7F4EE,stroke:#1F3A5F,stroke-width:2px,color:#1F3A5F
+  style N1 fill:#F5F7FA,stroke:#1F3A5F,stroke-width:1.2px,color:#1B2A41
+  style N2 fill:#EEF2F7,stroke:#1F3A5F,stroke-width:1.2px,color:#1B2A41
+  classDef inner fill:#FFFFFF,stroke:#1F3A5F,stroke-width:1.2px,color:#1B2A41
+  class M1,M2,M3,M4,D1,D2,G1,G2 inner
