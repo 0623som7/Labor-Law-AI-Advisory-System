@@ -159,15 +159,25 @@ func ruleCompeteNoPay() Rule {
 		Title:    "竞业限制未约定经济补偿",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第二十三条"}},
 		Check: func(c Contract) []Fragment {
+			// 竞业限制的补偿常单独写在薪酬/离职条款里。只在同一条内找补偿，
+			// 会把“违约金一条 + 补偿另一条”的合规约定误报成未补偿。
+			hasPay := false
+			for _, cl := range c.Clauses {
+				if competePayRe.MatchString(cl.Text) {
+					hasPay = true
+					break
+				}
+			}
+			if hasPay {
+				return nil
+			}
+
 			var frags []Fragment
 			for _, cl := range c.Clauses {
 				if !competeRe.MatchString(cl.Text) {
 					continue
 				}
 				if !penaltyRe.MatchString(cl.Text) {
-					continue
-				}
-				if competePayRe.MatchString(cl.Text) {
 					continue
 				}
 				frags = append(frags, newFragmentAt(cl, "合同约定："+strings.TrimSpace(cl.Text),

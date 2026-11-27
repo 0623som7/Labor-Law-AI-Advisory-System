@@ -208,6 +208,27 @@ func TestCompeteWithPayNotReported(t *testing.T) {
 	}}}, 0)
 }
 
+// 竞业违约金与补偿金额常分别写在两条里；只要全篇约定了补偿，就不应报未补偿。
+func TestCompetePayInOtherClauseNotReported(t *testing.T) {
+	r := findExtendedRule(t, "R-COMPETE-NO-PAY")
+	mustHit(t, r, Contract{Clauses: []Clause{
+		{Section: "第十五条", Text: "乙方在任职期间及离职后两年内，不得在与甲方有竞争性的单位任职。乙方违反前述约定的，应当向甲方支付违约金人民币 50000 元。"},
+		{Section: "第十六条", Text: "甲方在竞业限制期限内按月向乙方支付经济补偿 3000 元。"},
+	}}, 0)
+}
+
+// 补偿没有写进竞业条款时，只要另一条也没有补偿，仍然必须报。
+func TestCompeteWithoutPayAnywhereReported(t *testing.T) {
+	r := findExtendedRule(t, "R-COMPETE-NO-PAY")
+	frags := mustHit(t, r, Contract{Clauses: []Clause{
+		{Section: "第十五条", Text: "乙方在任职期间及离职后两年内，不得在与甲方有竞争性的单位任职。乙方违反前述约定的，应当向甲方支付违约金人民币 50000 元。"},
+		{Section: "第十六条", Text: "乙方应保守甲方商业秘密。"},
+	}}, 1)
+	if frags[0].Section != "第十五条" {
+		t.Fatalf("命中条款 = %q，期望第十五条", frags[0].Section)
+	}
+}
+
 // 只提竞业限制、没写违约金：不进这条规则，避免把合规条款当风险。
 func TestCompeteMentionWithoutPenalty(t *testing.T) {
 	r := findExtendedRule(t, "R-COMPETE-NO-PAY")
