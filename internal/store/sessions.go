@@ -256,13 +256,15 @@ func (m *Messages) Append(ctx context.Context, msg *port.ChatMessage) error {
 //
 // 实现上是"先倒序取 limit 条，再翻转"：直接正序 LIMIT 拿到的是最早的一批，
 // 而对话历史要的永远是最新的那几轮。
+// 并列时按 id 升序：assistant 的 id 来自请求开始生成的 messageID，
+// 恒小于 user 行插入时生成的 ULID，升序才能让翻转后 user 在前。
 func (m *Messages) ListBySession(ctx context.Context, sessionID string, limit int) ([]port.ChatMessage, error) {
 	limit = normalizePage(limit, defaultMessageLimit, maxMessageLimit)
 
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT `+messageColumns+` FROM messages
 		 WHERE session_id = ?
-		 ORDER BY created_at DESC, id DESC
+		 ORDER BY created_at DESC, id ASC
 		 LIMIT ?`, sessionID, limit)
 	if err != nil {
 		return nil, port.Wrap(port.CodeInternal, err, "查询消息失败")

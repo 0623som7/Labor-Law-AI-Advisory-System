@@ -507,3 +507,52 @@ func TestSessionsListIncludesFileSnapshot(t *testing.T) {
 		t.Fatalf("未附合同的会话 file_id=%q file_name=%q，期望都是空串", s.FileID, s.FileName)
 	}
 }
+
+// TestListBySessionOrdersUserBeforeAssistantOnSameMillisecond 守住"同一毫秒落库的一问一答不能倒序"。
+//
+// 缺陷形态（线上 2026-11-27 复现）：persistTurn 在同一个事务里相邻插入 user 与 assistant，
+// 两行 created_at 都是 DATETIME(3)，绝大多数落在同一毫秒；user 行的 id 由 Append 现生成
+// （更大），assistant 行的 id 是请求开始时生成的 messageID（更小）。倒序取数再翻转时
+// 若二级排序也取 DESC，就会把 assistant 翻到 user 前面，界面上成了"答案在上、提问在下"。
+func TestListBySessionOrdersUserBeforeAssistantOnSameMillisecond(t *testing.T) {
+	db := testDB(t)
+	s := newSession(id.New())
+	cleanupSessions(t, db, s.ID)
+
+	ctx := context.Background()
+	if err := NewSessions(db).Create(ctx, s); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	assistantID := id.New()
+	userID := id.New()
+	if assistantID >= userID {
+		t.Fatalf("构造失败：assistant 的 id 应小于 user，实际 %s vs %s", assistantID, userID)
+	}
+
+	// 直接写行以固定 created_at：Append 不写 created_at，由列默认值给当前时间，
+	// 两次 Append 未必落在同一毫秒——而"同毫秒"正是这条用例要构造的条件。
+	for _, row := range []struct {
+		id, role, content string
+	}{
+		{assistantID, string(port.RoleAssistant), "答案在上"},
+		{userID, string(port.RoleUser), "提问在下"},
+	} {
+		if _, err := db.ExecContext(ctx, `INSERT INTO messages (id, session_id, role, content, created_at)
+			VALUES (?, ?, ?, ?, '2026-11-27 08:48:46.823')`, row.id, s.ID, row.role, row.content); err != nil {
+			t.Fatalf("插入 %s 行: %v", row.role, err)
+		}
+	}
+
+	got, err := NewMessages(db).ListBySession(ctx, s.ID, 10)
+	if err != nil {
+		t.Fatalf("ListBySession: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("应有 2 条消息，实际 %d", len(got))
+	}
+	if got[0].Role != port.RoleUser || got[1].Role != port.RoleAssistant {
+		t.Fatalf("同毫秒并列时 user 必须在前，实际 %v(%s) / %v(%s)",
+			got[0].Role, got[0].Content, got[1].Role, got[1].Content)
+	}
+}
