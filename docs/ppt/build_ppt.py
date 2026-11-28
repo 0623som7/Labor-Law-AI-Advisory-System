@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # 生成的产物：docs/ppt/答辩.pptx（docs/ppt/自检/slide-*.png 由它渲染）
+# 自检图（docs/ppt/自检/slide-*.png）需手工用 LibreOffice Kit 渲染，本脚本不生成
 # 改产物请改本脚本后重跑，不要手改 PNG / pptx
 # 运行方式：在仓库根目录执行 python docs/ppt/build_ppt.py
 """生成答辩 PPT（12 页，16:9）。数字只取白名单，不新增任何指标。"""
