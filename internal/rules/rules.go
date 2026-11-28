@@ -425,7 +425,8 @@ func ruleTermNoEnd() Rule {
 	return Rule{
 		ID:       "R-TERM-NO-END",
 		Severity: port.SeverityMedium,
-		Title:    "合同没写起止日期",
+		// 三种分支都以 end == "" 为前提，缺终止日就命中，"起止" 会自相矛盾。
+		Title:    "合同没写终止日期",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第十二条"}},
 		Check: func(c Contract) []Fragment {
 			start := strings.TrimSpace(c.TermStart)

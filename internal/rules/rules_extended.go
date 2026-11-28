@@ -204,7 +204,7 @@ func ruleInvalidExemption() Rule {
 	return textRule(
 		"R-INVALID-EXEMPTION",
 		port.SeverityHigh,
-		"约定工伤概不负责等免责",
+		"约定免责或排除仲裁权利",
 		[]ArticleRef{{Law: LawLaborContract, Article: "第二十六条"}},
 		invalidExemptionRes,
 		"免除工伤、人身损害责任或排除劳动者的争议解决权利",
@@ -242,7 +242,7 @@ func ruleWorkHoursExcess() Rule {
 	return textRule(
 		"R-WORK-HOURS-EXCESS",
 		port.SeverityMedium,
-		"每天工作超过八小时",
+		"工时超过法定上限",
 		[]ArticleRef{{Law: LawLabor, Article: "第三十六条"}},
 		res,
 		"合同约定的每日或每周工作时间超过法定上限",
