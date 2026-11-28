@@ -296,9 +296,10 @@ func ruleDeposit() Rule {
 		Title:    "约定收取押金或扣押证件",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第九条"}},
 		Check: func(c Contract) []Fragment {
-			explicit := c.Deposit != nil && *c.Deposit
-			hits := clausesMentioning(c, "押金", "保证金", "扣押", "扣留身份证", "服装费", "培训费")
-			if !explicit && len(hits) == 0 {
+			hits := clausesMentioning(c, "押金", "保证金", "扣押", "扣留身份证", "服装费")
+			// 模型兜底可能把无关条款误标为押金。规则必须看到原文凭据，
+			// 否则会把第一条整段框住并给出“删除押金”的错误建议。
+			if len(hits) == 0 {
 				return nil
 			}
 			evidence := "合同约定用人单位向劳动者收取押金/保证金或扣押证件"
