@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { dedupeTitles, parseAskTitle, sessionTitle, stripExtension } from './session-title.ts'
+import { dedupeTitles, parseAskTitle, sessionSubtitle, sessionTitle, stripExtension } from './session-title.ts'
 
 test('有文件名：文件名保留扩展名 + 条款', () => {
   assert.equal(sessionTitle({ fileName: '劳动合同.pdf', section: '第七条' }), '劳动合同.pdf · 第七条')
@@ -117,4 +117,21 @@ test('会话带了文件名：标题以文件名开头（侧栏据此分辨是�
     '劳动合同.pdf · 第七条 #2',
     '劳动合同.pdf · 第七条 #3',
   ])
+})
+
+test('副标题：文件名 · 时间', () => {
+  assert.equal(sessionSubtitle('contract-demo.pdf', '3 分钟前'), 'contract-demo.pdf · 3 分钟前')
+})
+
+test('副标题：没有文件名时只显示时间，不留一个孤零零的分隔点', () => {
+  assert.equal(sessionSubtitle(undefined, '昨天'), '昨天')
+  assert.equal(sessionSubtitle('   ', '昨天'), '昨天')
+})
+
+test('副标题：文件名超过 18 字要截断，时间不许被截掉', () => {
+  const long = '广州百联家政服务有限公司劳动合同（2026 版）.pdf'
+  const sub = sessionSubtitle(long, '2 天前')
+  assert.ok(sub.endsWith(' · 2 天前'), sub)
+  assert.ok(sub.includes('…'), sub)
+  assert.equal([...sub.split(' · ')[0]].length, 19)
 })

@@ -100,6 +100,18 @@ export function sessionTitle(input: {
 }
 
 /**
+ * 侧栏副标题：`文件名 · 时间`，没有文件名时只显示时间。
+ *
+ * 文件名在这里只做一次 clip，超宽的单行省略交给 CSS：侧栏一栏两百多像素，
+ * 用 JS 按像素算宽会在字体没加载完时算错，换字号也不会跟着变。
+ */
+export function sessionSubtitle(fileName: string | undefined, time: string): string {
+  const file = (fileName ?? '').trim()
+  if (file === '') return time
+  return `${clip(file, FILE_MAX)} · ${time}`
+}
+
+/**
  * 同名去重：第二次出现起追加 ` #2`、` #3`……
  *
  * 只在渲染层做，按传入顺序（列表是时间倒序）编号——最新的那条不带后缀，

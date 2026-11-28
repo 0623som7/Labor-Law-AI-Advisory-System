@@ -42,7 +42,7 @@ import {
   readSideWidth,
   writeSideWidth,
 } from '@/utils/splitter'
-import { dedupeTitles, parseAskTitle, sessionTitle } from '@/utils/session-title'
+import { dedupeTitles, parseAskTitle, sessionSubtitle, sessionTitle } from '@/utils/session-title'
 import { isNetworkFailure, isOfflineError } from '@/utils/net-error'
 
 /** 页面上的一条消息。历史消息与流式消息共用这个形状，差别只在有没有引用。 */
@@ -850,7 +850,7 @@ onMounted(() => {
               @click="openSession(row.session)"
             >
               <span class="session-name">{{ row.title }}</span>
-              <span class="session-time">{{ formatRelative(row.session.updated_at) }}</span>
+              <span class="session-time">{{ sessionSubtitle(row.session.file_name, formatRelative(row.session.updated_at)) }}</span>
             </button>
             <button
               type="button"
@@ -1233,9 +1233,13 @@ onMounted(() => {
 }
 
 .session-time {
-  /* 会话时间：时间 */
+  /* 会话时间：文件名 · 时间。文件名再长也不许把 300px 的侧栏撑宽，单行省略。 */
+  max-width: 100%;
+  overflow: hidden;
   font-size: var(--ll-fs-meta);
   color: var(--ll-text-hint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-del {

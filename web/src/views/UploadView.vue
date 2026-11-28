@@ -261,7 +261,10 @@ async function retry(): Promise<void> {
           <div class="drop-inner">
             <div class="drop-icon">PDF</div>
             <p class="drop-main">把合同拖到这里，或<em>点击选择文件</em></p>
-            <p class="drop-hint">只支持 PDF，单份不超过 {{ MAX_UPLOAD_LABEL }}</p>
+            <p class="drop-hint">
+              支持 {{ MAX_UPLOAD_LABEL }} 以内的 PDF；需要能复制文字的文本型 PDF，
+              扫描件、图片型 PDF 无法识别，会提示改用 OCR
+            </p>
           </div>
         </el-upload>
 

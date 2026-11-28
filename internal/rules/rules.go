@@ -170,7 +170,7 @@ func ruleProbationMatch() Rule {
 	return Rule{
 		ID:       "R-PROBATION-MATCH",
 		Severity: port.SeverityHigh,
-		Title:    "试用期长度超过法定上限",
+		Title:    "试用期超过法定期限",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第十九条"}},
 		Check: func(c Contract) []Fragment {
 			limit, ok := probationLimit(c)
@@ -186,10 +186,10 @@ func ruleProbationMatch() Rule {
 				// "不满三个月，不得约定试用期"，与同一句里的"上限六个月"自相矛盾。
 				// 这种合同的上限来自"只有起始日"这条兜底（按无固定期限取六个月），
 				// 所以只陈述事实、不判档位。
-				evidence = fmt.Sprintf("约定试用期 %s 个月；合同未约定终止日期，无法按期限档位判断上限，但任何情形下试用期不得超过 %d 个月",
+				evidence = fmt.Sprintf("约定试用期 %s 个月；合同未约定终止日期，无法按期限档位判断上限，但任何情形下试用期不得超过 %d 个月（劳动合同法第十九条）",
 					formatMonths(c.ProbationMonths), limit)
 			} else {
-				evidence = fmt.Sprintf("约定试用期 %s 个月；合同期限 %s 共 %d 个月，%s，法定上限为 %d 个月",
+				evidence = fmt.Sprintf("约定试用期 %s 个月；合同期限 %s 共 %d 个月，%s，法定上限为 %d 个月（劳动合同法第十九条）",
 					formatMonths(c.ProbationMonths),
 					termRange(c.TermStart, c.TermEnd), months, termBand(months), limit)
 			}
@@ -210,7 +210,7 @@ func ruleProbationSalary() Rule {
 	return Rule{
 		ID:       "R-PROBATION-SALARY",
 		Severity: port.SeverityHigh,
-		Title:    "试用期工资低于转正工资的 80%",
+		Title:    "试用期工资低于转正的八成",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第二十条"}},
 		Check: func(c Contract) []Fragment {
 			if c.SalaryProbation <= 0 || c.SalaryMonthly <= 0 {
@@ -220,7 +220,7 @@ func ruleProbationSalary() Rule {
 			if c.SalaryProbation >= floor {
 				return nil
 			}
-			evidence := fmt.Sprintf("试用期工资 %s 元/月，低于转正工资 %s 元/月的 80%%（%s 元/月）",
+			evidence := fmt.Sprintf("试用期工资 %s 元/月，低于转正工资 %s 元/月的 80%%（%s 元/月）（劳动合同法第二十条）",
 				formatMoney(c.SalaryProbation), formatMoney(c.SalaryMonthly), formatMoney(floor))
 			// 定位必须落在"写了试用期工资"的那一条，而不是最先提到"试用期"的那条。
 			// 反例（评测样本 B.pdf 实测）：第二条"试用期二个月"完全合法，第四条才是
@@ -276,6 +276,12 @@ func ruleProbationOnce() Rule {
 			}
 			evidence := fmt.Sprintf("合同中有 %d 处互不相同的试用期约定：%s 个月",
 				len(lengths), strings.Join(lengths, " 个月、"))
+			// 上限只在能按合同期限判档位时补：没有起止日时 probationLimit 的兜底
+			// 是按无固定期限取六个月，写进证据会与这份合同的真实期限自相矛盾。
+			if limit, ok := probationLimit(c); ok {
+				evidence += fmt.Sprintf("，法定上限 %d 个月", limit)
+			}
+			evidence += "（劳动合同法第十九条）"
 			return []Fragment{newFragmentAt(agreements[0].clause,
 				evidence,
 				port.Suggestion{
@@ -293,7 +299,7 @@ func ruleDeposit() Rule {
 	return Rule{
 		ID:       "R-DEPOSIT",
 		Severity: port.SeverityHigh,
-		Title:    "约定收取押金或扣押证件",
+		Title:    "向劳动者收取押金",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第九条"}},
 		Check: func(c Contract) []Fragment {
 			hits := clausesMentioning(c, "押金", "保证金", "扣押", "扣留身份证", "服装费")
@@ -328,7 +334,7 @@ func ruleNoSocialInsurance() Rule {
 	return Rule{
 		ID:       "R-NO-SOCIAL-INS",
 		Severity: port.SeverityHigh,
-		Title:    "未约定缴纳社会保险",
+		Title:    "约定由劳动者自行缴纳社保",
 		Articles: []ArticleRef{
 			{Law: LawLaborContract, Article: "第十七条"},
 			{Law: LawLabor, Article: "第七十二条"},
@@ -387,7 +393,7 @@ func ruleWageUnderMin() Rule {
 	return Rule{
 		ID:       "R-WAGE-UNDER-MIN",
 		Severity: port.SeverityMedium,
-		Title:    "约定工资低于当地最低工资标准",
+		Title:    "工资低于当地最低工资标准",
 		Articles: []ArticleRef{{Law: LawLabor, Article: "第四十八条"}},
 		Check: func(c Contract) []Fragment {
 			if c.SalaryMonthly <= 0 {
@@ -400,7 +406,7 @@ func ruleWageUnderMin() Rule {
 			if c.SalaryMonthly >= min {
 				return nil
 			}
-			evidence := fmt.Sprintf("约定月工资 %s 元，低于最低工资标准 %s 元/月",
+			evidence := fmt.Sprintf("约定月工资 %s 元，低于最低工资标准 %s 元/月（劳动法第四十八条）",
 				formatMoney(c.SalaryMonthly), formatMoney(min))
 			return []Fragment{newFragment(c, []string{"工资", "薪资", "劳动报酬"},
 				evidence,
@@ -419,7 +425,7 @@ func ruleTermNoEnd() Rule {
 	return Rule{
 		ID:       "R-TERM-NO-END",
 		Severity: port.SeverityMedium,
-		Title:    "未约定劳动合同期限",
+		Title:    "合同没写起止日期",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第十二条"}},
 		Check: func(c Contract) []Fragment {
 			start := strings.TrimSpace(c.TermStart)
@@ -428,16 +434,16 @@ func ruleTermNoEnd() Rule {
 			if strings.Contains(c.ContractType, "无固定期限") || strings.Contains(c.ContractType, "以完成一定工作任务") {
 				return nil
 			}
-			evidence := "合同未见起始日与终止日的约定"
+			evidence := "合同未见起始日与终止日的约定（劳动合同法第十二条）"
 			switch {
 			case start == "" && end == "":
 				// 完全没写期限，走默认证据文案。
 			case start != "" && end == "":
 				// 有起始日没有终止日：固定期限合同必须两者都有，
 				// 只写一半在争议时会被认定为未约定期限（甚至被视为无固定期限）。
-				evidence = "合同只约定了起始日（" + start + "），未约定终止日"
+				evidence = "合同只约定了起始日（" + start + "），未约定终止日（劳动合同法第十二条）"
 			case start == "" && end != "":
-				evidence = "合同只约定了终止日（" + end + "），未约定起始日"
+				evidence = "合同只约定了终止日（" + end + "），未约定起始日（劳动合同法第十二条）"
 			default:
 				return nil
 			}
@@ -458,7 +464,7 @@ func ruleOvertimeFree() Rule {
 	return Rule{
 		ID:       "R-OVERTIME-FREE",
 		Severity: port.SeverityMedium,
-		Title:    "约定无偿加班或不支付加班费",
+		Title:    "约定加班不另付加班费",
 		Articles: []ArticleRef{{Law: LawLabor, Article: "第四十四条"}},
 		Check: func(c Contract) []Fragment {
 			explicit := c.HasOvertimePay != nil && !*c.HasOvertimePay
@@ -487,6 +493,9 @@ func ruleOvertimeFree() Rule {
 					at = firstClause(c)
 				}
 			}
+			// 证据只写"合同怎么约定的"加法条标准，不替用户算差额：
+			// 加班费基数各地说法不一，算出来反而会错。
+			evidence += "；法定应不低于 150%/200%/300%"
 			return []Fragment{newFragmentAt(at, evidence,
 				port.Suggestion{
 					Type:     "rewrite",

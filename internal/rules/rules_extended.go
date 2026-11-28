@@ -110,7 +110,7 @@ func rulePenaltyUnlawful() Rule {
 	return Rule{
 		ID:       "R-PENALTY-UNLAWFUL",
 		Severity: port.SeverityHigh,
-		Title:    "违法约定劳动者违约金",
+		Title:    "离职违约金没有法律依据",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第二十五条"}},
 		Check: func(c Contract) []Fragment {
 			var frags []Fragment
@@ -124,7 +124,8 @@ func rulePenaltyUnlawful() Rule {
 					isEmployerPenaltyClause(cl.Text) || !employeePenaltyRe.MatchString(cl.Text) {
 					continue
 				}
-				frags = append(frags, newFragmentAt(cl, "合同约定："+strings.TrimSpace(cl.Text),
+				frags = append(frags, newFragmentAt(cl, "合同约定："+strings.TrimSpace(cl.Text)+
+					"；法定只能约定服务期、竞业限制两种违约金（劳动合同法第二十五条）",
 					port.Suggestion{
 						Type:     "delete",
 						Original: strings.TrimSpace(cl.Text),
@@ -184,7 +185,8 @@ func ruleCompeteNoPay() Rule {
 				if !penaltyRe.MatchString(cl.Text) && !competePayWaiverRe.MatchString(cl.Text) {
 					continue
 				}
-				frags = append(frags, newFragmentAt(cl, "合同约定："+strings.TrimSpace(cl.Text),
+				frags = append(frags, newFragmentAt(cl, "合同约定："+strings.TrimSpace(cl.Text)+
+					"；全文未约定按月支付经济补偿（劳动合同法第二十三条）",
 					port.Suggestion{
 						Type:     "add",
 						Original: strings.TrimSpace(cl.Text),
@@ -202,7 +204,7 @@ func ruleInvalidExemption() Rule {
 	return textRule(
 		"R-INVALID-EXEMPTION",
 		port.SeverityHigh,
-		"免除法定责任或排除劳动者权利",
+		"约定工伤概不负责等免责",
 		[]ArticleRef{{Law: LawLaborContract, Article: "第二十六条"}},
 		invalidExemptionRes,
 		"免除工伤、人身损害责任或排除劳动者的争议解决权利",
@@ -219,7 +221,7 @@ func ruleOvertimeLowRate() Rule {
 	return textRule(
 		"R-OVERTIME-LOW-RATE",
 		port.SeverityMedium,
-		"加班工资标准低于法定倍率",
+		"加班费倍率低于法定标准",
 		[]ArticleRef{
 			{Law: LawLaborContract, Article: "第三十一条"},
 			{Law: LawLabor, Article: "第四十四条"},
@@ -240,7 +242,7 @@ func ruleWorkHoursExcess() Rule {
 	return textRule(
 		"R-WORK-HOURS-EXCESS",
 		port.SeverityMedium,
-		"约定的工作时长超过法定工时",
+		"每天工作超过八小时",
 		[]ArticleRef{{Law: LawLabor, Article: "第三十六条"}},
 		res,
 		"合同约定的每日或每周工作时间超过法定上限",
@@ -258,7 +260,7 @@ func ruleOvertimeCap() Rule {
 	return textRule(
 		"R-OVERTIME-CAP",
 		port.SeverityMedium,
-		"约定加班时长超过法定上限",
+		"每月加班超过三十六小时",
 		[]ArticleRef{{Law: LawLabor, Article: "第四十一条"}},
 		res,
 		"合同约定的加班时长超过法定每日、每月上限",
@@ -275,7 +277,7 @@ func ruleProbationNonFullTime() Rule {
 	return Rule{
 		ID:       "R-PROBATION-NONFULLTIME",
 		Severity: port.SeverityHigh,
-		Title:    "非全日制用工约定试用期",
+		Title:    "非全日制也约定试用期",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第七十条"}},
 		Check: func(c Contract) []Fragment {
 			if !strings.Contains(c.ContractType, "非全日制") || c.ProbationMonths <= 0 {
@@ -286,7 +288,7 @@ func ruleProbationNonFullTime() Rule {
 				at = hits[0]
 			}
 			return []Fragment{newFragmentAt(at,
-				fmt.Sprintf("合同类型为非全日制用工，同时约定试用期 %.2f 个月", c.ProbationMonths),
+				fmt.Sprintf("合同类型是非全日制用工，仍约定了 %s 个月试用期（劳动合同法第七十条）", formatMonths(c.ProbationMonths)),
 				port.Suggestion{
 					Type:     "delete",
 					Original: clauseText(c, "试用期"),
@@ -302,7 +304,7 @@ func ruleParttimeHours() Rule {
 	return Rule{
 		ID:       "R-PARTTIME-HOURS",
 		Severity: port.SeverityMedium,
-		Title:    "非全日制用工时长超过法定上限",
+		Title:    "非全日制每天超过四小时",
 		Articles: []ArticleRef{{Law: LawLaborContract, Article: "第六十八条"}},
 		Check: func(c Contract) []Fragment {
 			if !strings.Contains(c.ContractType, "非全日制") {
@@ -341,7 +343,7 @@ func ruleAnnualLeaveForfeit() Rule {
 	return textRule(
 		"R-ANNUAL-LEAVE-FORFEIT",
 		port.SeverityMedium,
-		"未休年假被约定清零或不予补偿",
+		"未休年假约定清零不补",
 		[]ArticleRef{
 			{Law: LawLabor, Article: "第四十五条"},
 			{Law: LawAnnualLeave, Article: "第五条"},
@@ -361,7 +363,7 @@ func rulePregnantNightWork() Rule {
 	return textRule(
 		"R-PREGNANT-NIGHT-WORK",
 		port.SeverityMedium,
-		"怀孕女职工被安排夜班或加班",
+		"安排孕期女职工上夜班",
 		[]ArticleRef{{Law: LawFemaleWorker, Article: "第六条"}},
 		[]*regexp.Regexp{pregnantNightRe},
 		"合同约定或允许怀孕女职工继续从事夜班、加班或延长工作时间",
@@ -378,7 +380,7 @@ func ruleFemaleHazardWork() Rule {
 	return textRule(
 		"R-FEMALE-HAZARD-WORK",
 		port.SeverityMedium,
-		"孕期或哺乳期女职工被安排禁忌劳动",
+		"孕期女职工做禁忌劳动",
 		[]ArticleRef{
 			{Law: LawFemaleWorker, Article: "第四条"},
 			{Law: LawFemaleWorker, Article: "第六条"},
@@ -398,7 +400,7 @@ func ruleDismissalCompensationWaiver() Rule {
 	return textRule(
 		"R-DISMISSAL-COMP-WAIVER",
 		port.SeverityHigh,
-		"约定解除合同时不支付法定补偿",
+		"约定解除不付经济补偿",
 		[]ArticleRef{
 			{Law: LawLaborContract, Article: "第四十六条"},
 			{Law: LawLaborContract, Article: "第八十七条"},
@@ -418,7 +420,7 @@ func ruleCertificateRefusal() Rule {
 	return textRule(
 		"R-CERTIFICATE-REFUSAL",
 		port.SeverityMedium,
-		"约定离职后拒开证明或拒转档案",
+		"离职不给开证明转档案",
 		[]ArticleRef{{Law: LawLaborContract, Article: "第五十条"}},
 		certificateRefusalRes,
 		"合同约定离职后不出具证明、不办理档案或社保转移",
