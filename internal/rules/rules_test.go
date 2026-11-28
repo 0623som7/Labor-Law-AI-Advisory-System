@@ -290,6 +290,8 @@ func TestDeposit(t *testing.T) {
 	// 文本兜底：模型没抽到 deposit，但条款里写了扣押证件。
 	fromText := Contract{Clauses: []Clause{{Section: "第五条", Text: "公司可扣押员工身份证原件。"}}}
 	mustHit(t, r, fromText, 1)
+	// 模型误标 true 时，没有押金原文就不能报，更不能用第一条整段当证据。
+	mustHit(t, r, Contract{Deposit: boolPtr(true), Clauses: []Clause{{Section: "第七条", Text: "甲方不为乙方缴纳社会保险。"}}}, 0)
 }
 
 func TestNoSocialInsurance(t *testing.T) {
@@ -625,6 +627,9 @@ func TestCheckOrderAndFilter(t *testing.T) {
 		ProbationMonths: 2,
 		Deposit:         boolPtr(true),
 		SalaryMonthly:   1500,
+		Clauses: []Clause{
+			{Section: "第五条", Text: "乙方入职时缴纳服装押金 500 元。"},
+		},
 	}
 	all := Check(c, All())
 	// 至少命中：试用期超限、押金、最低工资、无社保、无期限之外的四类。

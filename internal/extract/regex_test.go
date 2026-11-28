@@ -188,6 +188,13 @@ func TestExtractByTextSocialInsurancePositive(t *testing.T) {
 	}
 }
 
+func TestExtractByTextSocialInsuranceNegativeBeforePositive(t *testing.T) {
+	c, _ := extractByText("试用期内甲方不为乙方缴纳社会保险。")
+	if c.SocialInsurance == nil || *c.SocialInsurance {
+		t.Fatalf("social_insurance = %v, want false", c.SocialInsurance)
+	}
+}
+
 // TestClauseStartAdvancesByRune 钉住小句边界按字符前进。
 //
 // 真正的回归断言是第二段 utf8.ValidString：老实现用 body[idx:idx+1] 只前进

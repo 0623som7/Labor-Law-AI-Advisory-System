@@ -41,8 +41,10 @@ var (
 
 	// 竞业限制：只认「约定了竞业 + 写了违约金 + 没提补偿」这一种组合。
 	// 单独出现「竞业限制」不报——合法条款也会提这四个字。
-	competeRe    = regexp.MustCompile(`竞业限制|竞业禁止|不得在与甲方有竞争|自营与甲方同类`)
+	competeRe    = regexp.MustCompile(`竞业限制|竞业禁止|不得在与甲方有竞争|自营与甲方同类|离职后[^。；\n]{0,30}(?:同类企业|竞争关系)`)
 	competePayRe = regexp.MustCompile(`经济补偿|补偿金|按月支付[^。；]{0,8}补偿|竞业限制补偿|给予补偿`)
+	// 有的合同不写违约金，只直接免除竞业补偿。这比“没写补偿”更明确，也应报。
+	competePayWaiverRe = regexp.MustCompile(`(?:无需|不需要|不予|不得要求|不)[^。；;\n]{0,10}(?:支付|给予)?[^。；;\n]{0,10}(?:经济补偿|补偿金|补偿)`)
 
 	overtimeLowRateRes = []*regexp.Regexp{
 		regexp.MustCompile(`(?:加班|延长工作时间)[^。；]{0,24}(?:^|[^0-9])(?:0\.5倍|50%|一倍|百分之五十|百分之百|100%)`),
@@ -163,7 +165,9 @@ func ruleCompeteNoPay() Rule {
 			// 会把“违约金一条 + 补偿另一条”的合规约定误报成未补偿。
 			hasPay := false
 			for _, cl := range c.Clauses {
-				if competePayRe.MatchString(cl.Text) {
+				// “无需支付任何经济补偿”也包含“经济补偿”，但这正是免除补偿，
+				// 不能被当成已约定补偿。
+				if competePayRe.MatchString(cl.Text) && !competePayWaiverRe.MatchString(cl.Text) {
 					hasPay = true
 					break
 				}
@@ -177,7 +181,7 @@ func ruleCompeteNoPay() Rule {
 				if !competeRe.MatchString(cl.Text) {
 					continue
 				}
-				if !penaltyRe.MatchString(cl.Text) {
+				if !penaltyRe.MatchString(cl.Text) && !competePayWaiverRe.MatchString(cl.Text) {
 					continue
 				}
 				frags = append(frags, newFragmentAt(cl, "合同约定："+strings.TrimSpace(cl.Text),

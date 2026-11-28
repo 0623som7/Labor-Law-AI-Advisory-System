@@ -235,6 +235,17 @@ func TestCompeteMentionWithoutPenalty(t *testing.T) {
 	mustHit(t, r, Contract{Clauses: []Clause{{Text: "双方约定竞业限制，期限两年。"}}}, 0)
 }
 
+func TestCompetePayWaiverReportedWithoutPenalty(t *testing.T) {
+	r := findExtendedRule(t, "R-COMPETE-NO-PAY")
+	frags := mustHit(t, r, Contract{Clauses: []Clause{{
+		Section: "第九条",
+		Text:    "乙方离职后二年内不得进入与甲方存在直接竞争关系的同类企业工作，甲方无需支付任何经济补偿。",
+	}}}, 1)
+	if frags[0].Section != "第九条" {
+		t.Fatalf("命中条款 = %q，期望第九条", frags[0].Section)
+	}
+}
+
 // 竞业条款常写成「不得在与甲方有竞争性的单位任职」，不含「竞业限制」四个字，
 // servicePeriodRe 挡不住。这类条款的违约金是第二十五条允许的场景，
 // 缺补偿的问题归 R-COMPETE-NO-PAY，不能被 R-PENALTY-UNLAWFUL 再报一次（同一个框报两条）。
