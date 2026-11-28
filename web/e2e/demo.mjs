@@ -9,14 +9,17 @@
 //
 // 任何一步失败都非 0 退出；最后打印一行 DEMO OK … 方便直接贴到答辩笔记里。
 
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
-import puppeteer from 'puppeteer-core'
 
 const API = process.env.API_BASE || 'http://127.0.0.1:8080'
 const WEB = process.env.WEB_BASE || 'http://127.0.0.1:5173'
+const CHROME = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+const CDP_PORT = Number(process.env.CDP_PORT || 9481)
+const CONSOLE_WAIT = 60_000
 // 审查记录超过这个年龄就判定为「复用旧结果」：一次真审查是秒级，2 分钟足够宽松。
 const REUSE_LIMIT_MS = 120_000
 // 服务器比本机快超过 30 秒，说明两边时钟没对齐——这时「多久之前创建的」不可信，
@@ -29,11 +32,15 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '../..')
 const PDF = path.resolve(process.env.PDF_PATH || path.join(repoRoot, '.dev', 'contract-demo.pdf'))
 
+const tmpDir = path.join(here, '.tmp')
+fs.mkdirSync(tmpDir, { recursive: true })
+
 if (!fs.existsSync(PDF)) {
   console.error('找不到演示合同：' + PDF + '（应从仓库根或 web 目录执行均可）')
   process.exit(1)
 }
 
+const tag = 'demo'
 const stamp = new Date()
 const phone = `139${String(stamp.getHours()).padStart(2, '0')}${String(stamp.getMinutes()).padStart(2, '0')}${String(stamp.getSeconds()).padStart(2, '0')}${String(Math.floor(Math.random() * 10))}9`
 const password = 'laborlaw123'
@@ -74,54 +81,81 @@ async function pollTask(token, taskId, timeoutMs = 180_000) {
   }
 }
 
-// Chrome 158 的 page-target WebSocket 在本机会无响应，改用 puppeteer-core 的浏览器会话。
-class BrowserRunner {
-  #browser
-  #page
+// ── CDP ────────────────────────────────────────────────────────
+const chrome = spawn(
+  CHROME,
+  [
+    `--remote-debugging-port=${CDP_PORT}`,
+    `--user-data-dir=${path.join(tmpDir, `chrome-${tag}-${Date.now()}`)}`,
+    '--headless=new',
+    '--disable-gpu',
+    '--no-first-run',
+    '--window-size=1440,900',
+    'about:blank',
+  ],
+  { stdio: 'ignore' },
+)
+
+async function waitJSON(url, tries = 80) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url)
+      if (res.ok) return res.json()
+    } catch {
+      /* 端口还没起 */
+    }
+    await sleep(300)
+  }
+  throw new Error('Chrome 调试端口未就绪')
+}
+
+class CDP {
+  #ws
+  #id = 0
+  #pending = new Map()
   consoleErrors = []
   consoleWarnings = []
-
-  constructor(browser, page) {
-    this.#browser = browser
-    this.#page = page
-  }
-
-  static async start() {
-    const browser = await puppeteer.launch({
-      executablePath: process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      headless: true,
-      args: ['--disable-gpu', '--in-process-gpu', '--no-sandbox'],
-      protocolTimeout: 120_000,
+  static async connect(wsUrl) {
+    const c = new CDP()
+    c.#ws = new WebSocket(wsUrl)
+    await new Promise((res, rej) => {
+      c.#ws.onopen = res
+      c.#ws.onerror = rej
     })
-    const page = await browser.newPage()
-    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 })
-    const runner = new BrowserRunner(browser, page)
-    page.on('console', (message) => {
-      if (message.type() === 'error') runner.consoleErrors.push(message.text())
-      if (message.type() === 'warning') runner.consoleWarnings.push(message.text())
-    })
-    page.on('pageerror', (error) => runner.consoleErrors.push(error.message))
-    return runner
+    c.#ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data)
+      if (msg.method === 'Runtime.consoleAPICalled') {
+        const text = msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ')
+        if (msg.params.type === 'error') c.consoleErrors.push(text)
+        if (msg.params.type === 'warning') c.consoleWarnings.push(text)
+      }
+      if (msg.method === 'Runtime.exceptionThrown') {
+        c.consoleErrors.push(msg.params.exceptionDetails.text + ' ' + (msg.params.exceptionDetails.exception?.description ?? ''))
+      }
+      if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') {
+        c.consoleErrors.push(msg.params.entry.text)
+      }
+      const p = c.#pending.get(msg.id)
+      if (!p) return
+      c.#pending.delete(msg.id)
+      msg.error ? p.reject(new Error(msg.error.message)) : p.resolve(msg.result)
+    }
+    return c
   }
-
+  send(method, params = {}) {
+    const id = ++this.#id
+    return new Promise((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject })
+      this.#ws.send(JSON.stringify({ id, method, params }))
+    })
+  }
   async eval(expression) {
-    return this.#page.evaluate(expression => eval(expression), expression)
+    const r = await this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text)
+    return r.result.value
   }
-
-  async send(method, params = {}) {
-    if (method === 'Page.navigate') {
-      await this.#page.goto(params.url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-      return
-    }
-    if (method === 'Page.reload') {
-      await this.#page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 })
-      return
-    }
-    throw new Error(`浏览器命令不支持：${method}`)
-  }
-
-  async close() {
-    await this.#browser.close()
+  close() {
+    this.#ws.close()
   }
 }
 
@@ -171,7 +205,14 @@ try {
   step(loginPhone ? '1 登录' : '1 注册', `${loginPhone || phone} user=${auth.user?.id ?? '?'}`)
 
   // ── 2. 起浏览器，注入令牌，进对话页 ──────────────────────────
-  cdp = await BrowserRunner.start()
+  await waitJSON(`http://127.0.0.1:${CDP_PORT}/json/version`)
+  const target = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?about:blank`, { method: 'PUT' })).json()
+  cdp = await CDP.connect(target.webSocketDebuggerUrl)
+  await cdp.send('Page.enable')
+  await cdp.send('Runtime.enable')
+  await cdp.send('Log.enable')
+  await cdp.send('DOM.enable')
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false })
 
   await cdp.send('Page.navigate', { url: `${WEB}/login` })
   await waitFor(async () => (await cdp.eval(`document.readyState`)) === 'complete', 30_000, '登录页加载')
@@ -371,4 +412,5 @@ try {
   process.exitCode = 1
 } finally {
   cdp?.close()
+  chrome.kill()
 }

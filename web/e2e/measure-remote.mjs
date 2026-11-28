@@ -294,10 +294,8 @@ try {
       [
         `--remote-debugging-port=${CDP_PORT}`,
         `--user-data-dir=${path.join(tmpDir, `chrome-measure-${Date.now()}`)}`,
-        '--remote-allow-origins=*',
         '--headless=new',
         '--disable-gpu',
-        '--in-process-gpu',
         '--no-first-run',
         '--ignore-certificate-errors',
         '--window-size=1440,900',
