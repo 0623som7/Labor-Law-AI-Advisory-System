@@ -37,3 +37,8 @@ Thumbs.db
 
 # ---- 日志 ----
 *.log
+
+# 答辩期产物（不入库）
+deploy/acme/
+web/dist.bak-*
+deploy/nginx/*.new
